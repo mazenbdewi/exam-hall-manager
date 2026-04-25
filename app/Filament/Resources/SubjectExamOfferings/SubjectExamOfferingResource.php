@@ -76,7 +76,9 @@ class SubjectExamOfferingResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return ExamCollegeScope::applyRelatedCollegeScope(
-            parent::getEloquentQuery()->with(['subject.department', 'subject.college', 'academicYear', 'semester']),
+            parent::getEloquentQuery()
+                ->withSameSlotOfferingsCount()
+                ->with(['subject.department', 'subject.college', 'academicYear', 'semester']),
             'subject',
         );
     }

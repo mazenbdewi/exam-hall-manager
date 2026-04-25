@@ -90,7 +90,7 @@ class ExamHallDistributionService
                         break;
                     }
 
-                    /** @var Collection<int, \App\Models\ExamStudent> $students */
+                    /** @var Collection<int, ExamStudent> $students */
                     $students = $studentQueues[$offeringId]->splice(0, $take);
                     $count = $students->count();
 
@@ -229,6 +229,10 @@ class ExamHallDistributionService
             return [
                 'offering_id' => $slotOffering->getKey(),
                 'subject_name' => $this->sanitizeString($slotOffering->subject?->name ?? ''),
+                'college_name' => $this->sanitizeString($slotOffering->subject?->college?->name ?? ''),
+                'department_name' => $this->sanitizeString($slotOffering->subject?->department?->name ?? ''),
+                'academic_year_name' => $this->sanitizeString($slotOffering->academicYear?->name ?? ''),
+                'semester_name' => $this->sanitizeString($slotOffering->semester?->name ?? ''),
                 'students_count' => $totalCount,
                 'assigned_students_count' => $assignedCount,
                 'unassigned_students_count' => $unassignedCount,
@@ -401,7 +405,7 @@ class ExamHallDistributionService
                 ],
                 [
                     'label' => 'نسبة التوزيع',
-                    'value' => $distributionPercentage . '%',
+                    'value' => $distributionPercentage.'%',
                     'tone' => $distributionPercentage === 100 ? 'success' : ($distributionPercentage > 0 ? 'warning' : 'gray'),
                     'icon' => 'heroicon-o-presentation-chart-line',
                 ],
@@ -525,7 +529,7 @@ class ExamHallDistributionService
         $examStartTime = $this->normalizeExamStartTime($offering->exam_start_time);
 
         $slotOfferings = SubjectExamOffering::query()
-            ->with(['subject.college'])
+            ->with(['subject.college', 'subject.department', 'academicYear', 'semester'])
             ->withCount('examStudents')
             ->whereDate('exam_date', $examDate)
             ->whereTime('exam_start_time', $examStartTime)
@@ -702,6 +706,11 @@ class ExamHallDistributionService
             if ($offering->subject->relationLoaded('college') && $offering->subject->college) {
                 $offering->subject->college->name = $this->sanitizeString($offering->subject->college->name);
                 $offering->subject->college->code = $this->sanitizeNullableString($offering->subject->college->code);
+            }
+
+            if ($offering->subject->relationLoaded('department') && $offering->subject->department) {
+                $offering->subject->department->name = $this->sanitizeString($offering->subject->department->name);
+                $offering->subject->department->code = $this->sanitizeNullableString($offering->subject->department->code);
             }
         }
 
@@ -909,7 +918,7 @@ class ExamHallDistributionService
                     'text' => __('exam.diagnosis.unassigned_students', ['count' => $unassignedStudentsCount]),
                 ];
             }
-            $recommendedActions[] = 'أضف قاعة بسعة لا تقل عن ' . $capacityShortage . ' مقعد.';
+            $recommendedActions[] = 'أضف قاعة بسعة لا تقل عن '.$capacityShortage.' مقعد.';
             $recommendedActions[] = 'أعد تنفيذ التوزيع بعد تعديل القاعات.';
         } elseif (! $hasDistribution) {
             $items[] = [
@@ -978,8 +987,8 @@ class ExamHallDistributionService
             'danger' => $availableHallsCount === 0
                 ? 'لا توجد قاعات فعالة متاحة لهذه الكلية.'
                 : ($capacityShortage > 0
-                    ? 'يوجد عجز في السعة بمقدار ' . $capacityShortage . ' مقعد.'
-                    : 'يوجد ' . $unassignedStudentsCount . ' طالب غير موزع.'),
+                    ? 'يوجد عجز في السعة بمقدار '.$capacityShortage.' مقعد.'
+                    : 'يوجد '.$unassignedStudentsCount.' طالب غير موزع.'),
             default => 'لم يتم تنفيذ التوزيع بعد.',
         };
 
@@ -1117,7 +1126,7 @@ class ExamHallDistributionService
 
         if (is_array($value)) {
             foreach ($value as $key => $item) {
-                $offending = $this->findInvalidUtf8Value($item, $path . '.' . $key);
+                $offending = $this->findInvalidUtf8Value($item, $path.'.'.$key);
 
                 if ($offending) {
                     return $offending;
