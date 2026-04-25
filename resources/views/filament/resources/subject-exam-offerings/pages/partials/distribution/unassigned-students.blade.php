@@ -49,7 +49,34 @@
         @if ($unassignedCount <= 20)
             <div class="border-t border-gray-100 px-5 py-4 dark:border-white/10">
                 <div class="mb-3 text-sm font-semibold text-gray-950 dark:text-white">معاينة سريعة</div>
-                <div class="overflow-x-auto">
+                <div class="grid gap-3 md:hidden">
+                    @foreach ($unassignedStudents as $student)
+                        <article class="rounded-2xl border border-danger-100 bg-danger-50/50 p-4 dark:border-danger-500/20 dark:bg-danger-500/10">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="truncate text-base font-bold text-gray-950 dark:text-white">{{ $student['full_name'] }}</div>
+                                    <div class="mt-1 text-xs text-gray-600 dark:text-gray-300">{{ $student['student_number'] }}</div>
+                                </div>
+                                <span class="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses['danger'] }}">
+                                    غير موزع
+                                </span>
+                            </div>
+
+                            <div class="mt-3 grid gap-2 text-sm">
+                                <div class="rounded-xl bg-white/80 px-3 py-2 dark:bg-white/5">
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">المادة</div>
+                                    <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ $student['subject_name'] }}</div>
+                                </div>
+                                <div class="rounded-xl bg-white/80 px-3 py-2 dark:bg-white/5">
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">السبب</div>
+                                    <div class="mt-1 font-semibold text-danger-700 dark:text-danger-300">{{ $student['reason'] }}</div>
+                                </div>
+                            </div>
+                        </article>
+                    @endforeach
+                </div>
+
+                <div class="hidden overflow-x-auto md:block">
                     <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-white/10">
                         <thead class="bg-gray-50 dark:bg-white/5">
                             <tr>

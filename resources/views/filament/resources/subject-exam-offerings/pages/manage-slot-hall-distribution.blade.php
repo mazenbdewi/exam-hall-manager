@@ -53,6 +53,7 @@
 
     <div dir="rtl" class="space-y-5 text-right">
         @include('filament.resources.subject-exam-offerings.pages.partials.distribution.header')
+        @include('filament.resources.subject-exam-offerings.pages.partials.distribution.quick-result')
         @include('filament.resources.subject-exam-offerings.pages.partials.distribution.problem-diagnosis')
         @include('filament.resources.subject-exam-offerings.pages.partials.distribution.summary-cards')
         @include('filament.resources.subject-exam-offerings.pages.partials.distribution.subject-stats')

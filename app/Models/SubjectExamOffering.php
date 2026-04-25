@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -12,11 +13,14 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class SubjectExamOffering extends Model
 {
     use HasFactory;
     use SoftDeletes;
+
+    protected static ?bool $hasExamEndTimeColumn = null;
 
     protected $fillable = [
         'subject_id',
@@ -93,6 +97,115 @@ class SubjectExamOffering extends Model
         );
     }
 
+    public function scopeWhereTodayExam(Builder $query): Builder
+    {
+        return $query->whereDate('exam_date', static::nowInApplicationTimezone()->toDateString());
+    }
+
+    public function scopeWhereUpcomingExam(Builder $query): Builder
+    {
+        $now = static::nowInApplicationTimezone();
+
+        return $query->where(function (Builder $query) use ($now): void {
+            $query
+                ->whereDate('exam_date', '>', $now->toDateString())
+                ->orWhere(function (Builder $query) use ($now): void {
+                    $query
+                        ->whereDate('exam_date', $now->toDateString())
+                        ->whereTime('exam_start_time', '>', $now->format('H:i:s'));
+                });
+        });
+    }
+
+    public function scopeWhereFinishedExam(Builder $query): Builder
+    {
+        $now = static::nowInApplicationTimezone();
+
+        return $query->where(function (Builder $query) use ($now): void {
+            $query->whereDate('exam_date', '<', $now->toDateString());
+
+            if (static::hasExamEndTimeColumn()) {
+                $query->orWhere(function (Builder $query) use ($now): void {
+                    $query
+                        ->whereDate('exam_date', $now->toDateString())
+                        ->whereTime('exam_end_time', '<', $now->format('H:i:s'));
+                });
+            }
+        });
+    }
+
+    public function getExamStatusKeyAttribute(): string
+    {
+        if (! $this->exam_date) {
+            return 'unspecified';
+        }
+
+        $now = static::nowInApplicationTimezone();
+        $examDate = $this->exam_date->timezone($now->timezone)->startOfDay();
+        $today = $now->copy()->startOfDay();
+
+        if ($examDate->lt($today)) {
+            return 'finished';
+        }
+
+        if ($examDate->gt($today)) {
+            return 'upcoming';
+        }
+
+        $startAt = $this->examDateTime($this->exam_start_time);
+        $endAt = $this->examDateTime($this->getAttribute('exam_end_time'));
+
+        if ($endAt && $endAt->lt($now)) {
+            return 'finished';
+        }
+
+        if ($startAt && $startAt->gt($now)) {
+            return 'upcoming';
+        }
+
+        if ($startAt && $endAt && $now->betweenIncluded($startAt, $endAt)) {
+            return 'running';
+        }
+
+        return 'today';
+    }
+
+    public function getExamStatusLabelAttribute(): string
+    {
+        return match ($this->exam_status_key) {
+            'finished' => 'منتهي',
+            'running' => 'جاري الآن',
+            'upcoming' => 'قادم',
+            'today' => 'اليوم',
+            default => 'غير محدد',
+        };
+    }
+
+    public function getExamStatusColorAttribute(): string
+    {
+        return match ($this->exam_status_key) {
+            'finished' => 'danger',
+            'running', 'today' => 'success',
+            'upcoming' => 'warning',
+            default => 'gray',
+        };
+    }
+
+    public function isTodayExam(): bool
+    {
+        return $this->exam_date?->isSameDay(static::nowInApplicationTimezone()) ?? false;
+    }
+
+    public function isFinishedExam(): bool
+    {
+        return $this->exam_status_key === 'finished';
+    }
+
+    public function isUpcomingExam(): bool
+    {
+        return $this->exam_status_key === 'upcoming';
+    }
+
     protected static function sameSlotOfferingsBaseQuery(): QueryBuilder
     {
         return DB::query()
@@ -106,5 +219,27 @@ class SubjectExamOffering extends Model
             ->whereNull('same_slot_offerings.deleted_at')
             ->whereNull('same_slot_subjects.deleted_at')
             ->whereNull('current_slot_subjects.deleted_at');
+    }
+
+    protected static function nowInApplicationTimezone(): CarbonInterface
+    {
+        return now(config('app.timezone'));
+    }
+
+    protected static function hasExamEndTimeColumn(): bool
+    {
+        return static::$hasExamEndTimeColumn ??= Schema::hasColumn('subject_exam_offerings', 'exam_end_time');
+    }
+
+    protected function examDateTime(mixed $time): ?CarbonInterface
+    {
+        if (! $this->exam_date || blank($time)) {
+            return null;
+        }
+
+        return $this->exam_date
+            ->copy()
+            ->timezone(config('app.timezone'))
+            ->setTimeFromTimeString((string) $time);
     }
 }

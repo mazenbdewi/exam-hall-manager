@@ -48,12 +48,19 @@ class SubjectExamOfferingsTable
                     ->sortable(),
                 TextColumn::make('exam_date')
                     ->label(__('exam.fields.exam_date'))
-                    ->date()
+                    ->formatStateUsing(fn ($state): string => $state?->format('Y-m-d') ?? '-')
+                    ->badge()
+                    ->color(fn (SubjectExamOffering $record): string => $record->exam_status_color)
+                    ->description(fn (SubjectExamOffering $record): string => $record->exam_status_label)
                     ->sortable(),
                 TextColumn::make('exam_start_time')
                     ->label(__('exam.fields.exam_start_time'))
                     ->time('H:i')
                     ->sortable(),
+                TextColumn::make('exam_status_label')
+                    ->label('حالة الامتحان')
+                    ->badge()
+                    ->color(fn (SubjectExamOffering $record): string => $record->exam_status_color),
                 TextColumn::make('same_slot_offerings_count')
                     ->label('مواد بنفس الموعد')
                     ->badge()
@@ -168,6 +175,9 @@ class SubjectExamOfferingsTable
                     ForceDeleteBulkAction::make(),
                     RestoreBulkAction::make(),
                 ]),
-            ]);
+            ])
+            ->defaultSort(fn (Builder $query): Builder => $query
+                ->orderBy('exam_date')
+                ->orderBy('exam_start_time'));
     }
 }
