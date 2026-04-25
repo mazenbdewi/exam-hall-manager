@@ -1,0 +1,52 @@
+<?php
+
+namespace App\Filament\Resources\Semesters\Tables;
+
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\ForceDeleteBulkAction;
+use Filament\Actions\RestoreBulkAction;
+use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\TrashedFilter;
+use Filament\Tables\Filters\TernaryFilter;
+use Filament\Tables\Table;
+
+class SemestersTable
+{
+    public static function configure(Table $table): Table
+    {
+        return $table
+            ->columns([
+                TextColumn::make('name')
+                    ->label(__('exam.fields.name'))
+                    ->searchable()
+                    ->sortable(),
+                TextColumn::make('sort_order')
+                    ->label(__('exam.fields.sort_order'))
+                    ->sortable(),
+                IconColumn::make('is_active')
+                    ->label(__('exam.fields.is_active'))
+                    ->boolean()
+                    ->sortable(),
+                TextColumn::make('subject_exam_offerings_count')
+                    ->counts('subjectExamOfferings')
+                    ->label(__('exam.fields.offerings')),
+            ])
+            ->filters([
+                TernaryFilter::make('is_active'),
+                TrashedFilter::make(),
+            ])
+            ->recordActions([
+                EditAction::make(),
+            ])
+            ->toolbarActions([
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
+                    ForceDeleteBulkAction::make(),
+                    RestoreBulkAction::make(),
+                ]),
+            ]);
+    }
+}

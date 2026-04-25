@@ -1,0 +1,48 @@
+<?php
+
+return [
+    'required' => 'حقل :attribute مطلوب.',
+    'required_if' => 'حقل :attribute مطلوب.',
+    'array' => 'يجب أن يكون :attribute مصفوفة.',
+    'string' => 'يجب أن يكون :attribute نصاً.',
+    'email' => 'يجب أن يكون :attribute بريداً إلكترونياً صحيحاً.',
+    'numeric' => 'يجب أن يكون :attribute رقماً.',
+    'integer' => 'يجب أن يكون :attribute عدداً صحيحاً.',
+    'max' => [
+        'string' => 'يجب ألا يزيد :attribute عن :max أحرف.',
+    ],
+    'min' => [
+        'string' => 'يجب ألا يقل :attribute عن :min أحرف.',
+        'numeric' => 'يجب ألا يقل :attribute عن :min.',
+        'array' => 'يجب أن يحتوي :attribute على :min عناصر على الأقل.',
+    ],
+    'unique' => ':attribute مستخدم مسبقاً.',
+    'confirmed' => 'تأكيد :attribute غير مطابق.',
+    'after' => 'يجب أن يكون :attribute بعد :date.',
+
+    'attributes' => [
+        'name' => 'الاسم',
+        'code' => 'الرمز',
+        'email' => 'البريد الإلكتروني',
+        'password' => 'كلمة المرور',
+        'password_confirmation' => 'تأكيد كلمة المرور',
+        'college_id' => 'الكلية',
+        'department_id' => 'القسم',
+        'study_level_id' => 'المرحلة الدراسية',
+        'subject_id' => 'المادة',
+        'academic_year_id' => 'العام الأكاديمي',
+        'semester_id' => 'الفصل الدراسي',
+        'status' => 'الحالة',
+        'exam_date' => 'تاريخ الامتحان',
+        'exam_start_time' => 'وقت بدء الامتحان',
+        'notes' => 'الملاحظات',
+        'student_number' => 'الرقم الجامعي',
+        'full_name' => 'الاسم الكامل',
+        'file' => 'الملف',
+        'rows' => 'الصفوف',
+        'rows.*.student_number' => 'الرقم الجامعي',
+        'rows.*.full_name' => 'الاسم الكامل',
+        'rows.*.notes' => 'الملاحظات',
+        'role_name' => 'الدور',
+    ],
+];
