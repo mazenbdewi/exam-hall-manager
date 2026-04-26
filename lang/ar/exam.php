@@ -8,6 +8,8 @@ return [
         'exam_setup' => 'إعدادات الامتحانات',
         'academic_setup' => 'الإعدادات الأكاديمية',
         'exams' => 'الامتحانات',
+        'exam_management' => 'إدارة الامتحانات',
+        'invigilators' => 'المراقبون',
     ],
 
     'resources' => [
@@ -22,6 +24,9 @@ return [
         'subject' => ['singular' => 'مادة', 'plural' => 'المواد'],
         'subject_exam_offering' => ['singular' => 'برنامج امتحاني', 'plural' => 'البرامج الامتحانية'],
         'user' => ['singular' => 'مستخدم', 'plural' => 'المستخدمون'],
+        'invigilator' => ['singular' => 'مراقب', 'plural' => 'المراقبون'],
+        'invigilator_distribution_setting' => ['singular' => 'إعدادات توزيع المراقبين', 'plural' => 'إعدادات توزيع المراقبين'],
+        'invigilator_hall_requirement' => ['singular' => 'احتياج القاعات من المراقبين', 'plural' => 'احتياج القاعات من المراقبين'],
     ],
 
     'sections' => [
@@ -42,6 +47,12 @@ return [
         'available_halls' => 'القاعات المتاحة',
         'hall_distribution_results' => 'نتائج توزيع القاعات',
         'problem_diagnosis' => 'تشخيص المشكلة',
+        'invigilator_details' => 'بيانات المراقب',
+        'invigilator_distribution_settings' => 'إعدادات توزيع المراقبين',
+        'invigilator_distribution_behavior' => 'طريقة اختيار المراقبين',
+        'invigilator_hall_requirements' => 'احتياج القاعات من المراقبين',
+        'student_distribution_readiness' => 'حالة توزيع الطلاب على القاعات',
+        'invigilator_shortage' => 'النقص في المراقبين',
     ],
 
     'fields' => [
@@ -98,6 +109,39 @@ return [
         'subject_breakdown' => 'توزيع المواد داخل القاعة',
         'student_number' => 'الرقم الجامعي',
         'full_name' => 'الاسم الكامل',
+        'invigilator_name' => 'اسم المراقب',
+        'phone' => 'رقم الهاتف',
+        'staff_category' => 'نوع الكادر',
+        'invigilation_role' => 'نوع المراقبة',
+        'max_assignments' => 'الحد الأقصى للمراقبات',
+        'max_assignments_per_day' => 'الحد الأقصى في اليوم',
+        'workload_reduction_percentage' => 'نسبة تخفيض المراقبات',
+        'workload_reduction_percentage_short' => 'تخفيض المراقبات',
+        'default_max_assignments_per_invigilator' => 'الحد الافتراضي لكل مراقب',
+        'allow_multiple_assignments_per_day' => 'السماح بأكثر من مراقبة في اليوم',
+        'distribution_pattern' => 'نمط التوزيع',
+        'day_preference' => 'تفضيل الأيام',
+        'default_value' => 'الافتراضي',
+        'total_invigilators' => 'إجمالي المراقبين',
+        'available_invigilators' => 'المراقبون المتاحون',
+        'reduced_invigilators_count' => 'عدد المراقبين مع تخفيض',
+        'exempt_invigilators_count' => 'عدد المراقبين المعفيين 100%',
+        'required_count' => 'إجمالي الاحتياج',
+        'assigned_count' => 'تم إسنادهم',
+        'shortage_count' => 'النقص',
+        'days_count' => 'عدد الأيام',
+        'slots_count' => 'عدد المواعيد',
+        'distribution_scope' => 'نطاق التوزيع',
+        'select_option' => 'اختر',
+        'from_date' => 'من تاريخ',
+        'to_date' => 'إلى تاريخ',
+        'period' => 'الفترة',
+        'report_type' => 'نوع التقرير',
+        'phone_numbers' => 'أرقام الهواتف',
+        'reason' => 'السبب',
+        'assignments_count' => 'عدد المراقبات',
+        'role_in_hall' => 'الدور في القاعة',
+        'invigilator_readiness_confirmation' => 'أؤكد أنه تم توزيع الطلاب على القاعات لجميع البرامج الامتحانية ضمن الكلية والفترة المحددة.',
     ],
 
     'priorities' => [
@@ -110,6 +154,40 @@ return [
         'small' => 'صغيرة',
         'large' => 'كبيرة',
         'amphitheater' => 'مدرج',
+    ],
+
+    'staff_categories' => [
+        'doctor' => 'دكتور',
+        'admin_employee' => 'موظف إداري',
+        'master_student' => 'طالب ماجستير',
+        'other' => 'غير ذلك',
+    ],
+
+    'invigilation_roles' => [
+        'hall_head' => 'رئيس قاعة',
+        'secretary' => 'أمين سر',
+        'regular' => 'مراقب عادي',
+        'reserve' => 'مراقب احتياط',
+    ],
+
+    'invigilator_distribution_patterns' => [
+        'consecutive' => 'متتالية',
+        'distributed' => 'موزعة',
+        'random' => 'عشوائية',
+        'balanced' => 'متوازنة',
+    ],
+
+    'invigilator_day_preferences' => [
+        'early' => 'الأيام الأولى',
+        'late' => 'الأيام الأخيرة',
+        'balanced' => 'متوازن',
+    ],
+
+    'invigilator_assignment_statuses' => [
+        'assigned' => 'مسند',
+        'manual' => 'يدوي',
+        'conflict' => 'تعارض',
+        'cancelled' => 'ملغى',
     ],
 
     'statuses' => [
@@ -141,6 +219,8 @@ return [
         'delete_all' => 'حذف الكل',
         'delete_all_students' => 'حذف جميع طلاب :type',
         'manage_hall_distribution' => 'توزيع الطلاب على القاعات',
+        'global_hall_distribution_by_college' => 'توزيع شامل للطلاب حسب الكلية',
+        'run_global_hall_distribution' => 'تنفيذ التوزيع الشامل',
         'run_hall_distribution' => 'تنفيذ التوزيع الآلي',
         'redistribute' => 'إعادة التوزيع',
         'export_hall_distribution_pdf' => 'تصدير PDF',
@@ -148,6 +228,18 @@ return [
         'run_distribution_now' => 'تنفيذ التوزيع الآن',
         'view_hall_details' => 'عرض التفاصيل',
         'hide_hall_details' => 'إخفاء التفاصيل',
+        'download_invigilators_template' => 'تنزيل قالب المراقبين',
+        'import_invigilators' => 'استيراد المراقبين',
+        'manage_invigilator_distribution' => 'توزيع المراقبين',
+        'run_invigilator_distribution' => 'تنفيذ توزيع المراقبين',
+        'redistribute_invigilators' => 'إعادة التوزيع',
+        'rerun_invigilator_distribution' => 'إعادة توزيع المراقبين',
+        'export_pdf' => 'تحميل تقرير PDF',
+        'export_excel' => 'تحميل Excel',
+        'export_invigilator_pdf_by_invigilator' => 'تصدير PDF حسب المراقب',
+        'export_invigilator_pdf_by_hall' => 'تصدير PDF حسب القاعات',
+        'export_invigilator_pdf_by_day' => 'تصدير PDF حسب اليوم',
+        'export_invigilator_shortage_pdf' => 'تصدير تقرير النقص PDF',
     ],
 
     'helpers' => [
@@ -186,6 +278,21 @@ return [
         'no_available_halls' => 'لا توجد قاعات متاحة لهذه الجلسة.',
         'no_hall_distribution_results' => 'لم يتم تنفيذ توزيع على القاعات لهذه الجلسة بعد.',
         'pdf_multi_subject_hall_notice' => 'تنبيه: هذه القاعة تضم أكثر من مادة، لذلك يظهر اسم المادة بجانب اسم كل طالب لتفادي أي التباس أثناء الامتحان.',
+        'no_invigilator_assignments' => 'لا توجد تكليفات مراقبين ضمن النطاق المحدد.',
+        'invigilator_phone_required' => 'رقم الهاتف مطلوب ويستخدم لمنع تكرار المراقبين داخل الكلية.',
+        'workload_reduction_percentage' => 'تحدد هذه النسبة مقدار تخفيض عدد المراقبات التي يمكن إسنادها لهذا المراقب. القيمة 0% تعني بدون تخفيض، و100% تعني إعفاءه من التوزيع الآلي.',
+        'invigilator_distribution_settings_choice_info' => 'نمط التوزيع يحدد الطريقة التي يختار بها النظام المراقبين عند وجود أكثر من مراقب مناسب. تفضيل الأيام يحدد إن كان النظام يميل لاستخدام الأيام الأولى أو الأخيرة أو توزيع التكليفات على كامل الفترة.',
+        'distribution_pattern_descriptions' => [
+            'balanced' => 'يوزع المراقبات بعدالة قدر الإمكان بحيث يحصل كل مراقب على عدد قريب من الآخر، مع مراعاة التعارضات والحد الأقصى للمراقبات.',
+            'consecutive' => 'يفضل إعطاء المراقب مراقبات في أيام متقاربة أو متتالية قدر الإمكان، لتجميع تكليفه بدل توزيعه على فترات متباعدة.',
+            'distributed' => 'يفضل توزيع مراقبات المراقب على أيام متباعدة قدر الإمكان، لتجنب تكليفه في أيام متتالية.',
+            'random' => 'يختار المراقبين عشوائيًا بعد تطبيق الشروط الأساسية مثل عدم التعارض والحد الأقصى للمراقبات.',
+        ],
+        'day_preference_descriptions' => [
+            'balanced' => 'لا يعطي أولوية للأيام الأولى أو الأخيرة، ويحاول توزيع التكليفات بشكل متوازن على كامل فترة الامتحانات.',
+            'early' => 'يفضل إسناد المراقبات في بداية فترة الامتحانات قدر الإمكان.',
+            'late' => 'يفضل إسناد المراقبات في نهاية فترة الامتحانات قدر الإمكان.',
+        ],
     ],
 
     'notifications' => [
@@ -204,6 +311,16 @@ return [
         'distribution_no_students' => 'لا يوجد طلاب ضمن هذه الجلسة الامتحانية لتوزيعهم.',
         'distribution_no_halls' => 'لا توجد قاعات فعالة متاحة ضمن الكلية الحالية لإجراء التوزيع.',
         'distribution_no_assignments_to_export' => 'لا يوجد توزيع حالي للتصدير',
+        'global_hall_distribution_completed' => 'تم تنفيذ التوزيع الشامل بنجاح.',
+        'global_hall_distribution_completed_with_issues' => 'تم تنفيذ التوزيع الشامل مع وجود طلاب غير موزعين أو نقص في السعة.',
+        'global_hall_distribution_failed' => 'لا يمكن تنفيذ التوزيع الشامل.',
+        'invigilators_imported' => 'تم استيراد المراقبين',
+        'invigilators_imported_body' => 'تم استيراد أو تحديث :count مراقب/مراقبين.',
+        'invigilator_distribution_completed' => 'تم توزيع المراقبين بنجاح',
+        'invigilator_distribution_warning' => 'توزيع المراقبين يحتاج إلى مراجعة',
+        'invigilator_distribution_blocked' => 'لا يمكن تنفيذ توزيع المراقبين',
+        'invigilator_distribution_completed_with_shortage' => 'اكتمل التوزيع مع وجود نقص مقداره :count.',
+        'invigilator_distribution_no_used_halls' => 'لا توجد قاعات مستخدمة ضمن الفترة المحددة. تأكد من تنفيذ توزيع الطلاب على القاعات أولاً.',
     ],
 
     'distribution_statuses' => [
@@ -233,6 +350,119 @@ return [
         'review_distribution_constraints' => 'راجع ربط المواد والجلسة أو قيود التوزيع الحالية، ثم أعد تنفيذ التوزيع.',
         'all_distributed' => 'جميع الطلاب تم توزيعهم بنجاح.',
         'remaining_capacity' => 'لا يزال هناك :count مقعد متبقٍ يمكن الاستفادة منه في الجلسات التالية أو بعد إعادة التوزيع.',
+        'no_hall_distribution_results' => 'لا توجد قاعات مستخدمة ضمن النطاق المحدد.',
+        'invigilators_all_distributed' => 'تم توزيع جميع المراقبين بنجاح.',
+        'invigilator_role_shortage' => 'تحتاج إلى إضافة :count من نوع :role.',
+        'invigilator_reduction_shortage_hint' => 'قد يكون النقص بسبب وجود مراقبين لديهم نسبة تخفيض عالية أو إعفاء كامل من التوزيع الآلي.',
+    ],
+
+    'invigilator_shortage_reasons' => [
+        'no_active_role' => 'لا يوجد مراقب فعال بهذا النوع',
+        'max_assignments_exceeded' => 'جميع المراقبين تجاوزوا الحد الأقصى',
+        'time_conflict' => 'يوجد تعارض في نفس الموعد',
+        'multiple_per_day_not_allowed' => 'لا يسمح بأكثر من مراقبة في اليوم',
+        'missing_hall_requirement' => 'لا توجد إعدادات احتياج لهذه القاعة',
+        'workload_reduction_exemptions' => 'بعض المراقبين لديهم إعفاء أو تخفيض 100%.',
+        'no_eligible_invigilator' => 'لا يوجد مراقب مؤهل حسب القيود الحالية',
+    ],
+
+    'warnings' => [
+        'before_invigilator_distribution_title' => 'تنبيه قبل توزيع المراقبين',
+        'before_invigilator_distribution_message' => 'يجب تنفيذ توزيع الطلاب على القاعات الامتحانية أولًا، لأن توزيع المراقبين يعتمد على القاعات المستخدمة فعليًا بعد توزيع الطلاب.',
+        'student_distribution_incomplete' => 'لا يمكن توزيع المراقبين لأن بعض البرامج الامتحانية ضمن هذه الكلية والفترة المحددة لم يتم توزيع الطلاب فيها على القاعات.',
+        'manual_assignments_preserved' => 'توجد تكليفات يدوية ضمن هذا النطاق. سيحافظ النظام عليها افتراضيًا ويعيد توزيع التكليفات الآلية فقط.',
+    ],
+
+    'confirmations' => [
+        'rerun_invigilator_distribution' => 'سيتم حذف التكليفات الآلية السابقة ضمن النطاق المحدد وإعادة إنشائها، مع الحفاظ على التكليفات اليدوية. هل تريد المتابعة؟',
+    ],
+
+    'workflow' => [
+        'select_faculty_and_period' => 'اختر الكلية والفترة',
+        'confirm_exam_readiness' => 'تأكد أن الجداول الامتحانية وتوزيع الطلاب مكتمل',
+        'run_distribution' => 'ضع علامة التأكيد ثم نفذ توزيع المراقبين',
+        'review_results' => 'راجع النتائج والنقص',
+        'export_reports' => 'صدر التقرير حسب المراقب أو القاعة أو اليوم',
+        'step_1' => 'الخطوة 1: اختر الكلية والفترة',
+        'step_2' => 'الخطوة 2: تأكد من توزيع الطلاب على القاعات',
+        'step_3' => 'الخطوة 3: فعّل مربع التأكيد',
+        'step_4' => 'الخطوة 4: نفّذ توزيع المراقبين',
+        'step_5' => 'الخطوة 5: راجع النتائج وصدّر التقارير',
+    ],
+
+    'global_hall_distribution' => [
+        'modal_title' => 'توزيع شامل للطلاب على القاعات',
+        'modal_description' => 'سيقوم النظام بتوزيع الطلاب على القاعات لجميع البرامج الامتحانية ضمن الكلية والفترة المحددة، مع مراعاة أن المواد التي لها نفس التاريخ والوقت يتم توزيعها معًا على القاعات المتاحة.',
+        'confirmation_label' => 'أؤكد أنني أريد توزيع الطلاب على القاعات لجميع البرامج الامتحانية ضمن الكلية والفترة المحددة.',
+        'redistribute_label' => 'إعادة توزيع البرامج التي تم توزيعها مسبقًا',
+        'redistribute_helper' => 'عند تفعيل هذا الخيار سيحذف النظام توزيع الطلاب السابق للمواعيد المحددة ضمن هذه الكلية فقط، ثم ينشئ توزيعًا جديدًا.',
+        'slot_skipped' => 'تم تخطي هذا الموعد لأنه موزع مسبقًا.',
+        'reasons' => [
+            'confirmation_missing' => 'يجب تأكيد رغبتك بتنفيذ التوزيع الشامل أولًا.',
+            'missing_required_inputs' => 'يرجى اختيار الكلية والفترة وتفعيل مربع التأكيد قبل تنفيذ التوزيع الشامل.',
+            'no_offerings' => 'لا توجد برامج امتحانية ضمن الفترة المحددة.',
+            'no_active_halls' => 'لا توجد قاعات فعالة لهذه الكلية.',
+            'no_students' => 'لا يوجد طلاب ضمن البرامج المحددة.',
+            'capacity_shortage' => 'السعة المتاحة غير كافية لتوزيع جميع الطلاب.',
+        ],
+        'summary' => [
+            'offerings_count' => 'عدد البرامج الامتحانية',
+            'slots_count' => 'عدد المواعيد الامتحانية',
+            'students_count' => 'عدد الطلاب الكلي',
+            'assigned_students_count' => 'عدد الطلاب الموزعين',
+            'unassigned_students_count' => 'عدد الطلاب غير الموزعين',
+            'used_halls_count' => 'عدد القاعات المستخدمة',
+            'total_capacity' => 'السعة الإجمالية',
+            'capacity_shortage' => 'العجز إن وجد',
+            'distributed_slots_count' => 'عدد المواعيد التي تم توزيعها',
+            'skipped_slots_count' => 'عدد المواعيد التي تم تخطيها',
+            'issue_slots_count' => 'عدد المواعيد التي فيها مشكلة',
+        ],
+    ],
+
+    'readiness' => [
+        'title' => 'حالة توزيع الطلاب على القاعات',
+        'ready_message' => 'تم توزيع الطلاب على القاعات ويمكن الآن توزيع المراقبين.',
+        'not_ready_message' => 'لم يتم توزيع الطلاب على القاعات لجميع المواعيد المحددة.',
+        'fix_helper' => 'يرجى تنفيذ توزيع الطلاب على القاعات لجميع البرامج الامتحانية ضمن الكلية والفترة المحددة ثم العودة إلى هذه الصفحة.',
+        'disabled_reasons_title' => 'سبب تعطيل زر التوزيع',
+        'incomplete_slots_title' => 'المواعيد غير المكتملة',
+        'offerings_count' => 'عدد البرامج الامتحانية',
+        'slots_count' => 'عدد المواعيد الامتحانية',
+        'distributed_slots_count' => 'عدد المواعيد التي تم توزيع الطلاب فيها',
+        'used_halls_count' => 'عدد القاعات المستخدمة',
+        'halls_needing_invigilators_count' => 'عدد القاعات التي تحتاج مراقبين',
+        'assigned_students_count' => 'عدد الطلاب الموزعين',
+        'unassigned_students_count' => 'عدد الطلاب غير الموزعين',
+        'incomplete_slots_count' => 'عدد المواعيد غير المكتملة',
+        'reasons' => [
+            'college_missing' => 'لم يتم اختيار الكلية.',
+            'period_missing' => 'لم يتم تحديد الفترة.',
+            'no_offerings' => 'لا توجد جداول امتحانية ضمن الفترة المحددة.',
+            'student_distribution_missing' => 'لم يتم توزيع الطلاب على القاعات بعد.',
+            'no_used_halls' => 'لا توجد قاعات مستخدمة تحتاج إلى مراقبين.',
+            'confirmation_missing' => 'يجب تأكيد اكتمال توزيع الطلاب أولًا.',
+            'permission_missing' => 'لا تملك صلاحية تنفيذ توزيع المراقبين.',
+        ],
+    ],
+
+    'tabs' => [
+        'by_invigilator' => 'حسب المراقب',
+        'by_hall' => 'حسب القاعة',
+        'by_day' => 'حسب اليوم',
+    ],
+
+    'reports' => [
+        'hall_report' => 'تقرير القاعات',
+        'personal_schedule' => 'برنامج المراقب الشخصي',
+        'shortage_report' => 'تقرير النقص',
+    ],
+
+    'scopes' => [
+        'all_slots' => 'كل المواعيد',
+        'date_range' => 'نطاق تاريخ',
+        'single_date' => 'تاريخ محدد',
+        'single_slot' => 'موعد محدد',
     ],
 
     'unassigned_reasons' => [
@@ -265,9 +495,18 @@ return [
         'student_number_exists_in_offering' => 'الرقم الجامعي :student_number موجود مسبقاً ضمن هذا البرنامج.',
         'hall_type_capacity_mismatch' => 'تعذر الحفظ لأن نوع القاعة المحدد (:selected) لا يطابق السعة المدخلة (:capacity). حسب الإعدادات الحالية، النوع الصحيح لهذه السعة هو :expected.',
         'hall_settings_conflict_existing_halls' => 'لا يمكن حفظ الإعدادات لأن :count قاعة حالية ستصبح غير متوافقة، مثل: :halls.',
+        'invalid_staff_category' => 'نوع الكادر غير صحيح.',
+        'invalid_invigilation_role' => 'نوع المراقبة غير صحيح.',
+        'invalid_boolean' => 'قيمة الفعالية يجب أن تكون نعم/لا أو yes/no أو 1/0.',
+        'invalid_workload_reduction_percentage' => 'نسبة تخفيض المراقبات يجب أن تكون رقماً بين 0 و100.',
+        'invigilator_phone_required' => 'رقم الهاتف مطلوب.',
+        'invigilator_phone_required_in_import' => 'رقم الهاتف مطلوب في ملف المراقبين.',
+        'invigilator_import_row_failed' => 'خطأ في صف :row: :message',
+        'invigilator_name_exists_without_phone' => 'يوجد مراقب بنفس الاسم بدون رقم هاتف ضمن هذه الكلية.',
     ],
 
     'pages' => [
         'slot_hall_distribution' => 'توزيع الطلاب على القاعات',
+        'invigilator_distribution' => 'توزيع المراقبين',
     ],
 ];

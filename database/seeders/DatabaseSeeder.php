@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
             SubjectExamOfferingSeeder::class,
             ExamStudentSeeder::class,
             ExamHallSeeder::class,
+            InvigilatorSeeder::class,
         ]);
     }
 }

@@ -80,6 +80,11 @@ class SubjectExamOffering extends Model
         return $this->hasMany(ExamStudentHallAssignment::class);
     }
 
+    public function invigilatorAssignments(): HasMany
+    {
+        return $this->hasMany(InvigilatorAssignment::class);
+    }
+
     public function scopeWithSameSlotOfferingsCount(Builder $query): Builder
     {
         return $query

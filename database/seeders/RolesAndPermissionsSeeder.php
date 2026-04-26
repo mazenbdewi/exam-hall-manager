@@ -30,10 +30,12 @@ class RolesAndPermissionsSeeder extends Seeder
         ]);
 
         if ($exitCode !== 0) {
-            throw new RuntimeException('Shield permission generation failed: ' . Artisan::output());
+            throw new RuntimeException('Shield permission generation failed: '.Artisan::output());
         }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $this->ensureCustomPermissions();
 
         $superAdminRole = Role::findOrCreate(RoleNames::SUPER_ADMIN, 'web');
         $adminRole = Role::findOrCreate(RoleNames::ADMIN, 'web');
@@ -54,6 +56,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'Subject',
             'SubjectExamOffering',
             'User',
+            'Invigilator',
+            'InvigilatorDistributionSetting',
+            'InvigilatorHallRequirement',
+            'InvigilatorAssignment',
         ];
 
         $viewOnlyResources = [
@@ -75,6 +81,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'forceDeleteAny',
             'replicate',
             'reorder',
+            'import',
+            'run',
+            'export',
         ];
 
         $viewOnlyActions = [
@@ -92,7 +101,27 @@ class RolesAndPermissionsSeeder extends Seeder
                         ->map(fn (string $action): string => ShieldPermission::resource($action, $resource))
                         ->all()),
             )
+            ->merge($this->customPermissions())
             ->filter(fn (string $permission): bool => Permission::query()->where('name', $permission)->exists())
             ->values();
+    }
+
+    protected function ensureCustomPermissions(): void
+    {
+        collect($this->customPermissions())->each(fn (string $permission): Permission => Permission::findOrCreate($permission, 'web'));
+    }
+
+    protected function customPermissions(): array
+    {
+        return [
+            'view_invigilator_distribution',
+            'run_invigilator_distribution',
+            'rerun_invigilator_distribution',
+            'export_invigilator_distribution',
+            'view_invigilator_shortage_report',
+            ShieldPermission::resource('import', 'Invigilator'),
+            ShieldPermission::resource('run', 'InvigilatorAssignment'),
+            ShieldPermission::resource('export', 'InvigilatorAssignment'),
+        ];
     }
 }

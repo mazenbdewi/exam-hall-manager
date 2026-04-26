@@ -44,4 +44,9 @@ class ExamHall extends Model
     {
         return $this->hasMany(HallAssignment::class);
     }
+
+    public function invigilatorAssignments(): HasMany
+    {
+        return $this->hasMany(InvigilatorAssignment::class);
+    }
 }

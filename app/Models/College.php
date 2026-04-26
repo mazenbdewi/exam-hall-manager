@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class College extends Model
@@ -48,5 +49,25 @@ class College extends Model
     public function hallAssignments(): HasMany
     {
         return $this->hasMany(HallAssignment::class);
+    }
+
+    public function invigilators(): HasMany
+    {
+        return $this->hasMany(Invigilator::class);
+    }
+
+    public function invigilatorDistributionSetting(): HasOne
+    {
+        return $this->hasOne(InvigilatorDistributionSetting::class);
+    }
+
+    public function invigilatorHallRequirements(): HasMany
+    {
+        return $this->hasMany(InvigilatorHallRequirement::class);
+    }
+
+    public function invigilatorAssignments(): HasMany
+    {
+        return $this->hasMany(InvigilatorAssignment::class);
     }
 }
