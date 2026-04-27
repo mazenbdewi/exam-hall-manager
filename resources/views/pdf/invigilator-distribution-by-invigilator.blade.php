@@ -5,44 +5,36 @@
     <title>{{ __('exam.actions.export_invigilator_pdf_by_invigilator') }}</title>
     <style>
         body { font-family: 'notosansarabic', sans-serif; font-size: 10px; color: #111827; direction: rtl; text-align: right; }
-        .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+        @include('pdf.partials.report-styles')
+        .card { border: 1px solid #dbe3ea; padding: 10px; margin-bottom: 12px; background: #ffffff; }
         .page { page-break-after: always; }
         .page:last-child { page-break-after: auto; }
         .title { font-size: 18px; font-weight: bold; }
         .section-title { font-size: 14px; font-weight: bold; margin-bottom: 8px; }
-        .muted { color: #4b5563; }
-        .logo { width: 56px; height: 56px; object-fit: contain; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
-        th { background: #f3f4f6; font-weight: bold; }
-        .header-table td { border: 0; }
-        .ltr { direction: ltr; unicode-bidi: embed; }
+        th, td { border: 1px solid #dbe3ea; padding: 6px 7px; vertical-align: top; }
+        th { background: #eef2f7; font-weight: bold; color: #0f172a; }
+        .meta-line span { display: inline-block; margin-left: 18px; margin-bottom: 4px; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <table class="header-table">
-            <tr>
-                <td style="width: 70px;">@if ($logoDataUri)<img src="{{ $logoDataUri }}" class="logo" alt="">@endif</td>
-                <td>
-                    <div class="title">{{ $systemSetting->university_name }}</div>
-                    <div class="muted">{{ __('exam.fields.report_type') }}: {{ __('exam.pages.invigilator_distribution') }} - {{ __('exam.tabs.by_invigilator') }}</div>
-                    <div class="muted">{{ __('exam.fields.college') }}: {{ $summary['college']->name }}</div>
-                    <div class="muted">{{ __('exam.fields.period') }}: <span class="ltr">{{ $summary['from_date'] ?: '—' }}</span> - <span class="ltr">{{ $summary['to_date'] ?: '—' }}</span></div>
-                </td>
-            </tr>
-        </table>
-    </div>
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $summary['college']->name,
+        'reportTitle' => 'تقرير توزيع المراقبين حسب المراقب',
+        'reportSubtitle' => __('exam.pages.invigilator_distribution'),
+        'dateRange' => $reportDateRange ?? __('exam.fields.period').': —',
+    ])
 
     @forelse ($summary['by_invigilator'] as $invigilator)
         <div class="page">
             <div class="card">
                 <div class="section-title">{{ $invigilator['name'] }}</div>
-                <div>{{ __('exam.fields.staff_category') }}: {{ $invigilator['staff_category'] ?: '—' }}</div>
-                <div>{{ __('exam.fields.invigilation_role') }}: {{ $invigilator['invigilation_role'] ?: '—' }}</div>
-                <div>{{ __('exam.fields.phone') }}: <span class="ltr">{{ $invigilator['phone'] ?: '—' }}</span></div>
-                <div>{{ __('exam.fields.workload_reduction_percentage') }}: {{ $invigilator['workload_reduction_percentage'] ?? 0 }}%</div>
-                <div>{{ __('exam.fields.assignments_count') }}: {{ $invigilator['assignments_count'] }}</div>
+                <div class="meta-line muted">
+                    <span>{{ __('exam.fields.staff_category') }}: {{ $invigilator['staff_category'] ?: '—' }}</span>
+                    <span>{{ __('exam.fields.invigilation_role') }}: {{ $invigilator['invigilation_role'] ?: '—' }}</span>
+                </div>
             </div>
             <table>
                 <thead>
@@ -52,6 +44,7 @@
                         <th>{{ __('exam.fields.hall_name') }}</th>
                         <th>{{ __('exam.fields.hall_location') }}</th>
                         <th>{{ __('exam.fields.role_in_hall') }}</th>
+                        <th>{{ __('exam.fields.notes') }}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -62,6 +55,7 @@
                             <td>{{ $assignment['hall_name'] }}</td>
                             <td>{{ $assignment['hall_location'] }}</td>
                             <td>{{ $assignment['role_label'] }}</td>
+                            <td>{{ $assignment['notes'] ?: '—' }}</td>
                         </tr>
                     @endforeach
                 </tbody>

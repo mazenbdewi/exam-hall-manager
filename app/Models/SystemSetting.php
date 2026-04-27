@@ -17,7 +17,7 @@ class SystemSetting extends Model
     public static function defaults(): array
     {
         return [
-            'university_name' => config('app.name'),
+            'university_name' => 'الجامعة الافتراضية السورية',
             'university_logo' => null,
         ];
     }

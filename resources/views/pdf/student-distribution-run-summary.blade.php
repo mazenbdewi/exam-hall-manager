@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <style>
         body { font-family: notosansarabic, sans-serif; direction: rtl; text-align: right; color: #111827; }
+        @include('pdf.partials.report-styles')
         .header { border-bottom: 2px solid #111827; padding-bottom: 10px; margin-bottom: 16px; }
         .title { font-size: 20px; font-weight: bold; }
         .meta { margin-top: 6px; color: #4b5563; font-size: 12px; }
@@ -16,16 +17,18 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="title">{{ __('exam.global_hall_distribution.summary_report_title') }}</div>
-        <div class="meta">
-            {{ __('exam.fields.college') }}: {{ $run->college?->name ?? '—' }}
-            |
-            {{ __('exam.fields.period') }}: {{ $run->from_date?->format('Y-m-d') }} - {{ $run->to_date?->format('Y-m-d') }}
-            |
-            {{ __('exam.fields.status') }}: {{ $run->statusLabel() }}
-        </div>
-    </div>
+    @php
+        $runPeriod = __('exam.fields.period').': '.($run->from_date?->format('Y-m-d') ?? '—').' - '.($run->to_date?->format('Y-m-d') ?? '—');
+    @endphp
+
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $run->college?->name ?? '—',
+        'reportTitle' => 'تقرير توزيع الطلاب على القاعات',
+        'reportSubtitle' => __('exam.fields.status').': '.$run->statusLabel(),
+        'dateRange' => $runPeriod,
+    ])
 
     <div class="{{ $run->status === 'success' ? 'success' : ($run->status === 'partial' ? 'warning' : 'danger') }}">
         {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message')) }}

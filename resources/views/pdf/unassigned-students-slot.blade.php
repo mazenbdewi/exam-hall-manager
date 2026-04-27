@@ -12,6 +12,7 @@
             text-align: right;
             unicode-bidi: embed;
         }
+        @include('pdf.partials.report-styles')
         .card {
             border: 1px solid #d1d5db;
             border-radius: 10px;
@@ -19,19 +20,10 @@
             margin-bottom: 14px;
             background: #ffffff;
         }
-        .header-table,
         .students-table,
         .subjects-table {
             width: 100%;
             border-collapse: collapse;
-        }
-        .header-table td {
-            vertical-align: top;
-        }
-        .logo {
-            width: 72px;
-            height: 72px;
-            object-fit: contain;
         }
         .title {
             font-size: 20px;
@@ -101,33 +93,17 @@
     @php
         $unassignedStudents = $summary['unassigned_students'] ?? [];
         $unassignedBySubject = $summary['unassigned_summary_by_subject'] ?? [];
+        $examDateTime = __('exam.fields.exam_date').': '.$summary['exam_date'].' | '.__('exam.fields.exam_start_time').': '.substr((string) $summary['exam_start_time'], 0, 5);
     @endphp
 
-    <div class="card">
-        <table class="header-table">
-            <tr>
-                <td style="width: 90px;">
-                    @if ($logoDataUri)
-                        <img src="{{ $logoDataUri }}" alt="University Logo" class="logo">
-                    @endif
-                </td>
-                <td>
-                    <div class="title">{{ $systemSetting->university_name }}</div>
-                    <div class="subtitle">كشف الطلاب غير الموزعين</div>
-                    <div class="muted" style="margin-top: 6px;">
-                        {{ __('exam.fields.college') }}: {{ $summary['context']['college_name'] ?? '' }}
-                    </div>
-                    <div class="muted" style="margin-top: 3px;">
-                        {{ __('exam.fields.exam_date') }}:
-                        <span class="ltr">{{ $summary['exam_date'] }}</span>
-                        |
-                        {{ __('exam.fields.exam_start_time') }}:
-                        <span class="ltr">{{ substr((string) $summary['exam_start_time'], 0, 5) }}</span>
-                    </div>
-                </td>
-            </tr>
-        </table>
-    </div>
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $summary['context']['college_name'] ?? '—',
+        'reportTitle' => 'تقرير الطلاب غير الموزعين',
+        'reportSubtitle' => 'قائمة الحالات التي تحتاج إلى معالجة قبل اعتماد التوزيع',
+        'dateRange' => $examDateTime,
+    ])
 
     <table class="stats">
         <tr>
@@ -182,6 +158,8 @@
                     <th>{{ __('exam.fields.student_number') }}</th>
                     <th>{{ __('exam.fields.full_name') }}</th>
                     <th>{{ __('exam.fields.subject') }}</th>
+                    <th>{{ __('exam.fields.exam_date') }}</th>
+                    <th>{{ __('exam.fields.exam_start_time') }}</th>
                     <th>نوع الطالب</th>
                     <th>سبب عدم التوزيع</th>
                 </tr>
@@ -192,6 +170,8 @@
                         <td class="ltr">{{ $student['student_number'] }}</td>
                         <td class="student-name">{{ $student['full_name'] }}</td>
                         <td>{{ $student['subject_name'] }}</td>
+                        <td class="ltr">{{ $summary['exam_date'] }}</td>
+                        <td class="ltr">{{ substr((string) $summary['exam_start_time'], 0, 5) }}</td>
                         <td>{{ $student['student_type_label'] }}</td>
                         <td>{{ $student['reason'] }}</td>
                     </tr>

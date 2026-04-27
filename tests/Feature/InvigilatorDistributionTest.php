@@ -289,6 +289,43 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function invigilator_pdf_views_do_not_render_phone_numbers(): void
+    {
+        $context = $this->createSlotContext();
+        $this->createUsedHall($context['college'], 'قاعة بلا هواتف', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 1, 1, 1, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::HallHead, 1);
+        $this->createInvigilators($context['college'], InvigilationRole::Secretary, 1);
+        $this->createInvigilators($context['college'], InvigilationRole::Regular, 1);
+
+        app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($context['college'], null, null, '2026-06-01', '2026-06-01');
+        $viewData = [
+            'summary' => $summary,
+            'systemSetting' => SystemSetting::current(),
+            'logoDataUri' => null,
+            'reportDateRange' => __('exam.fields.period').': 2026-06-01 - 2026-06-01',
+        ];
+
+        $html = view('pdf.invigilator-distribution-by-invigilator', $viewData)->render()
+            .view('pdf.invigilator-distribution-by-hall', $viewData)->render();
+
+        $phones = Invigilator::query()
+            ->where('college_id', $context['college']->id)
+            ->pluck('phone')
+            ->filter()
+            ->all();
+
+        $this->assertStringNotContainsString(__('exam.fields.phone'), $html);
+        $this->assertStringNotContainsString(__('exam.fields.phone_numbers'), $html);
+
+        foreach ($phones as $phone) {
+            $this->assertStringNotContainsString($phone, $html);
+        }
+    }
+
+    #[Test]
     public function required_empty_role_cell_is_rendered_as_shortage_even_without_shortage_row(): void
     {
         $html = view('filament.pages.partials.invigilator-hall-card', [

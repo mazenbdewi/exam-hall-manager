@@ -132,6 +132,7 @@ class InvigilatorDistributionPdfService
             'summary' => $summary,
             'systemSetting' => $systemSetting,
             'logoDataUri' => $this->getLogoDataUri($systemSetting->university_logo),
+            'reportDateRange' => $this->reportDateRange($summary),
         ])->render();
 
         $pdf = $this->makePdf();
@@ -144,5 +145,27 @@ class InvigilatorDistributionPdfService
             $filename,
             ['Content-Type' => 'application/pdf'],
         );
+    }
+
+    protected function reportDateRange(array $summary): string
+    {
+        if (filled($summary['from_date'] ?? null) || filled($summary['to_date'] ?? null)) {
+            return __('exam.fields.period').': '.($summary['from_date'] ?: '—').' - '.($summary['to_date'] ?: '—');
+        }
+
+        $slots = collect($summary['slots'] ?? []);
+
+        if ($slots->count() === 1) {
+            $slot = $slots->first();
+
+            return __('exam.fields.exam_date').': '.($slot['exam_date'] ?? '—')
+                .' | '.__('exam.fields.exam_start_time').': '.substr((string) ($slot['start_time'] ?? ''), 0, 5);
+        }
+
+        if ($slots->isNotEmpty()) {
+            return __('exam.fields.period').': '.$slots->pluck('exam_date')->filter()->min().' - '.$slots->pluck('exam_date')->filter()->max();
+        }
+
+        return __('exam.fields.period').': —';
     }
 }

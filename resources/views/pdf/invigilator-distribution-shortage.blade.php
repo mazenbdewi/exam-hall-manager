@@ -5,31 +5,23 @@
     <title>{{ __('exam.sections.invigilator_shortage') }}</title>
     <style>
         body { font-family: 'notosansarabic', sans-serif; font-size: 10px; color: #111827; direction: rtl; text-align: right; }
-        .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+        @include('pdf.partials.report-styles')
+        .card { border: 1px solid #dbe3ea; padding: 10px; margin-bottom: 12px; background: #ffffff; }
         .title { font-size: 18px; font-weight: bold; }
-        .muted { color: #4b5563; }
-        .logo { width: 56px; height: 56px; object-fit: contain; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
-        th { background: #f3f4f6; font-weight: bold; }
-        .header-table td { border: 0; }
-        .ltr { direction: ltr; unicode-bidi: embed; }
+        th, td { border: 1px solid #dbe3ea; padding: 6px 7px; vertical-align: top; }
+        th { background: #eef2f7; font-weight: bold; color: #0f172a; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <table class="header-table">
-            <tr>
-                <td style="width: 70px;">@if ($logoDataUri)<img src="{{ $logoDataUri }}" class="logo" alt="">@endif</td>
-                <td>
-                    <div class="title">{{ __('exam.reports.invigilator_shortage_report_title') }}</div>
-                    <div class="muted">{{ $systemSetting->university_name }}</div>
-                    <div class="muted">{{ __('exam.fields.college') }}: {{ $summary['college']->name }}</div>
-                    <div class="muted">{{ __('exam.fields.period') }}: <span class="ltr">{{ $summary['from_date'] ?: '—' }}</span> - <span class="ltr">{{ $summary['to_date'] ?: '—' }}</span></div>
-                </td>
-            </tr>
-        </table>
-    </div>
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $summary['college']->name,
+        'reportTitle' => 'تقرير النقص في المراقبين',
+        'reportSubtitle' => __('exam.reports.shortage_summary_by_role'),
+        'dateRange' => $reportDateRange ?? __('exam.fields.period').': —',
+    ])
     <div class="card">
         <div class="title" style="font-size: 14px;">{{ __('exam.reports.shortage_summary_by_role') }}</div>
         <table>

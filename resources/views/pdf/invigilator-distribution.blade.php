@@ -5,35 +5,24 @@
     <title>{{ __('exam.pages.invigilator_distribution') }}</title>
     <style>
         body { font-family: 'notosansarabic', sans-serif; font-size: 10px; color: #111827; direction: rtl; text-align: right; }
-        .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+        @include('pdf.partials.report-styles')
+        .card { border: 1px solid #dbe3ea; padding: 10px; margin-bottom: 12px; background: #ffffff; }
         .title { font-size: 18px; font-weight: bold; margin-bottom: 4px; }
-        .muted { color: #4b5563; }
-        .logo { width: 64px; height: 64px; object-fit: contain; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
-        th { background: #f3f4f6; font-weight: bold; }
-        .header-table td { border: 0; }
+        th, td { border: 1px solid #dbe3ea; padding: 6px 7px; vertical-align: top; }
+        th { background: #eef2f7; font-weight: bold; color: #0f172a; }
         .section-title { font-size: 14px; font-weight: bold; margin: 0 0 8px; }
-        .ltr { direction: ltr; unicode-bidi: embed; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <table class="header-table">
-            <tr>
-                <td style="width: 80px;">
-                    @if ($logoDataUri)
-                        <img src="{{ $logoDataUri }}" class="logo" alt="">
-                    @endif
-                </td>
-                <td>
-                    <div class="title">{{ $systemSetting->university_name }}</div>
-                    <div class="muted">{{ __('exam.pages.invigilator_distribution') }}</div>
-                    <div class="muted">{{ __('exam.fields.college') }}: {{ $summary['college']->name }}</div>
-                </td>
-            </tr>
-        </table>
-    </div>
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $summary['college']->name,
+        'reportTitle' => 'تقرير توزيع المراقبين حسب القاعات',
+        'reportSubtitle' => __('exam.pages.invigilator_distribution'),
+        'dateRange' => $reportDateRange ?? __('exam.fields.period').': —',
+    ])
 
     <div class="card">
         <div class="section-title">{{ __('exam.reports.hall_report') }}</div>

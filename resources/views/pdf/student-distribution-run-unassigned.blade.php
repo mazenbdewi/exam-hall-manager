@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <style>
         body { font-family: notosansarabic, sans-serif; direction: rtl; text-align: right; color: #111827; }
+        @include('pdf.partials.report-styles')
         .header { border-bottom: 2px solid #111827; padding-bottom: 10px; margin-bottom: 16px; }
         .title { font-size: 20px; font-weight: bold; }
         .meta { margin-top: 6px; color: #4b5563; font-size: 12px; }
@@ -14,14 +15,18 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="title">{{ __('exam.global_hall_distribution.unassigned_report_title') }}</div>
-        <div class="meta">
-            {{ __('exam.fields.college') }}: {{ $run->college?->name ?? '—' }}
-            |
-            {{ __('exam.fields.period') }}: {{ $run->from_date?->format('Y-m-d') }} - {{ $run->to_date?->format('Y-m-d') }}
-        </div>
-    </div>
+    @php
+        $runPeriod = __('exam.fields.period').': '.($run->from_date?->format('Y-m-d') ?? '—').' - '.($run->to_date?->format('Y-m-d') ?? '—');
+    @endphp
+
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $run->college?->name ?? '—',
+        'reportTitle' => 'تقرير الطلاب غير الموزعين',
+        'reportSubtitle' => __('exam.global_hall_distribution.problem_message'),
+        'dateRange' => $runPeriod,
+    ])
 
     <div class="warning">
         {{ __('exam.global_hall_distribution.problem_message') }}

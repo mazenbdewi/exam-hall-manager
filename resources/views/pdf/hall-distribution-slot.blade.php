@@ -12,27 +12,19 @@
             text-align: right;
             unicode-bidi: embed;
         }
+        @include('pdf.partials.report-styles')
         .page {
             width: 100%;
         }
         .page + .page {
             page-break-before: always;
         }
-        .header-table,
         .stats-table,
         .subjects-table,
         .students-table,
         .halls-table {
             width: 100%;
             border-collapse: collapse;
-        }
-        .header-table td {
-            vertical-align: top;
-        }
-        .logo {
-            width: 72px;
-            height: 72px;
-            object-fit: contain;
         }
         .title {
             font-size: 20px;
@@ -189,37 +181,18 @@
     @php
         $statusTone = $summary['distribution_status']['tone'] ?? 'gray';
         $statusLabel = $summary['distribution_status']['label'] ?? __('exam.distribution_statuses.not_run');
+        $examDateTime = __('exam.fields.exam_date').': '.$summary['exam_date'].' | '.__('exam.fields.exam_start_time').': '.substr((string) $summary['exam_start_time'], 0, 5);
     @endphp
 
     <div class="page">
-        <div class="card">
-            <table class="header-table">
-                <tr>
-                    <td style="width: 90px;">
-                        @if ($logoDataUri)
-                            <img src="{{ $logoDataUri }}" alt="University Logo" class="logo">
-                        @endif
-                    </td>
-                    <td>
-                        <div class="title">{{ $systemSetting->university_name }}</div>
-                        <div class="subtitle">{{ __('exam.pages.slot_hall_distribution') }}</div>
-                        <div class="muted" style="margin-top: 6px;">
-                            {{ __('exam.fields.college') }}: {{ $summary['context']['college_name'] ?? '' }}
-                        </div>
-                        <div class="muted" style="margin-top: 3px;">
-                            {{ __('exam.fields.exam_date') }}:
-                            <span class="ltr">{{ $summary['exam_date'] }}</span>
-                            |
-                            {{ __('exam.fields.exam_start_time') }}:
-                            <span class="ltr">{{ substr((string) $summary['exam_start_time'], 0, 5) }}</span>
-                        </div>
-                        <div style="margin-top: 8px;">
-                            <span class="pill {{ $statusTone }}">{{ $statusLabel }}</span>
-                        </div>
-                    </td>
-                </tr>
-            </table>
-        </div>
+        @include('pdf.partials.report-header', [
+            'universityName' => $systemSetting->university_name,
+            'universityLogo' => $logoDataUri,
+            'facultyName' => $summary['context']['college_name'] ?? '—',
+            'reportTitle' => 'تقرير توزيع الطلاب على القاعات',
+            'reportSubtitle' => $statusLabel,
+            'dateRange' => $examDateTime,
+        ])
 
         <table class="mini-grid">
             <tr>
@@ -363,6 +336,9 @@
                             <th>{{ __('exam.fields.student_number') }}</th>
                             <th>{{ __('exam.fields.full_name') }}</th>
                             <th>{{ __('exam.fields.subject') }}</th>
+                            <th>{{ __('exam.fields.hall_name') }}</th>
+                            <th>{{ __('exam.fields.exam_date') }}</th>
+                            <th>{{ __('exam.fields.exam_start_time') }}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -371,6 +347,9 @@
                                 <td class="ltr">{{ $studentAssignment['student_number'] }}</td>
                                 <td class="student-name">{{ $studentAssignment['full_name'] }}</td>
                                 <td>{{ $studentAssignment['subject_name'] }}</td>
+                                <td>{{ $hallAssignment['hall_name'] }}</td>
+                                <td class="ltr">{{ $summary['exam_date'] }}</td>
+                                <td class="ltr">{{ substr((string) $summary['exam_start_time'], 0, 5) }}</td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -393,6 +372,8 @@
                             <th>{{ __('exam.fields.student_number') }}</th>
                             <th>{{ __('exam.fields.full_name') }}</th>
                             <th>{{ __('exam.fields.subject') }}</th>
+                            <th>{{ __('exam.fields.exam_date') }}</th>
+                            <th>{{ __('exam.fields.exam_start_time') }}</th>
                             <th>نوع الطالب</th>
                             <th>سبب عدم التوزيع</th>
                         </tr>
@@ -403,6 +384,8 @@
                                 <td class="ltr">{{ $student['student_number'] }}</td>
                                 <td class="student-name">{{ $student['full_name'] }}</td>
                                 <td>{{ $student['subject_name'] }}</td>
+                                <td class="ltr">{{ $summary['exam_date'] }}</td>
+                                <td class="ltr">{{ substr((string) $summary['exam_start_time'], 0, 5) }}</td>
                                 <td>{{ $student['student_type_label'] }}</td>
                                 <td>{{ $student['reason'] }}</td>
                             </tr>
