@@ -20,6 +20,9 @@ class InvigilatorDistributionSetting extends Model
         'max_assignments_per_day',
         'distribution_pattern',
         'day_preference',
+        'show_all_invigilator_assignments',
+        'visibility_before_minutes',
+        'visibility_after_minutes',
     ];
 
     protected function casts(): array
@@ -31,6 +34,9 @@ class InvigilatorDistributionSetting extends Model
             'max_assignments_per_day' => 'integer',
             'distribution_pattern' => InvigilatorDistributionPattern::class,
             'day_preference' => InvigilatorDayPreference::class,
+            'show_all_invigilator_assignments' => 'boolean',
+            'visibility_before_minutes' => 'integer',
+            'visibility_after_minutes' => 'integer',
         ];
     }
 
@@ -51,6 +57,9 @@ class InvigilatorDistributionSetting extends Model
             'max_assignments_per_day' => 1,
             'distribution_pattern' => InvigilatorDistributionPattern::Balanced->value,
             'day_preference' => InvigilatorDayPreference::Balanced->value,
+            'show_all_invigilator_assignments' => false,
+            'visibility_before_minutes' => 60,
+            'visibility_after_minutes' => 180,
         ]);
     }
 }

@@ -22,6 +22,7 @@
         <nav aria-label="روابط التذييل" class="flex gap-4">
             <a href="{{ route('home') }}" class="font-bold text-slate-700 transition hover:text-blue-700">الرئيسية</a>
             <a href="{{ route('students.lookup') }}" class="font-bold text-slate-700 transition hover:text-blue-700">استعلام الطلاب</a>
+            <a href="{{ route('invigilators.lookup') }}" class="font-bold text-slate-700 transition hover:text-blue-700">استعلام المراقبين</a>
         </nav>
     </div>
 </footer>

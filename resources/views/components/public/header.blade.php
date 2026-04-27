@@ -19,6 +19,7 @@
     $links = [
         ['label' => 'الرئيسية', 'url' => route('home'), 'active' => request()->routeIs('home')],
         ['label' => 'استعلام الطلاب', 'url' => route('students.lookup'), 'active' => request()->routeIs('students.lookup')],
+        ['label' => 'استعلام المراقبين', 'url' => route('invigilators.lookup'), 'active' => request()->routeIs('invigilators.lookup')],
     ];
 @endphp
 

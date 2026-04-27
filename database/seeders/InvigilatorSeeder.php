@@ -38,6 +38,9 @@ class InvigilatorSeeder extends Seeder
                 'max_assignments_per_day' => 1,
                 'distribution_pattern' => InvigilatorDistributionPattern::Balanced->value,
                 'day_preference' => InvigilatorDayPreference::Balanced->value,
+                'show_all_invigilator_assignments' => false,
+                'visibility_before_minutes' => 60,
+                'visibility_after_minutes' => 180,
             ],
         );
     }

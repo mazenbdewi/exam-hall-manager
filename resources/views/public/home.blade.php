@@ -55,15 +55,18 @@
                 </h1>
 
                 <p class="mt-5 max-w-2xl text-base leading-8 text-slate-600 sm:text-lg">
-                    منصة إلكترونية تساعد الطلاب على معرفة القاعة الامتحانية، التاريخ، الوقت، وموقع القاعة بسهولة.
+                    منصة إلكترونية تساعد الطلاب والمراقبين على معرفة القاعة، التاريخ، الوقت، وموقع القاعة بسهولة.
                 </p>
 
                 <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
                     <a href="{{ route('students.lookup') }}" class="inline-flex min-h-12 items-center justify-center rounded-2xl bg-blue-700 px-7 py-3 text-base font-bold text-white shadow-lg shadow-blue-700/20 transition hover:-translate-y-0.5 hover:bg-blue-800">
                         استعلام الطلاب الآن
                     </a>
+                    <a href="{{ route('invigilators.lookup') }}" class="inline-flex min-h-12 items-center justify-center rounded-2xl border border-blue-200 bg-white px-7 py-3 text-base font-bold text-blue-800 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:bg-blue-50">
+                        استعلام المراقبين
+                    </a>
                     <p class="text-sm leading-6 text-slate-500">
-                        أدخل رقمك الامتحاني واحصل على النتيجة خلال ثوانٍ.
+                        أدخل الرقم المطلوب واحصل على النتيجة خلال ثوانٍ.
                     </p>
                 </div>
             </div>
@@ -97,6 +100,34 @@
         </section>
 
         <section class="grid gap-4 py-6 sm:grid-cols-2 lg:grid-cols-4">
+            <article class="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-blue-950/5 transition hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-950/10">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M8 7h8M8 11h8M8 15h5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
+                        <path d="M6.5 3.5h11A1.5 1.5 0 0 1 19 5v14.5l-3-1.5-3 1.5-3-1.5-3 1.5V5a1.5 1.5 0 0 1 1.5-1.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    </svg>
+                </div>
+                <h2 class="mt-4 text-lg font-black text-slate-950">استعلام الطلاب</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-600">لمعرفة المادة، القاعة، التاريخ، الوقت، وموقع القاعة.</p>
+                <a href="{{ route('students.lookup') }}" class="mt-4 inline-flex min-h-11 items-center justify-center rounded-xl bg-blue-700 px-4 text-sm font-bold text-white transition hover:bg-blue-800">
+                    دخول
+                </a>
+            </article>
+
+            <article class="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-blue-950/5 transition hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-950/10">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M9 6h6M9 10h6M9 14h3" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
+                        <path d="M7 3.5h10A1.5 1.5 0 0 1 18.5 5v14A1.5 1.5 0 0 1 17 20.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    </svg>
+                </div>
+                <h2 class="mt-4 text-lg font-black text-slate-950">استعلام المراقبين</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-600">لمعرفة موعد المراقبة، القاعة، التاريخ، والوقت.</p>
+                <a href="{{ route('invigilators.lookup') }}" class="mt-4 inline-flex min-h-11 items-center justify-center rounded-xl bg-indigo-700 px-4 text-sm font-bold text-white transition hover:bg-indigo-800">
+                    دخول
+                </a>
+            </article>
+
             @foreach ($features as $feature)
                 <article class="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-blue-950/5 transition hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-950/10">
                     <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
