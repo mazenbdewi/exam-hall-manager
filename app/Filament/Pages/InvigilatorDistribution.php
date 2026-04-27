@@ -138,6 +138,7 @@ class InvigilatorDistribution extends Page
             ->title(match ($result['status'] ?? 'warning') {
                 'success' => __('exam.notifications.invigilator_distribution_completed'),
                 'danger' => __('exam.notifications.invigilator_distribution_blocked'),
+                'partial' => __('exam.notifications.invigilator_distribution_partial'),
                 default => __('exam.notifications.invigilator_distribution_warning'),
             })
             ->body($result['message'] ?? __('exam.notifications.invigilator_distribution_completed_with_shortage', ['count' => $result['shortage_count'] ?? 0]));
@@ -145,6 +146,7 @@ class InvigilatorDistribution extends Page
         match ($result['status'] ?? 'warning') {
             'success' => $notification->success(),
             'danger' => $notification->danger()->persistent(),
+            'partial' => $notification->warning()->persistent(),
             default => $notification->warning()->persistent(),
         };
 
@@ -202,9 +204,20 @@ class InvigilatorDistribution extends Page
 
         $college = $this->selectedCollege();
 
-        return $college
-            ? app(InvigilatorDistributionPdfService::class)->downloadShortage($college, ...$this->exportFilters())
-            : null;
+        if (! $college) {
+            return null;
+        }
+
+        if (empty($this->getSummaryData()['shortages'] ?? [])) {
+            Notification::make()
+                ->success()
+                ->title(__('exam.notifications.no_invigilator_shortage'))
+                ->send();
+
+            return null;
+        }
+
+        return app(InvigilatorDistributionPdfService::class)->downloadShortage($college, ...$this->exportFilters());
     }
 
     public function getSummaryData(): array
@@ -281,7 +294,9 @@ class InvigilatorDistribution extends Page
             $reasons[] = __('exam.readiness.reasons.no_offerings');
         }
 
-        if (($readiness['incomplete_slots_count'] ?? 0) > 0) {
+        if (($readiness['unassigned_students_count'] ?? 0) > 0) {
+            $reasons[] = __('exam.readiness.reasons.unassigned_students_block_invigilators');
+        } elseif (($readiness['incomplete_slots_count'] ?? 0) > 0) {
             $reasons[] = __('exam.readiness.reasons.student_distribution_missing');
         }
 

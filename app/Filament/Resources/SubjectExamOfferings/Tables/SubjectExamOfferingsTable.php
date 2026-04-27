@@ -4,6 +4,7 @@ namespace App\Filament\Resources\SubjectExamOfferings\Tables;
 
 use App\Enums\ExamOfferingStatus;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Models\StudentDistributionRun;
 use App\Models\SubjectExamOffering;
 use App\Services\ExamHallDistributionService;
 use App\Support\ExamCollegeScope;
@@ -76,6 +77,15 @@ class SubjectExamOfferingsTable
                     ->badge()
                     ->formatStateUsing(fn ($state) => $state instanceof ExamOfferingStatus ? $state->label() : __("exam.statuses.$state"))
                     ->sortable(),
+                TextColumn::make('hall_distribution_status')
+                    ->label(__('exam.fields.hall_distribution_status'))
+                    ->state(fn (SubjectExamOffering $record): string => static::hallDistributionStatus($record))
+                    ->badge()
+                    ->color(fn (SubjectExamOffering $record): string => match (static::hallDistributionStatusKey($record)) {
+                        'complete' => 'success',
+                        'issue' => 'danger',
+                        default => 'gray',
+                    }),
                 TextColumn::make('regular_students_count')
                     ->counts('regularStudents')
                     ->label(__('exam.fields.regular')),
@@ -179,5 +189,65 @@ class SubjectExamOfferingsTable
             ->defaultSort(fn (Builder $query): Builder => $query
                 ->orderBy('exam_date')
                 ->orderBy('exam_start_time'));
+    }
+
+    protected static function hallDistributionStatus(SubjectExamOffering $record): string
+    {
+        return __('exam.hall_distribution_statuses.'.static::hallDistributionStatusKey($record));
+    }
+
+    protected static function hallDistributionStatusKey(SubjectExamOffering $record): string
+    {
+        $total = (int) ($record->exam_students_count ?? $record->examStudents()->count());
+        $assigned = (int) ($record->student_hall_assignments_count ?? $record->studentHallAssignments()->count());
+
+        return match (true) {
+            $total > 0 && $assigned >= $total => 'complete',
+            $total > 0 && static::latestRunShowsUnassignedStudents($record, $assigned, $total) => 'issue',
+            $assigned > 0 && $assigned < $total => 'issue',
+            default => 'not_distributed',
+        };
+    }
+
+    protected static function latestRunShowsUnassignedStudents(SubjectExamOffering $record, int $assigned, int $total): bool
+    {
+        if (! $record->exam_date || $assigned >= $total) {
+            return false;
+        }
+
+        $collegeId = $record->subject?->college_id;
+
+        if (! $collegeId) {
+            return false;
+        }
+
+        $run = static::latestDistributionRunForOffering($record, (int) $collegeId);
+
+        return $run !== null && in_array($run->status, ['partial', 'failed'], true);
+    }
+
+    protected static function latestDistributionRunForOffering(SubjectExamOffering $record, int $collegeId): ?StudentDistributionRun
+    {
+        static $runs = [];
+
+        $examDate = $record->exam_date?->toDateString();
+
+        if (! $examDate) {
+            return null;
+        }
+
+        $key = $collegeId.'|'.$examDate;
+
+        if (! array_key_exists($key, $runs)) {
+            $runs[$key] = StudentDistributionRun::query()
+                ->where('college_id', $collegeId)
+                ->whereDate('from_date', '<=', $examDate)
+                ->whereDate('to_date', '>=', $examDate)
+                ->latest('executed_at')
+                ->latest('id')
+                ->first();
+        }
+
+        return $runs[$key];
     }
 }

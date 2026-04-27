@@ -4,6 +4,7 @@ namespace App\Filament\Resources\SubjectExamOfferings;
 
 use App\Filament\Resources\SubjectExamOfferings\Pages\CreateSubjectExamOffering;
 use App\Filament\Resources\SubjectExamOfferings\Pages\EditSubjectExamOffering;
+use App\Filament\Resources\SubjectExamOfferings\Pages\GlobalDistributionResults;
 use App\Filament\Resources\SubjectExamOfferings\Pages\ListSubjectExamOfferings;
 use App\Filament\Resources\SubjectExamOfferings\Pages\ManageSlotHallDistribution;
 use App\Filament\Resources\SubjectExamOfferings\RelationManagers\CarryStudentsRelationManager;
@@ -48,6 +49,7 @@ class SubjectExamOfferingResource extends Resource
         return [
             'index' => ListSubjectExamOfferings::route('/'),
             'create' => CreateSubjectExamOffering::route('/create'),
+            'global-distribution-results' => GlobalDistributionResults::route('/global-distribution-results/{run?}'),
             'edit' => EditSubjectExamOffering::route('/{record}/edit'),
             'distribution' => ManageSlotHallDistribution::route('/{record}/distribution'),
         ];
@@ -78,6 +80,7 @@ class SubjectExamOfferingResource extends Resource
         return ExamCollegeScope::applyRelatedCollegeScope(
             parent::getEloquentQuery()
                 ->withSameSlotOfferingsCount()
+                ->withCount(['examStudents', 'studentHallAssignments'])
                 ->with(['subject.department', 'subject.college', 'academicYear', 'semester']),
             'subject',
         );

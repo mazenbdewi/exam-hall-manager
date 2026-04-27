@@ -34,6 +34,7 @@ class InvigilatorSeeder extends Seeder
             [
                 'default_max_assignments_per_invigilator' => 4,
                 'allow_multiple_assignments_per_day' => false,
+                'allow_role_fallback' => false,
                 'max_assignments_per_day' => 1,
                 'distribution_pattern' => InvigilatorDistributionPattern::Balanced->value,
                 'day_preference' => InvigilatorDayPreference::Balanced->value,

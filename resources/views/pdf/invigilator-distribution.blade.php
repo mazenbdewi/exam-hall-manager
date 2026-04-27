@@ -54,17 +54,36 @@
                 @foreach ($summary['slots'] as $slot)
                     @foreach ($slot['halls'] as $hall)
                         @php
-                            $names = fn (string $role): string => collect($hall['assignments_by_role'][$role] ?? [])->pluck('name')->filter()->implode('، ');
+                            $names = fn (string $role): string => collect($hall['assignments_by_role'][$role] ?? [])
+                                ->map(fn (array $assignment): string => trim(($assignment['name'] ?? '').(filled($assignment['notes'] ?? null) ? ' - '.$assignment['notes'] : '')))
+                                ->filter()
+                                ->implode('، ');
+                            $roleCell = function (string $role) use ($hall, $names): string {
+                                $roleNames = $names($role);
+                                $required = (int) ($hall['required_roles'][$role] ?? 0);
+                                $assigned = count($hall['assignments_by_role'][$role] ?? []);
+
+                                if ($required > $assigned) {
+                                    $shortage = $hall['shortages_by_role'][$role] ?? [];
+                                    $shortageCount = (int) ($shortage['shortage_count'] ?? max(0, $required - $assigned));
+                                    $reason = $shortage['reason'] ?? __('exam.reports.required_role_shortage_reason');
+                                    $shortageText = __('exam.reports.has_shortage').': '.$shortageCount.' - '.__('exam.fields.reason').': '.$reason;
+
+                                    return filled($roleNames) ? $roleNames.' | '.$shortageText : '— '.$shortageText;
+                                }
+
+                                return $roleNames ?: '—';
+                            };
                         @endphp
                         <tr>
                             <td class="ltr">{{ $slot['exam_date'] }}</td>
                             <td class="ltr">{{ substr((string) $slot['start_time'], 0, 5) }}</td>
                             <td>{{ $hall['name'] }}</td>
                             <td>{{ $hall['location'] }}</td>
-                            <td>{{ $names('hall_head') ?: '—' }}</td>
-                            <td>{{ $names('secretary') ?: '—' }}</td>
-                            <td>{{ $names('regular') ?: '—' }}</td>
-                            <td>{{ $names('reserve') ?: '—' }}</td>
+                            <td>{{ $roleCell('hall_head') }}</td>
+                            <td>{{ $roleCell('secretary') }}</td>
+                            <td>{{ $roleCell('regular') }}</td>
+                            <td>{{ $roleCell('reserve') }}</td>
                         </tr>
                     @endforeach
                 @endforeach
@@ -74,6 +93,27 @@
 
     @if (! empty($summary['shortages']))
         <div class="card">
+            <div class="section-title">{{ __('exam.reports.shortage_summary_by_role') }}</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>{{ __('exam.fields.invigilation_role') }}</th>
+                        <th>{{ __('exam.fields.required_count') }}</th>
+                        <th>{{ __('exam.fields.assigned_count') }}</th>
+                        <th>{{ __('exam.fields.shortage_count') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (($summary['shortage_by_role'] ?? []) as $roleShortage)
+                        <tr>
+                            <td>{{ $roleShortage['role_label'] }}</td>
+                            <td>{{ $roleShortage['required_count'] ?? 0 }}</td>
+                            <td>{{ $roleShortage['assigned_count'] ?? 0 }}</td>
+                            <td>{{ $roleShortage['shortage_count'] ?? 0 }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
             <div class="section-title">{{ __('exam.reports.shortage_report') }}</div>
             <table>
                 <thead>
@@ -81,6 +121,7 @@
                         <th>{{ __('exam.fields.exam_date') }}</th>
                         <th>{{ __('exam.fields.exam_start_time') }}</th>
                         <th>{{ __('exam.fields.hall_name') }}</th>
+                        <th>{{ __('exam.fields.hall_type') }}</th>
                         <th>{{ __('exam.fields.invigilation_role') }}</th>
                         <th>{{ __('exam.fields.required_count') }}</th>
                         <th>{{ __('exam.fields.assigned_count') }}</th>
@@ -94,6 +135,7 @@
                             <td class="ltr">{{ $shortage['exam_date'] }}</td>
                             <td class="ltr">{{ $shortage['start_time'] }}</td>
                             <td>{{ $shortage['hall_name'] }}</td>
+                            <td>{{ $shortage['hall_type_label'] ?? '-' }}</td>
                             <td>{{ $shortage['invigilation_role'] }}</td>
                             <td>{{ $shortage['required_count'] }}</td>
                             <td>{{ $shortage['assigned_count'] }}</td>

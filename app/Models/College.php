@@ -70,4 +70,9 @@ class College extends Model
     {
         return $this->hasMany(InvigilatorAssignment::class);
     }
+
+    public function studentDistributionRuns(): HasMany
+    {
+        return $this->hasMany(StudentDistributionRun::class);
+    }
 }

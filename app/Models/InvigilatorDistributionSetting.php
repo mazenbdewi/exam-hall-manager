@@ -16,6 +16,7 @@ class InvigilatorDistributionSetting extends Model
         'college_id',
         'default_max_assignments_per_invigilator',
         'allow_multiple_assignments_per_day',
+        'allow_role_fallback',
         'max_assignments_per_day',
         'distribution_pattern',
         'day_preference',
@@ -26,6 +27,7 @@ class InvigilatorDistributionSetting extends Model
         return [
             'default_max_assignments_per_invigilator' => 'integer',
             'allow_multiple_assignments_per_day' => 'boolean',
+            'allow_role_fallback' => 'boolean',
             'max_assignments_per_day' => 'integer',
             'distribution_pattern' => InvigilatorDistributionPattern::class,
             'day_preference' => InvigilatorDayPreference::class,
@@ -45,6 +47,7 @@ class InvigilatorDistributionSetting extends Model
             'college_id' => $collegeId,
             'default_max_assignments_per_invigilator' => 3,
             'allow_multiple_assignments_per_day' => false,
+            'allow_role_fallback' => false,
             'max_assignments_per_day' => 1,
             'distribution_pattern' => InvigilatorDistributionPattern::Balanced->value,
             'day_preference' => InvigilatorDayPreference::Balanced->value,

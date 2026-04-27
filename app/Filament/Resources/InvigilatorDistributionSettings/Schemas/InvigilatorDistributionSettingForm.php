@@ -46,6 +46,11 @@ class InvigilatorDistributionSettingForm
                             ->label(__('exam.fields.allow_multiple_assignments_per_day'))
                             ->default(false)
                             ->inline(false),
+                        Toggle::make('allow_role_fallback')
+                            ->label(__('exam.fields.allow_role_fallback'))
+                            ->helperText(__('exam.helpers.allow_role_fallback'))
+                            ->default(false)
+                            ->inline(false),
                         TextInput::make('max_assignments_per_day')
                             ->label(__('exam.fields.max_assignments_per_day'))
                             ->numeric()

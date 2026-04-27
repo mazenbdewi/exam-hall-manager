@@ -70,5 +70,31 @@
     @empty
         <div class="card muted">{{ __('exam.helpers.no_invigilator_assignments') }}</div>
     @endforelse
+
+    @if (! empty($summary['shortages']))
+        <div class="card">
+            <div class="section-title">{{ __('exam.reports.shortage_summary_by_role') }}</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>{{ __('exam.fields.invigilation_role') }}</th>
+                        <th>{{ __('exam.fields.required_count') }}</th>
+                        <th>{{ __('exam.fields.assigned_count') }}</th>
+                        <th>{{ __('exam.fields.shortage_count') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (($summary['shortage_by_role'] ?? []) as $roleShortage)
+                        <tr>
+                            <td>{{ $roleShortage['role_label'] }}</td>
+                            <td>{{ $roleShortage['required_count'] ?? 0 }}</td>
+                            <td>{{ $roleShortage['assigned_count'] ?? 0 }}</td>
+                            <td>{{ $roleShortage['shortage_count'] ?? 0 }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    @endif
 </body>
 </html>

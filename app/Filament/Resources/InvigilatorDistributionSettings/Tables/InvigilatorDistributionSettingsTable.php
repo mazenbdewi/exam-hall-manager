@@ -25,6 +25,9 @@ class InvigilatorDistributionSettingsTable
                 IconColumn::make('allow_multiple_assignments_per_day')
                     ->label(__('exam.fields.allow_multiple_assignments_per_day'))
                     ->boolean(),
+                IconColumn::make('allow_role_fallback')
+                    ->label(__('exam.fields.allow_role_fallback'))
+                    ->boolean(),
                 TextColumn::make('max_assignments_per_day')
                     ->label(__('exam.fields.max_assignments_per_day'))
                     ->numeric(),

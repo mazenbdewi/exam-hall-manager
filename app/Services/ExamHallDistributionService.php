@@ -10,6 +10,8 @@ use App\Models\ExamStudent;
 use App\Models\ExamStudentHallAssignment;
 use App\Models\HallAssignment;
 use App\Models\HallAssignmentSubject;
+use App\Models\StudentDistributionRun;
+use App\Models\StudentDistributionRunIssue;
 use App\Models\SubjectExamOffering;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -34,8 +36,18 @@ class ExamHallDistributionService
             ->get();
 
         if ($offerings->isEmpty()) {
-            return $this->globalDistributionFailure(__('exam.global_hall_distribution.reasons.no_offerings'));
+            return $this->persistGlobalDistributionResult($this->globalDistributionFailure(
+                collegeId: $collegeId,
+                fromDate: $fromDate,
+                toDate: $toDate,
+                reason: __('exam.global_hall_distribution.reasons.no_offerings'),
+                issueType: 'no_offerings',
+            ));
         }
+
+        $slots = $offerings
+            ->groupBy(fn (SubjectExamOffering $offering): string => $offering->exam_date->format('Y-m-d').'|'.$this->normalizeExamStartTime($offering->exam_start_time))
+            ->values();
 
         $activeHalls = ExamHall::query()
             ->where('college_id', $collegeId)
@@ -43,34 +55,64 @@ class ExamHallDistributionService
             ->get();
 
         if ($activeHalls->isEmpty()) {
-            return $this->globalDistributionFailure(__('exam.global_hall_distribution.reasons.no_active_halls'));
+            $failureIssues = $this->globalFailureIssueSummaries(
+                slots: $slots,
+                reason: __('exam.global_hall_distribution.reasons.no_active_halls'),
+                issueType: 'no_available_halls',
+            );
+
+            return $this->persistGlobalDistributionResult($this->globalDistributionFailure(
+                collegeId: $collegeId,
+                fromDate: $fromDate,
+                toDate: $toDate,
+                reason: __('exam.global_hall_distribution.reasons.no_active_halls'),
+                issueType: 'no_available_halls',
+                totalOfferings: $offerings->count(),
+                totalSlots: $slots->count(),
+                totalStudents: (int) $offerings->sum('exam_students_count'),
+                capacityShortage: (int) $offerings->sum('exam_students_count'),
+                issues: $failureIssues['issues'],
+                unassignedBySubject: $failureIssues['unassigned_by_subject'],
+                unassignedBySlot: $failureIssues['unassigned_by_slot'],
+            ));
         }
 
         $totalStudents = (int) $offerings->sum('exam_students_count');
 
         if ($totalStudents === 0) {
-            return $this->globalDistributionFailure(__('exam.global_hall_distribution.reasons.no_students'));
+            return $this->persistGlobalDistributionResult($this->globalDistributionFailure(
+                collegeId: $collegeId,
+                fromDate: $fromDate,
+                toDate: $toDate,
+                reason: __('exam.global_hall_distribution.reasons.no_students'),
+                issueType: 'no_students',
+                totalOfferings: $offerings->count(),
+                totalSlots: $slots->count(),
+            ));
         }
-
-        $slots = $offerings
-            ->groupBy(fn (SubjectExamOffering $offering): string => $offering->exam_date->format('Y-m-d').'|'.$this->normalizeExamStartTime($offering->exam_start_time))
-            ->values();
 
         $summary = [
             'status' => 'success',
+            'faculty_id' => $collegeId,
+            'college_id' => $collegeId,
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
             'message' => __('exam.notifications.global_hall_distribution_completed'),
-            'offerings_count' => $offerings->count(),
-            'slots_count' => $slots->count(),
-            'students_count' => $totalStudents,
-            'assigned_students_count' => 0,
-            'unassigned_students_count' => 0,
-            'used_halls_count' => 0,
+            'total_offerings' => $offerings->count(),
+            'total_slots' => $slots->count(),
+            'total_students' => $totalStudents,
+            'distributed_students' => 0,
+            'unassigned_students' => 0,
+            'used_halls' => 0,
             'total_capacity' => 0,
             'capacity_shortage' => 0,
             'distributed_slots_count' => 0,
             'skipped_slots_count' => 0,
             'issue_slots_count' => 0,
             'slots' => [],
+            'issues' => [],
+            'unassigned_by_subject' => [],
+            'unassigned_by_slot' => [],
         ];
 
         foreach ($slots as $slotOfferings) {
@@ -85,16 +127,28 @@ class ExamHallDistributionService
             $summary['capacity_shortage'] += $slotCapacityShortage;
 
             if (! $redistribute && $this->slotHasDistribution($collegeId, $examDate, $examStartTime)) {
+                $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage);
                 $summary['skipped_slots_count']++;
+                $summary['distributed_students'] += $slotStats['distributed_students'];
+                $summary['unassigned_students'] += $slotStats['unassigned_students'];
+                $summary['used_halls'] += $slotStats['used_halls'];
+                $summary['issues'] = array_merge($summary['issues'], $slotStats['issues']);
+                $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
+
+                if ($slotStats['unassigned_students'] > 0 || $slotCapacityShortage > 0) {
+                    $summary['issue_slots_count']++;
+                    $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
+                }
+
                 $summary['slots'][] = [
                     'status' => 'skipped',
                     'exam_date' => $examDate,
                     'exam_start_time' => $examStartTime,
                     'offerings_count' => $slotOfferings->count(),
                     'students_count' => $slotStudentsCount,
-                    'assigned_students_count' => 0,
-                    'unassigned_students_count' => 0,
-                    'used_halls_count' => 0,
+                    'assigned_students_count' => $slotStats['distributed_students'],
+                    'unassigned_students_count' => $slotStats['unassigned_students'],
+                    'used_halls_count' => $slotStats['used_halls'],
                     'capacity' => $slotCapacity,
                     'capacity_shortage' => $slotCapacityShortage,
                     'message' => __('exam.global_hall_distribution.slot_skipped'),
@@ -104,16 +158,20 @@ class ExamHallDistributionService
             }
 
             $result = $this->distributeForOffering($firstOffering);
-            $assignedStudentsCount = (int) ($result['assigned_students_count'] ?? 0);
-            $unassignedStudentsCount = (int) ($result['unassigned_students_count'] ?? 0);
+            $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage);
+            $assignedStudentsCount = $slotStats['distributed_students'];
+            $unassignedStudentsCount = $slotStats['unassigned_students'];
 
-            $summary['assigned_students_count'] += $assignedStudentsCount;
-            $summary['unassigned_students_count'] += $unassignedStudentsCount;
-            $summary['used_halls_count'] += (int) ($result['used_halls_count'] ?? 0);
+            $summary['distributed_students'] += $assignedStudentsCount;
+            $summary['unassigned_students'] += $unassignedStudentsCount;
+            $summary['used_halls'] += $slotStats['used_halls'];
+            $summary['issues'] = array_merge($summary['issues'], $slotStats['issues']);
+            $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
             $summary['distributed_slots_count']++;
 
             if (($result['status'] ?? 'warning') !== 'success' || $unassignedStudentsCount > 0 || $slotCapacityShortage > 0) {
                 $summary['issue_slots_count']++;
+                $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
             }
 
             $summary['slots'][] = [
@@ -131,12 +189,12 @@ class ExamHallDistributionService
             ];
         }
 
-        if ($summary['unassigned_students_count'] > 0 || $summary['capacity_shortage'] > 0 || $summary['issue_slots_count'] > 0) {
-            $summary['status'] = 'warning';
+        if ($summary['unassigned_students'] > 0 || $summary['capacity_shortage'] > 0) {
+            $summary['status'] = 'partial';
             $summary['message'] = __('exam.notifications.global_hall_distribution_completed_with_issues');
         }
 
-        return $summary;
+        return $this->persistGlobalDistributionResult($this->withLegacyGlobalDistributionKeys($summary));
     }
 
     public function distributeForOffering(SubjectExamOffering $offering): array
@@ -719,25 +777,273 @@ class ExamHallDistributionService
             ->exists();
     }
 
-    protected function globalDistributionFailure(string $reason): array
+    protected function slotDistributionStats(Collection $slotOfferings, int $collegeId, string $examDate, string $examStartTime, int $slotCapacity, int $slotCapacityShortage): array
     {
+        $assignmentCounts = ExamStudentHallAssignment::query()
+            ->whereIn('subject_exam_offering_id', $slotOfferings->pluck('id'))
+            ->selectRaw('subject_exam_offering_id, count(*) as assigned_count')
+            ->groupBy('subject_exam_offering_id')
+            ->pluck('assigned_count', 'subject_exam_offering_id');
+        $usedHalls = HallAssignment::query()
+            ->where('college_id', $collegeId)
+            ->whereDate('exam_date', $examDate)
+            ->whereTime('exam_start_time', $examStartTime)
+            ->where('assigned_students_count', '>', 0)
+            ->count();
+        $distributedStudents = (int) $assignmentCounts->sum();
+        $totalStudents = (int) $slotOfferings->sum('exam_students_count');
+        $unassignedStudents = max(0, $totalStudents - $distributedStudents);
+        $reason = $this->globalDistributionIssueReason($slotCapacityShortage, $usedHalls);
+        $issues = [];
+        $unassignedBySubject = [];
+
+        foreach ($slotOfferings as $offering) {
+            $assigned = (int) ($assignmentCounts[$offering->id] ?? 0);
+            $unassigned = max(0, (int) $offering->exam_students_count - $assigned);
+
+            if ($unassigned === 0) {
+                continue;
+            }
+
+            $issue = [
+                'exam_date' => $examDate,
+                'start_time' => $examStartTime,
+                'subject_exam_offering_id' => $offering->id,
+                'subject_name' => $offering->subject?->name,
+                'unassigned_count' => $unassigned,
+                'reason' => $reason,
+                'issue_type' => $slotCapacityShortage > 0 ? 'capacity_shortage' : 'unassigned_students',
+            ];
+
+            $issues[] = $issue;
+            $unassignedBySubject[] = $issue;
+        }
+
         return [
-            'status' => 'danger',
+            'distributed_students' => $distributedStudents,
+            'unassigned_students' => $unassignedStudents,
+            'used_halls' => $usedHalls,
+            'issues' => $issues,
+            'unassigned_by_subject' => $unassignedBySubject,
+            'slot_issue' => [
+                'exam_date' => $examDate,
+                'start_time' => $examStartTime,
+                'unassigned_count' => $unassignedStudents,
+                'reason' => $reason,
+                'capacity_shortage' => $slotCapacityShortage,
+                'total_capacity' => $slotCapacity,
+                'used_halls' => $usedHalls,
+            ],
+        ];
+    }
+
+    protected function globalDistributionIssueReason(int $capacityShortage, int $usedHalls): string
+    {
+        if ($usedHalls === 0) {
+            return __('exam.global_hall_distribution.issue_reasons.no_available_halls');
+        }
+
+        if ($capacityShortage > 0) {
+            return __('exam.global_hall_distribution.issue_reasons.capacity_shortage');
+        }
+
+        return __('exam.global_hall_distribution.issue_reasons.unassigned_students');
+    }
+
+    protected function globalDistributionFailure(
+        int $collegeId,
+        string $fromDate,
+        string $toDate,
+        string $reason,
+        string $issueType,
+        int $totalOfferings = 0,
+        int $totalSlots = 0,
+        int $totalStudents = 0,
+        int $capacityShortage = 0,
+        array $issues = [],
+        array $unassignedBySubject = [],
+        array $unassignedBySlot = [],
+    ): array {
+        return $this->withLegacyGlobalDistributionKeys([
+            'status' => 'failed',
+            'faculty_id' => $collegeId,
+            'college_id' => $collegeId,
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
             'message' => __('exam.notifications.global_hall_distribution_failed'),
             'reason' => $reason,
-            'offerings_count' => 0,
-            'slots_count' => 0,
-            'students_count' => 0,
-            'assigned_students_count' => 0,
-            'unassigned_students_count' => 0,
-            'used_halls_count' => 0,
+            'total_offerings' => $totalOfferings,
+            'total_slots' => $totalSlots,
+            'total_students' => $totalStudents,
+            'distributed_students' => 0,
+            'unassigned_students' => $totalStudents,
+            'used_halls' => 0,
             'total_capacity' => 0,
-            'capacity_shortage' => 0,
+            'capacity_shortage' => $capacityShortage,
             'distributed_slots_count' => 0,
             'skipped_slots_count' => 0,
-            'issue_slots_count' => 0,
+            'issue_slots_count' => count($unassignedBySlot),
             'slots' => [],
+            'issues' => $issues !== [] ? $issues : [[
+                'exam_date' => null,
+                'start_time' => null,
+                'subject_exam_offering_id' => null,
+                'subject_name' => null,
+                'unassigned_count' => $totalStudents,
+                'reason' => $reason,
+                'issue_type' => $issueType,
+            ]],
+            'unassigned_by_subject' => $unassignedBySubject,
+            'unassigned_by_slot' => $unassignedBySlot,
+        ]);
+    }
+
+    protected function globalFailureIssueSummaries(Collection $slots, string $reason, string $issueType): array
+    {
+        $issues = [];
+        $unassignedBySubject = [];
+        $unassignedBySlot = [];
+
+        foreach ($slots as $slotOfferings) {
+            /** @var SubjectExamOffering|null $firstOffering */
+            $firstOffering = $slotOfferings->first();
+
+            if (! $firstOffering) {
+                continue;
+            }
+
+            $examDate = $firstOffering->exam_date->format('Y-m-d');
+            $startTime = $this->normalizeExamStartTime($firstOffering->exam_start_time);
+            $unassignedCount = (int) $slotOfferings->sum('exam_students_count');
+
+            if ($unassignedCount > 0) {
+                $unassignedBySlot[] = [
+                    'exam_date' => $examDate,
+                    'start_time' => $startTime,
+                    'unassigned_count' => $unassignedCount,
+                    'reason' => $reason,
+                    'capacity_shortage' => $unassignedCount,
+                    'total_capacity' => 0,
+                    'used_halls' => 0,
+                ];
+            }
+
+            foreach ($slotOfferings as $offering) {
+                $subjectUnassignedCount = (int) $offering->exam_students_count;
+
+                if ($subjectUnassignedCount === 0) {
+                    continue;
+                }
+
+                $issue = [
+                    'exam_date' => $examDate,
+                    'start_time' => $startTime,
+                    'subject_exam_offering_id' => $offering->id,
+                    'subject_name' => $offering->subject?->name,
+                    'unassigned_count' => $subjectUnassignedCount,
+                    'reason' => $reason,
+                    'issue_type' => $issueType,
+                ];
+
+                $issues[] = $issue;
+                $unassignedBySubject[] = $issue;
+            }
+        }
+
+        return [
+            'issues' => $issues,
+            'unassigned_by_subject' => $unassignedBySubject,
+            'unassigned_by_slot' => $unassignedBySlot,
         ];
+    }
+
+    protected function withLegacyGlobalDistributionKeys(array $summary): array
+    {
+        return [
+            ...$summary,
+            'offerings_count' => $summary['total_offerings'] ?? 0,
+            'slots_count' => $summary['total_slots'] ?? 0,
+            'students_count' => $summary['total_students'] ?? 0,
+            'assigned_students_count' => $summary['distributed_students'] ?? 0,
+            'unassigned_students_count' => $summary['unassigned_students'] ?? 0,
+            'used_halls_count' => $summary['used_halls'] ?? 0,
+        ];
+    }
+
+    protected function persistGlobalDistributionResult(array $summary): array
+    {
+        $run = StudentDistributionRun::query()->create([
+            'college_id' => $summary['college_id'],
+            'from_date' => $summary['from_date'],
+            'to_date' => $summary['to_date'],
+            'status' => $summary['status'],
+            'total_offerings' => $summary['total_offerings'],
+            'total_slots' => $summary['total_slots'],
+            'total_students' => $summary['total_students'],
+            'distributed_students' => $summary['distributed_students'],
+            'unassigned_students' => $summary['unassigned_students'],
+            'total_capacity' => $summary['total_capacity'],
+            'used_halls' => $summary['used_halls'],
+            'capacity_shortage' => $summary['capacity_shortage'],
+            'executed_by' => auth()->id(),
+            'executed_at' => now(),
+            'summary_json' => $summary,
+            'notes' => $summary['reason'] ?? null,
+        ]);
+
+        foreach ($summary['issues'] ?? [] as $issue) {
+            StudentDistributionRunIssue::query()->create([
+                'student_distribution_run_id' => $run->id,
+                'exam_date' => $issue['exam_date'] ?? null,
+                'start_time' => $issue['start_time'] ?? null,
+                'subject_exam_offering_id' => $issue['subject_exam_offering_id'] ?? null,
+                'issue_type' => $issue['issue_type'] ?? 'unknown',
+                'message' => $issue['reason'] ?? ($summary['reason'] ?? $summary['message']),
+                'affected_students_count' => (int) ($issue['unassigned_count'] ?? 0),
+                'payload_json' => $issue,
+            ]);
+        }
+
+        $summary['run_id'] = $run->id;
+        $summary['result_url'] = route('filament.adminpanel.resources.subject-exam-offerings.global-distribution-results', ['run' => $run]);
+
+        $run->update(['summary_json' => $summary]);
+
+        return $summary;
+    }
+
+    public function unassignedStudentsForRun(StudentDistributionRun $run): array
+    {
+        $issuesByOffering = $run->issues
+            ->filter(fn (StudentDistributionRunIssue $issue): bool => filled($issue->subject_exam_offering_id))
+            ->keyBy('subject_exam_offering_id');
+        $issuesBySlot = $run->issues
+            ->groupBy(fn (StudentDistributionRunIssue $issue): string => ($issue->exam_date?->format('Y-m-d') ?? '-').'|'.substr((string) $issue->start_time, 0, 8));
+
+        return ExamStudent::query()
+            ->with(['subjectExamOffering.subject'])
+            ->whereDoesntHave('hallAssignment')
+            ->whereHas('subjectExamOffering', fn ($query) => $query
+                ->whereDate('exam_date', '>=', $run->from_date)
+                ->whereDate('exam_date', '<=', $run->to_date)
+                ->whereHas('subject', fn ($subjectQuery) => $subjectQuery->where('college_id', $run->college_id)))
+            ->orderBy('student_number')
+            ->get()
+            ->map(function (ExamStudent $student) use ($issuesByOffering, $issuesBySlot): array {
+                $offering = $student->subjectExamOffering;
+                $slotKey = ($offering?->exam_date?->format('Y-m-d') ?? '-').'|'.substr((string) $offering?->exam_start_time, 0, 8);
+                $issue = $issuesByOffering->get($offering?->id) ?? $issuesBySlot->get($slotKey)?->first();
+
+                return [
+                    'student_number' => $student->student_number,
+                    'full_name' => $student->full_name,
+                    'subject_name' => $offering?->subject?->name,
+                    'exam_date' => $offering?->exam_date?->format('Y-m-d'),
+                    'start_time' => substr((string) $offering?->exam_start_time, 0, 5),
+                    'reason' => $issue?->message ?? __('exam.global_hall_distribution.issue_reasons.unassigned_students'),
+                ];
+            })
+            ->all();
     }
 
     protected function nextOfferingToAssign(

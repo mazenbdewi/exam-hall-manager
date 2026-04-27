@@ -4,6 +4,7 @@ namespace App\Filament\Resources\SubjectExamOfferings\Pages;
 
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\College;
+use App\Models\StudentDistributionRun;
 use App\Services\ExamHallDistributionService;
 use App\Support\ExamCollegeScope;
 use Filament\Actions\Action;
@@ -13,7 +14,12 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\EmbeddedTable;
+use Filament\Schemas\Components\RenderHook;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\View;
+use Filament\Schemas\Schema;
+use Filament\View\PanelsRenderHook;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
 
@@ -110,39 +116,80 @@ class ListSubjectExamOfferings extends ListRecords
                         redistribute: (bool) ($data['redistribute'] ?? false),
                     );
 
-                    if (($result['status'] ?? 'danger') === 'danger') {
+                    if (($result['status'] ?? 'failed') === 'failed') {
                         Notification::make()
                             ->danger()
                             ->title(__('exam.notifications.global_hall_distribution_failed'))
-                            ->body($result['reason'] ?? $result['message'])
+                            ->body(collect([
+                                $result['reason'] ?? $result['message'],
+                                __('exam.global_hall_distribution.review_failure_reason'),
+                            ])->filter()->implode(' '))
                             ->persistent()
                             ->send();
+
+                        $this->redirect($result['result_url']);
 
                         return;
                     }
 
                     $notification = Notification::make()
-                        ->title($result['status'] === 'success'
-                            ? __('exam.notifications.global_hall_distribution_completed')
-                            : __('exam.notifications.global_hall_distribution_completed_with_issues'))
+                        ->title(match ($result['status']) {
+                            'success' => __('exam.notifications.global_hall_distribution_completed'),
+                            'partial' => __('exam.notifications.global_hall_distribution_completed_with_issues'),
+                            default => __('exam.notifications.global_hall_distribution_failed'),
+                        })
                         ->body($this->globalDistributionSummaryBody($result));
 
-                    ($result['status'] === 'success' ? $notification->success() : $notification->warning()->persistent())
-                        ->send();
+                    (match ($result['status']) {
+                        'success' => $notification->success(),
+                        'partial' => $notification->warning()->persistent(),
+                        default => $notification->danger()->persistent(),
+                    })->send();
+
+                    $this->redirect($result['result_url']);
                 }),
             CreateAction::make(),
         ];
     }
 
+    public function content(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                $this->getTabsContentComponent(),
+                View::make('filament.resources.subject-exam-offerings.latest-global-distribution-run'),
+                RenderHook::make(PanelsRenderHook::RESOURCE_PAGES_LIST_RECORDS_TABLE_BEFORE),
+                EmbeddedTable::make(),
+                RenderHook::make(PanelsRenderHook::RESOURCE_PAGES_LIST_RECORDS_TABLE_AFTER),
+            ]);
+    }
+
+    public function latestDistributionRun(): ?StudentDistributionRun
+    {
+        return StudentDistributionRun::query()
+            ->with(['college', 'executor'])
+            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
+            ->latest('executed_at')
+            ->latest('id')
+            ->first();
+    }
+
     protected function globalDistributionSummaryBody(array $result): string
     {
+        $intro = match ($result['status'] ?? 'failed') {
+            'success' => __('exam.global_hall_distribution.success_notification_body'),
+            'partial' => __('exam.global_hall_distribution.partial_notification_body').' '.__('exam.global_hall_distribution.summary.unassigned_students_count').': '.($result['unassigned_students'] ?? 0).'. '.__('exam.global_hall_distribution.shortage_report_hint'),
+            default => __('exam.global_hall_distribution.failed_notification_body'),
+        };
+
         return collect([
-            __('exam.global_hall_distribution.summary.offerings_count').': '.($result['offerings_count'] ?? 0),
-            __('exam.global_hall_distribution.summary.slots_count').': '.($result['slots_count'] ?? 0),
-            __('exam.global_hall_distribution.summary.students_count').': '.($result['students_count'] ?? 0),
-            __('exam.global_hall_distribution.summary.assigned_students_count').': '.($result['assigned_students_count'] ?? 0),
-            __('exam.global_hall_distribution.summary.unassigned_students_count').': '.($result['unassigned_students_count'] ?? 0),
-            __('exam.global_hall_distribution.summary.used_halls_count').': '.($result['used_halls_count'] ?? 0),
+            $intro,
+            __('exam.global_hall_distribution.summary.offerings_count').': '.($result['total_offerings'] ?? 0),
+            __('exam.global_hall_distribution.summary.slots_count').': '.($result['total_slots'] ?? 0),
+            __('exam.global_hall_distribution.summary.students_count').': '.($result['total_students'] ?? 0),
+            __('exam.global_hall_distribution.summary.assigned_students_count').': '.($result['distributed_students'] ?? 0),
+            __('exam.global_hall_distribution.summary.unassigned_students_count').': '.($result['unassigned_students'] ?? 0),
+            __('exam.global_hall_distribution.summary.used_halls_count').': '.($result['used_halls'] ?? 0),
             __('exam.global_hall_distribution.summary.total_capacity').': '.($result['total_capacity'] ?? 0),
             __('exam.global_hall_distribution.summary.capacity_shortage').': '.($result['capacity_shortage'] ?? 0),
             __('exam.global_hall_distribution.summary.distributed_slots_count').': '.($result['distributed_slots_count'] ?? 0),

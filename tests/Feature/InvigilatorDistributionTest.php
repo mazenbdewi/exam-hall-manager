@@ -9,6 +9,7 @@ use App\Enums\ExamStudentType;
 use App\Enums\InvigilationRole;
 use App\Enums\InvigilatorAssignmentStatus;
 use App\Enums\StaffCategory;
+use App\Filament\Resources\SubjectExamOfferings\Pages\GlobalDistributionResults;
 use App\Imports\InvigilatorsImport;
 use App\Models\AcademicYear;
 use App\Models\College;
@@ -20,10 +21,14 @@ use App\Models\Invigilator;
 use App\Models\InvigilatorAssignment;
 use App\Models\InvigilatorDistributionSetting;
 use App\Models\InvigilatorHallRequirement;
+use App\Models\InvigilatorUnassignedRequirement;
 use App\Models\Semester;
+use App\Models\StudentDistributionRun;
+use App\Models\StudentDistributionRunIssue;
 use App\Models\StudyLevel;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
+use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\ExamHallDistributionService;
 use App\Services\InvigilatorDistributionService;
@@ -167,6 +172,180 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function it_assigns_available_secretary_to_secretary_slot_and_reports_it_by_role(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة تحتاج أمين سر', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 1, 0, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::Secretary, 1);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $summary = app(InvigilatorDistributionService::class)->slotSummary($context['college'], '2026-06-01', '09:00:00');
+        $hallSummary = collect($summary['halls'])->firstWhere('id', $hall->id);
+
+        $this->assertSame('success', $result['status']);
+        $this->assertDatabaseHas('invigilator_assignments', [
+            'exam_hall_id' => $hall->id,
+            'invigilation_role' => InvigilationRole::Secretary->value,
+        ]);
+        $this->assertCount(1, $hallSummary['assignments_by_role']['secretary']);
+        $this->assertSame(0, $summary['shortage_count']);
+    }
+
+    #[Test]
+    public function it_does_not_replace_secretary_with_regular_when_role_fallback_is_disabled(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة بلا أمين سر', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 1, 0, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::Regular, 1);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $summary = app(InvigilatorDistributionService::class)->slotSummary($context['college'], '2026-06-01', '09:00:00');
+        $hallSummary = collect($summary['halls'])->firstWhere('id', $hall->id);
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(0, InvigilatorAssignment::query()->count());
+        $this->assertCount(0, $hallSummary['assignments_by_role']['secretary']);
+        $this->assertSame(1, $hallSummary['shortages_by_role']['secretary']['shortage_count']);
+        $this->assertSame('لا يوجد أمين سر فعال لهذه الكلية.', $hallSummary['shortages_by_role']['secretary']['reason']);
+    }
+
+    #[Test]
+    public function it_reports_missing_regular_invigilator_shortage(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة نقص مراقب عادي', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 0, 2, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::Regular, 1);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $summary = app(InvigilatorDistributionService::class)->slotSummary($context['college'], '2026-06-01', '09:00:00');
+        $hallSummary = collect($summary['halls'])->firstWhere('id', $hall->id);
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertCount(1, $hallSummary['assignments_by_role']['regular']);
+        $this->assertSame(1, $hallSummary['shortages_by_role']['regular']['shortage_count']);
+        $this->assertSame('جميع المراقبين العاديين لديهم مراقبة في نفس الموعد.', $hallSummary['shortages_by_role']['regular']['reason']);
+    }
+
+    #[Test]
+    public function it_reports_missing_hall_head_shortage(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة بلا رئيس', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 1, 0, 0, 0);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $summary = app(InvigilatorDistributionService::class)->slotSummary($context['college'], '2026-06-01', '09:00:00');
+        $hallSummary = collect($summary['halls'])->firstWhere('id', $hall->id);
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(1, $hallSummary['shortages_by_role']['hall_head']['shortage_count']);
+        $this->assertSame('لا يوجد رئيس قاعة فعال لهذه الكلية.', $hallSummary['shortages_by_role']['hall_head']['reason']);
+    }
+
+    #[Test]
+    public function it_reports_multiple_shortages_in_the_same_hall(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة نقص متعدد', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 1, 1, 2, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::HallHead, 1);
+        $this->createInvigilators($context['college'], InvigilationRole::Regular, 1);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $summary = app(InvigilatorDistributionService::class)->slotSummary($context['college'], '2026-06-01', '09:00:00');
+        $hallSummary = collect($summary['halls'])->firstWhere('id', $hall->id);
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertArrayHasKey('secretary', $hallSummary['shortages_by_role']);
+        $this->assertArrayHasKey('regular', $hallSummary['shortages_by_role']);
+        $this->assertArrayNotHasKey('hall_head', $hallSummary['shortages_by_role']);
+        $this->assertSame(2, $summary['shortage_count']);
+    }
+
+    #[Test]
+    public function shortage_pdf_view_includes_all_shortage_roles(): void
+    {
+        $context = $this->createSlotContext();
+        $this->createUsedHall($context['college'], 'قاعة تقرير النقص', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 1, 1, 2, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::HallHead, 1);
+        $this->createInvigilators($context['college'], InvigilationRole::Regular, 1);
+
+        app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($context['college'], null, null, '2026-06-01', '2026-06-01');
+        $html = view('pdf.invigilator-distribution-shortage', [
+            'summary' => $summary,
+            'systemSetting' => SystemSetting::current(),
+            'logoDataUri' => null,
+        ])->render();
+
+        $this->assertCount(2, $summary['shortages']);
+        $this->assertStringContainsString('أمين سر', $html);
+        $this->assertStringContainsString('مراقب عادي', $html);
+    }
+
+    #[Test]
+    public function required_empty_role_cell_is_rendered_as_shortage_even_without_shortage_row(): void
+    {
+        $html = view('filament.pages.partials.invigilator-hall-card', [
+            'hall' => [
+                'name' => 'قاعة اختبار',
+                'hall_type_label' => 'كبيرة',
+                'location' => 'المبنى الأول',
+                'assigned_count' => 0,
+                'required_count' => 1,
+                'required_roles' => [
+                    InvigilationRole::Secretary->value => 1,
+                ],
+                'assignments_by_role' => [
+                    InvigilationRole::HallHead->value => [],
+                    InvigilationRole::Secretary->value => [],
+                    InvigilationRole::Regular->value => [],
+                    InvigilationRole::Reserve->value => [],
+                ],
+                'shortages_by_role' => [],
+            ],
+        ])->render();
+
+        $this->assertStringContainsString('أمين سر', $html);
+        $this->assertStringContainsString('يوجد نقص', $html);
+        $this->assertStringContainsString('تعذر توفير العدد المطلوب', $html);
+    }
+
+    #[Test]
+    public function it_uses_allowed_role_fallback_for_secretary_and_records_note(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة بتعويض', ExamHallType::Large);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => true,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 1, 0, 0);
+        $this->createInvigilators($context['college'], InvigilationRole::HallHead, 1);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $assignment = InvigilatorAssignment::query()->first();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(0, InvigilatorUnassignedRequirement::query()->count());
+        $this->assertSame($hall->id, $assignment?->exam_hall_id);
+        $this->assertSame(InvigilationRole::Secretary, $assignment?->invigilation_role);
+        $this->assertStringContainsString('تم استخدام مراقب بديل', (string) $assignment?->notes);
+    }
+
+    #[Test]
     public function it_respects_assignment_limits_and_reports_shortage(): void
     {
         $context = $this->createSlotContext();
@@ -187,7 +366,7 @@ class InvigilatorDistributionTest extends TestCase
 
         $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
 
-        $this->assertSame('warning', $result['status']);
+        $this->assertSame('partial', $result['status']);
         $this->assertSame(1, InvigilatorAssignment::query()->count());
         $this->assertSame(1, $result['shortage_count']);
     }
@@ -214,7 +393,7 @@ class InvigilatorDistributionTest extends TestCase
         );
 
         $this->assertSame('danger', $result['status']);
-        $this->assertSame(__('exam.readiness.reasons.student_distribution_missing'), $result['message']);
+        $this->assertSame(__('exam.readiness.reasons.unassigned_students_block_invigilators'), $result['message']);
         $this->assertSame(0, InvigilatorAssignment::query()->count());
         $this->assertSame(1, $result['readiness']['incomplete_slots_count']);
     }
@@ -280,6 +459,125 @@ class InvigilatorDistributionTest extends TestCase
             'subject_exam_offering_id' => $otherOffering->id,
             'assigned_students_count' => 5,
         ]);
+        $this->assertDatabaseHas('student_distribution_runs', [
+            'college_id' => $context['college']->id,
+            'status' => 'success',
+            'total_offerings' => 2,
+            'total_slots' => 1,
+            'total_students' => 10,
+            'distributed_students' => 10,
+            'unassigned_students' => 0,
+        ]);
+    }
+
+    #[Test]
+    public function it_persists_partial_global_distribution_results_with_issue_details(): void
+    {
+        $context = $this->createSlotContext();
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة محدودة',
+            'location' => 'المبنى الأول',
+            'capacity' => 3,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        for ($index = 1; $index <= 5; $index++) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $context['offering']->id,
+                'student_number' => 'PARTIAL'.$index,
+                'full_name' => 'طالب غير مكتمل '.$index,
+                'student_type' => ExamStudentType::Regular->value,
+            ]);
+        }
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(3, $result['distributed_students']);
+        $this->assertSame(2, $result['unassigned_students']);
+        $this->assertSame(2, $result['capacity_shortage']);
+
+        $run = StudentDistributionRun::query()->first();
+        $this->assertNotNull($run);
+        $this->assertSame('partial', $run->status);
+        $this->assertSame(2, $run->unassigned_students);
+        $this->assertSame(1, StudentDistributionRunIssue::query()->count());
+        $this->assertDatabaseHas('student_distribution_run_issues', [
+            'student_distribution_run_id' => $run->id,
+            'subject_exam_offering_id' => $context['offering']->id,
+            'issue_type' => 'capacity_shortage',
+            'affected_students_count' => 2,
+        ]);
+    }
+
+    #[Test]
+    public function it_persists_failed_global_distribution_result_when_no_active_halls_exist(): void
+    {
+        $context = $this->createSlotContext();
+
+        for ($index = 1; $index <= 4; $index++) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $context['offering']->id,
+                'student_number' => 'FAILED'.$index,
+                'full_name' => 'طالب بلا قاعة '.$index,
+                'student_type' => ExamStudentType::Regular->value,
+            ]);
+        }
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $this->assertSame('failed', $result['status']);
+        $this->assertSame(1, $result['total_offerings']);
+        $this->assertSame(1, $result['total_slots']);
+        $this->assertSame(4, $result['total_students']);
+        $this->assertSame(4, $result['unassigned_students']);
+        $this->assertSame(4, $result['capacity_shortage']);
+        $this->assertCount(1, $result['unassigned_by_slot']);
+        $this->assertCount(1, $result['unassigned_by_subject']);
+
+        $run = StudentDistributionRun::query()->first();
+
+        $this->assertNotNull($run);
+        $this->assertSame('failed', $run->status);
+        $this->assertSame(1, $run->total_slots);
+        $this->assertSame(4, $run->capacity_shortage);
+        $this->assertDatabaseHas('student_distribution_run_issues', [
+            'student_distribution_run_id' => $run->id,
+            'issue_type' => 'no_available_halls',
+            'affected_students_count' => 4,
+        ]);
+    }
+
+    #[Test]
+    public function global_distribution_results_page_accepts_model_bound_run_parameter(): void
+    {
+        $context = $this->createSlotContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        $run = StudentDistributionRun::query()->create([
+            'college_id' => $context['college']->id,
+            'from_date' => '2026-06-01',
+            'to_date' => '2026-06-01',
+            'status' => 'success',
+            'executed_at' => now(),
+        ]);
+
+        $page = app(GlobalDistributionResults::class);
+        $page->mount($run);
+
+        $this->assertTrue($page->run?->is($run));
     }
 
     #[Test]
@@ -311,7 +609,7 @@ class InvigilatorDistributionTest extends TestCase
 
         $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
 
-        $this->assertSame('warning', $result['status']);
+        $this->assertSame('partial', $result['status']);
         $this->assertSame(1, InvigilatorAssignment::query()->count());
         $this->assertSame(1, $result['shortage_count']);
     }
