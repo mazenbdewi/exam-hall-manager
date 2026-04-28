@@ -6,6 +6,7 @@ use App\Models\College;
 use App\Models\HallAssignment;
 use App\Models\InvigilatorAssignment;
 use App\Models\SubjectExamOffering;
+use App\Services\AuditLogService;
 use App\Services\InvigilatorDistributionPdfService;
 use App\Services\InvigilatorDistributionService;
 use App\Support\ExamCollegeScope;
@@ -59,12 +60,12 @@ class InvigilatorDistribution extends Page
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.exam_management');
+        return __('exam.navigation.core_operations');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 40;
+        return 13;
     }
 
     public static function getNavigationLabel(): string
@@ -124,14 +125,49 @@ class InvigilatorDistribution extends Page
                 ->persistent()
                 ->send();
 
+            app(AuditLogService::class)->log(
+                action: 'invigilator_distribution.run',
+                module: 'invigilator_distribution',
+                description: 'تنفيذ توزيع المراقبين',
+                metadata: [
+                    'faculty_id' => $college->getKey(),
+                    'from_date' => $this->from_date,
+                    'to_date' => $this->to_date,
+                    'status' => 'blocked',
+                    'message' => $readiness['blocking_message'] ?? null,
+                ],
+                status: 'failed',
+            );
+
             return;
         }
 
         $service = app(InvigilatorDistributionService::class);
+        $wasDistributed = $this->hasExistingDistribution();
         $result = $service->distributeForFaculty(
             $college,
             Carbon::parse($this->from_date),
             Carbon::parse($this->to_date),
+        );
+
+        app(AuditLogService::class)->log(
+            action: $wasDistributed ? 'invigilator_distribution.rerun' : 'invigilator_distribution.run',
+            module: 'invigilator_distribution',
+            description: $wasDistributed ? 'إعادة توزيع المراقبين' : 'تنفيذ توزيع المراقبين',
+            metadata: [
+                'faculty_id' => $college->getKey(),
+                'from_date' => $this->from_date,
+                'to_date' => $this->to_date,
+                'total_required' => ($result['assigned_count'] ?? 0) + ($result['shortage_count'] ?? 0),
+                'assigned_count' => $result['assigned_count'] ?? null,
+                'shortage_count' => $result['shortage_count'] ?? null,
+                'status' => $result['status'] ?? null,
+            ],
+            status: match ($result['status'] ?? 'warning') {
+                'success' => 'success',
+                'danger' => 'failed',
+                default => 'warning',
+            },
         );
 
         $notification = Notification::make()
@@ -165,6 +201,19 @@ class InvigilatorDistribution extends Page
 
         $college = $this->selectedCollege();
 
+        if ($college) {
+            app(AuditLogService::class)->log(
+                action: 'export.pdf',
+                module: 'exports',
+                description: 'تصدير تقرير',
+                metadata: [
+                    'report_type' => 'invigilator_distribution_by_invigilator',
+                    'faculty_id' => $college->getKey(),
+                    'date_range' => collect([$this->from_date, $this->to_date])->filter()->implode(' - '),
+                ],
+            );
+        }
+
         return $college
             ? app(InvigilatorDistributionPdfService::class)->downloadByInvigilator($college, ...$this->exportFilters())
             : null;
@@ -178,6 +227,19 @@ class InvigilatorDistribution extends Page
 
         $college = $this->selectedCollege();
 
+        if ($college) {
+            app(AuditLogService::class)->log(
+                action: 'export.pdf',
+                module: 'exports',
+                description: 'تصدير تقرير',
+                metadata: [
+                    'report_type' => 'invigilator_distribution_by_hall',
+                    'faculty_id' => $college->getKey(),
+                    'date_range' => collect([$this->from_date, $this->to_date])->filter()->implode(' - '),
+                ],
+            );
+        }
+
         return $college
             ? app(InvigilatorDistributionPdfService::class)->downloadByHall($college, ...$this->exportFilters())
             : null;
@@ -190,6 +252,19 @@ class InvigilatorDistribution extends Page
         }
 
         $college = $this->selectedCollege();
+
+        if ($college) {
+            app(AuditLogService::class)->log(
+                action: 'export.pdf',
+                module: 'exports',
+                description: 'تصدير تقرير',
+                metadata: [
+                    'report_type' => 'invigilator_distribution_by_day',
+                    'faculty_id' => $college->getKey(),
+                    'date_range' => collect([$this->from_date, $this->to_date])->filter()->implode(' - '),
+                ],
+            );
+        }
 
         return $college
             ? app(InvigilatorDistributionPdfService::class)->downloadByDay($college, ...$this->exportFilters())
@@ -216,6 +291,17 @@ class InvigilatorDistribution extends Page
 
             return null;
         }
+
+        app(AuditLogService::class)->log(
+            action: 'export.pdf',
+            module: 'exports',
+            description: 'تصدير تقرير',
+            metadata: [
+                'report_type' => 'invigilator_distribution_shortage',
+                'faculty_id' => $college->getKey(),
+                'date_range' => collect([$this->from_date, $this->to_date])->filter()->implode(' - '),
+            ],
+        );
 
         return app(InvigilatorDistributionPdfService::class)->downloadShortage($college, ...$this->exportFilters());
     }

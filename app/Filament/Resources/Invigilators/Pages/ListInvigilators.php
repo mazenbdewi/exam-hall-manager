@@ -6,6 +6,7 @@ use App\Exports\InvigilatorsTemplateExport;
 use App\Filament\Resources\Invigilators\InvigilatorResource;
 use App\Imports\InvigilatorsImport;
 use App\Models\College;
+use App\Services\AuditLogService;
 use App\Support\ExamCollegeScope;
 use App\Support\ShieldPermission;
 use Filament\Actions\Action;
@@ -79,12 +80,39 @@ class ListInvigilators extends ListRecords
                             ->title(__('exam.notifications.invigilators_imported'))
                             ->body(__('exam.notifications.invigilators_imported_body', ['count' => $import->getImportedCount()]))
                             ->send();
+
+                        app(AuditLogService::class)->log(
+                            action: 'import.invigilators',
+                            module: 'imports',
+                            description: 'استيراد ملف',
+                            metadata: [
+                                'file_name' => basename((string) $path),
+                                'faculty_id' => $college->getKey(),
+                                'rows_total' => $import->getImportedCount(),
+                                'rows_success' => $import->getImportedCount(),
+                                'rows_failed' => 0,
+                            ],
+                        );
                     } catch (ValidationException $exception) {
                         Notification::make()
                             ->danger()
                             ->title(__('exam.notifications.import_validation_failed'))
                             ->body(collect($exception->errors())->flatten()->take(6)->implode(' | '))
                             ->send();
+
+                        app(AuditLogService::class)->log(
+                            action: 'import.invigilators',
+                            module: 'imports',
+                            description: 'استيراد ملف',
+                            metadata: [
+                                'file_name' => basename((string) $path),
+                                'faculty_id' => $college->getKey(),
+                                'rows_success' => $import->getImportedCount(),
+                                'rows_failed' => 1,
+                                'error' => collect($exception->errors())->flatten()->take(3)->implode(' | '),
+                            ],
+                            status: 'failed',
+                        );
 
                         throw $exception;
                     } catch (Throwable $exception) {
@@ -93,6 +121,20 @@ class ListInvigilators extends ListRecords
                             ->title(__('exam.notifications.import_failed'))
                             ->body($exception->getMessage())
                             ->send();
+
+                        app(AuditLogService::class)->log(
+                            action: 'import.invigilators',
+                            module: 'imports',
+                            description: 'استيراد ملف',
+                            metadata: [
+                                'file_name' => basename((string) $path),
+                                'faculty_id' => $college->getKey(),
+                                'rows_success' => $import->getImportedCount(),
+                                'rows_failed' => 1,
+                                'error' => $exception->getMessage(),
+                            ],
+                            status: 'failed',
+                        );
 
                         throw $exception;
                     } finally {

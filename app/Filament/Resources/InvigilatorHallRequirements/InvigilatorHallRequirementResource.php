@@ -51,7 +51,7 @@ class InvigilatorHallRequirementResource extends Resource
 
     public static function getNavigationSort(): ?int
     {
-        return 30;
+        return 43;
     }
 
     public static function getModelLabel(): string

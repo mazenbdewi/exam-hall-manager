@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Users\Pages;
 
 use App\Filament\Resources\Users\UserResource;
+use App\Services\AuditLogService;
 use App\Support\ExamCollegeScope;
 use App\Support\RoleNames;
 use Filament\Actions\DeleteAction;
@@ -44,6 +45,25 @@ class EditUser extends EditRecord
 
     protected function afterSave(): void
     {
+        $oldRoles = $this->record->roles()->pluck('name')->all();
+
         $this->record->syncRoles([$this->roleName]);
+
+        if ($oldRoles === [$this->roleName]) {
+            return;
+        }
+
+        app(AuditLogService::class)->log(
+            action: 'user_role.updated',
+            module: 'users',
+            auditable: $this->record,
+            description: 'تعديل صلاحيات المستخدم',
+            oldValues: [
+                'roles' => $oldRoles,
+            ],
+            newValues: [
+                'roles' => [$this->roleName],
+            ],
+        );
     }
 }

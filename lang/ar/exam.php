@@ -4,11 +4,12 @@ return [
     'app_name' => 'نظام توزيع القاعات الامتحانية',
 
     'navigation' => [
-        'administration' => 'الإدارة',
-        'exam_setup' => 'إعدادات الامتحانات',
+        'core_operations' => 'العمليات الأساسية',
+        'public_lookup' => 'الاستعلامات العامة',
+        'master_data' => 'البيانات الأساسية',
+        'users_permissions' => 'إدارة المستخدمين والصلاحيات',
+        'system_management' => 'إدارة النظام',
         'academic_setup' => 'الإعدادات الأكاديمية',
-        'exams' => 'الامتحانات',
-        'exam_management' => 'إدارة الامتحانات',
         'invigilators' => 'المراقبون',
     ],
 

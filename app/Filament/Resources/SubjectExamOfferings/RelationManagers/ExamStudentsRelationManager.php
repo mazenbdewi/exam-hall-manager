@@ -6,14 +6,15 @@ use App\Enums\ExamStudentType;
 use App\Exports\ExamStudentsTemplateExport;
 use App\Imports\ExamStudentsImport;
 use App\Models\SubjectExamOffering;
+use App\Services\AuditLogService;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
@@ -89,7 +90,7 @@ abstract class ExamStudentsRelationManager extends RelationManager
                     ->label(__('exam.actions.download_excel_template_for', ['type' => static::getStudentType()->label()]))
                     ->icon('heroicon-o-arrow-down-tray')
                     ->action(fn () => Excel::download(
-                        new ExamStudentsTemplateExport(),
+                        new ExamStudentsTemplateExport,
                         str(static::getStudentType()->value)->append('-students-template.xlsx')->toString(),
                     )),
                 Action::make('importStudents')
@@ -132,6 +133,20 @@ abstract class ExamStudentsRelationManager extends RelationManager
                                     'type' => static::getStudentType()->label(),
                                 ]))
                                 ->send();
+
+                            app(AuditLogService::class)->log(
+                                action: 'import.students',
+                                module: 'imports',
+                                auditable: $this->getOwnerRecord(),
+                                description: 'استيراد ملف',
+                                metadata: [
+                                    'file_name' => basename((string) $path),
+                                    'student_type' => static::getStudentType()->value,
+                                    'rows_total' => $import->getImportedCount(),
+                                    'rows_success' => $import->getImportedCount(),
+                                    'rows_failed' => 0,
+                                ],
+                            );
                         } catch (ValidationException $exception) {
                             $message = collect($exception->errors())
                                 ->flatten()
@@ -144,6 +159,21 @@ abstract class ExamStudentsRelationManager extends RelationManager
                                 ->body($message)
                                 ->send();
 
+                            app(AuditLogService::class)->log(
+                                action: 'import.students',
+                                module: 'imports',
+                                auditable: $this->getOwnerRecord(),
+                                description: 'استيراد ملف',
+                                metadata: [
+                                    'file_name' => basename((string) $path),
+                                    'student_type' => static::getStudentType()->value,
+                                    'rows_success' => $import->getImportedCount(),
+                                    'rows_failed' => 1,
+                                    'error' => $message,
+                                ],
+                                status: 'failed',
+                            );
+
                             throw $exception;
                         } catch (Throwable $exception) {
                             Notification::make()
@@ -151,6 +181,21 @@ abstract class ExamStudentsRelationManager extends RelationManager
                                 ->title(__('exam.notifications.import_failed'))
                                 ->body($exception->getMessage())
                                 ->send();
+
+                            app(AuditLogService::class)->log(
+                                action: 'import.students',
+                                module: 'imports',
+                                auditable: $this->getOwnerRecord(),
+                                description: 'استيراد ملف',
+                                metadata: [
+                                    'file_name' => basename((string) $path),
+                                    'student_type' => static::getStudentType()->value,
+                                    'rows_success' => $import->getImportedCount(),
+                                    'rows_failed' => 1,
+                                    'error' => $exception->getMessage(),
+                                ],
+                                status: 'failed',
+                            );
 
                             throw $exception;
                         } finally {

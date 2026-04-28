@@ -13,8 +13,6 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class SemesterResource extends Resource
 {
@@ -55,7 +53,7 @@ class SemesterResource extends Resource
 
     public static function getNavigationSort(): ?int
     {
-        return 50;
+        return 53;
     }
 
     public static function getModelLabel(): string

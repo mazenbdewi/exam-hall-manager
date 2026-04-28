@@ -23,6 +23,8 @@ class StudentDistributionRunReportService
 
     public function downloadSummaryPdf(StudentDistributionRun $run): StreamedResponse
     {
+        $this->auditExport($run, 'student_distribution_summary', 'pdf');
+
         return $this->downloadPdf(
             view: 'pdf.student-distribution-run-summary',
             filenamePrefix: 'student-distribution-summary',
@@ -32,6 +34,8 @@ class StudentDistributionRunReportService
 
     public function downloadUnassignedPdf(StudentDistributionRun $run): StreamedResponse
     {
+        $this->auditExport($run, 'student_distribution_unassigned', 'pdf');
+
         return $this->downloadPdf(
             view: 'pdf.student-distribution-run-unassigned',
             filenamePrefix: 'unassigned-students',
@@ -46,7 +50,24 @@ class StudentDistributionRunReportService
     {
         $filename = 'unassigned-students-'.$run->id.'-'.now()->format('Y-m-d-H-i').'.xlsx';
 
+        $this->auditExport($run, 'student_distribution_unassigned', 'excel');
+
         return Excel::download(new StudentDistributionUnassignedExport($run), $filename);
+    }
+
+    protected function auditExport(StudentDistributionRun $run, string $reportType, string $format): void
+    {
+        app(AuditLogService::class)->log(
+            action: "export.{$format}",
+            module: 'exports',
+            auditable: $run,
+            description: 'تصدير تقرير',
+            metadata: [
+                'report_type' => $reportType,
+                'faculty_id' => $run->college_id,
+                'date_range' => collect([$run->from_date?->format('Y-m-d'), $run->to_date?->format('Y-m-d')])->filter()->implode(' - '),
+            ],
+        );
     }
 
     protected function downloadPdf(string $view, string $filenamePrefix, StudentDistributionRun $run, array $data = []): StreamedResponse

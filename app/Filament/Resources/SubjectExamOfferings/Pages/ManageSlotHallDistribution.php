@@ -4,6 +4,7 @@ namespace App\Filament\Resources\SubjectExamOfferings\Pages;
 
 use App\Filament\Resources\ExamHalls\ExamHallResource;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Services\AuditLogService;
 use App\Services\ExamHallDistributionService;
 use App\Services\HallDistributionPdfService;
 use App\Support\ExamCollegeScope;
@@ -56,7 +57,30 @@ class ManageSlotHallDistribution extends Page
 
     public function runDistribution(): void
     {
+        $wasDistributed = $this->hasDistribution();
         $result = app(ExamHallDistributionService::class)->distributeForOffering($this->getRecord());
+
+        app(AuditLogService::class)->log(
+            action: $wasDistributed ? 'student_distribution.rerun' : 'student_distribution.run',
+            module: 'student_distribution',
+            auditable: $this->getRecord(),
+            description: $wasDistributed ? 'إعادة توزيع الطلاب' : 'تنفيذ توزيع الطلاب',
+            metadata: [
+                'faculty_id' => $this->getRecord()->subject?->college_id,
+                'from_date' => $this->getRecord()->exam_date?->format('Y-m-d'),
+                'to_date' => $this->getRecord()->exam_date?->format('Y-m-d'),
+                'total_students' => $result['total_students'] ?? null,
+                'distributed_students' => $result['assigned_students_count'] ?? ($result['distributed_students'] ?? null),
+                'unassigned_students' => $result['unassigned_students_count'] ?? ($result['unassigned_students'] ?? null),
+                'used_halls' => $result['used_halls_count'] ?? ($result['used_halls'] ?? null),
+                'status' => $result['status'] ?? null,
+            ],
+            status: match ($result['status'] ?? 'failed') {
+                'success' => 'success',
+                'warning', 'partial' => 'warning',
+                default => 'failed',
+            },
+        );
 
         $notification = Notification::make()
             ->title(match ($result['status']) {
@@ -88,6 +112,18 @@ class ManageSlotHallDistribution extends Page
             return null;
         }
 
+        app(AuditLogService::class)->log(
+            action: 'export.pdf',
+            module: 'exports',
+            auditable: $this->getRecord(),
+            description: 'تصدير تقرير',
+            metadata: [
+                'report_type' => 'student_hall_distribution',
+                'faculty_id' => $this->getRecord()->subject?->college_id,
+                'date_range' => $this->getRecord()->exam_date?->format('Y-m-d'),
+            ],
+        );
+
         return app(HallDistributionPdfService::class)->downloadForOffering($this->getRecord());
     }
 
@@ -104,6 +140,18 @@ class ManageSlotHallDistribution extends Page
 
             return null;
         }
+
+        app(AuditLogService::class)->log(
+            action: 'export.pdf',
+            module: 'exports',
+            auditable: $this->getRecord(),
+            description: 'تصدير تقرير',
+            metadata: [
+                'report_type' => 'student_distribution_unassigned',
+                'faculty_id' => $this->getRecord()->subject?->college_id,
+                'date_range' => $this->getRecord()->exam_date?->format('Y-m-d'),
+            ],
+        );
 
         return app(HallDistributionPdfService::class)->downloadUnassignedForOffering($this->getRecord(), $summary);
     }

@@ -55,12 +55,12 @@ class ExamHallResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.exam_setup');
+        return __('exam.navigation.master_data');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 40;
+        return 32;
     }
 
     public static function getModelLabel(): string

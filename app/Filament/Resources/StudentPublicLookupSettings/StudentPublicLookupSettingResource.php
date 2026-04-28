@@ -45,12 +45,12 @@ class StudentPublicLookupSettingResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.exam_management');
+        return __('exam.navigation.public_lookup');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 30;
+        return 21;
     }
 
     public static function getModelLabel(): string

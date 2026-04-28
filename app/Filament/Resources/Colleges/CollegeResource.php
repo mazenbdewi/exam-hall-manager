@@ -48,12 +48,12 @@ class CollegeResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.administration');
+        return __('exam.navigation.master_data');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 10;
+        return 31;
     }
 
     public static function getModelLabel(): string

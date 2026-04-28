@@ -109,7 +109,8 @@ class RolesAndPermissionsSeeder extends Seeder
 
     protected function ensureCustomPermissions(): void
     {
-        collect($this->customPermissions())->each(fn (string $permission): Permission => Permission::findOrCreate($permission, 'web'));
+        collect([...$this->customPermissions(), ...$this->auditPermissions()])
+            ->each(fn (string $permission): Permission => Permission::findOrCreate($permission, 'web'));
     }
 
     protected function customPermissions(): array
@@ -123,6 +124,16 @@ class RolesAndPermissionsSeeder extends Seeder
             ShieldPermission::resource('import', 'Invigilator'),
             ShieldPermission::resource('run', 'InvigilatorAssignment'),
             ShieldPermission::resource('export', 'InvigilatorAssignment'),
+        ];
+    }
+
+    protected function auditPermissions(): array
+    {
+        return [
+            'view_audit_log',
+            'view_any_audit_log',
+            'delete_audit_log',
+            'export_audit_log',
         ];
     }
 }

@@ -5,6 +5,7 @@ namespace App\Filament\Resources\SubjectExamOfferings\Pages;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\College;
 use App\Models\StudentDistributionRun;
+use App\Services\AuditLogService;
 use App\Services\ExamHallDistributionService;
 use App\Support\ExamCollegeScope;
 use Filament\Actions\Action;
@@ -105,6 +106,19 @@ class ListSubjectExamOfferings extends ListRecords
                             ->body(__('exam.global_hall_distribution.reasons.missing_required_inputs'))
                             ->send();
 
+                        app(AuditLogService::class)->log(
+                            action: 'student_distribution.run',
+                            module: 'student_distribution',
+                            description: 'تنفيذ توزيع الطلاب',
+                            metadata: [
+                                'faculty_id' => $data['college_id'] ?? null,
+                                'from_date' => $data['from_date'] ?? null,
+                                'to_date' => $data['to_date'] ?? null,
+                                'status' => 'missing_required_inputs',
+                            ],
+                            status: 'failed',
+                        );
+
                         return;
                     }
 
@@ -114,6 +128,32 @@ class ListSubjectExamOfferings extends ListRecords
                         fromDate: (string) $data['from_date'],
                         toDate: (string) $data['to_date'],
                         redistribute: (bool) ($data['redistribute'] ?? false),
+                    );
+
+                    app(AuditLogService::class)->log(
+                        action: (bool) ($data['redistribute'] ?? false)
+                            ? 'student_distribution.rerun'
+                            : 'student_distribution.run',
+                        module: 'student_distribution',
+                        description: (bool) ($data['redistribute'] ?? false)
+                            ? 'إعادة توزيع الطلاب'
+                            : 'تنفيذ توزيع الطلاب',
+                        metadata: [
+                            'faculty_id' => $collegeId,
+                            'from_date' => (string) $data['from_date'],
+                            'to_date' => (string) $data['to_date'],
+                            'total_students' => $result['total_students'] ?? null,
+                            'distributed_students' => $result['distributed_students'] ?? null,
+                            'unassigned_students' => $result['unassigned_students'] ?? null,
+                            'used_halls' => $result['used_halls'] ?? null,
+                            'status' => $result['status'] ?? null,
+                            'run_id' => $result['run_id'] ?? null,
+                        ],
+                        status: match ($result['status'] ?? 'failed') {
+                            'success' => 'success',
+                            'partial' => 'warning',
+                            default => 'failed',
+                        },
                     );
 
                     if (($result['status'] ?? 'failed') === 'failed') {

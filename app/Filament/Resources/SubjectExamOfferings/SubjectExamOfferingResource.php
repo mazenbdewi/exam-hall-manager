@@ -57,12 +57,12 @@ class SubjectExamOfferingResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.exams');
+        return __('exam.navigation.core_operations');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 70;
+        return 11;
     }
 
     public static function getModelLabel(): string

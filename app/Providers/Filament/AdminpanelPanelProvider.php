@@ -2,15 +2,20 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Http\Middleware\AuditRequestMiddleware;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Navigation\NavigationGroup;
+use Filament\Navigation\NavigationItem;
 use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -23,6 +28,9 @@ class AdminpanelPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        Dashboard::navigationSort(1);
+        Dashboard::navigationLabel('لوحة التحكم');
+
         $panel = $panel
             ->default()
             ->id('adminpanel')
@@ -45,7 +53,33 @@ class AdminpanelPanelProvider extends PanelProvider
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([
             ])
-            ->plugin(FilamentShieldPlugin::make())
+            ->navigationGroups([
+                NavigationGroup::make(__('exam.navigation.core_operations'))->collapsed(false),
+                NavigationGroup::make(__('exam.navigation.public_lookup')),
+                NavigationGroup::make(__('exam.navigation.master_data')),
+                NavigationGroup::make(__('exam.navigation.invigilators')),
+                NavigationGroup::make(__('exam.navigation.academic_setup')),
+                NavigationGroup::make(__('exam.navigation.users_permissions')),
+                NavigationGroup::make(__('exam.navigation.system_management')),
+            ])
+            ->navigationItems([
+                NavigationItem::make('توزيع شامل للطلاب على القاعات')
+                    ->group(__('exam.navigation.core_operations'))
+                    ->icon(Heroicon::OutlinedSparkles)
+                    ->sort(12)
+                    ->visible(fn (): bool => SubjectExamOfferingResource::canViewAny())
+                    ->url(fn (): string => SubjectExamOfferingResource::getUrl('index')),
+                NavigationItem::make('سجل نتائج توزيع الطلاب')
+                    ->group(__('exam.navigation.core_operations'))
+                    ->icon(Heroicon::OutlinedDocumentChartBar)
+                    ->sort(14)
+                    ->visible(fn (): bool => SubjectExamOfferingResource::canViewAny())
+                    ->url(fn (): string => route('filament.adminpanel.resources.subject-exam-offerings.global-distribution-results')),
+            ])
+            ->plugin(FilamentShieldPlugin::make()
+                ->navigationGroup(__('exam.navigation.users_permissions'))
+                ->navigationLabel('الأدوار')
+                ->navigationSort(62))
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -59,6 +93,7 @@ class AdminpanelPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+                AuditRequestMiddleware::class,
             ]);
 
         if ($this->hasCompiledTheme('resources/css/filament/adminpanel/theme.css')) {

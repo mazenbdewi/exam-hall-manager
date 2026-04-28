@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Users\Pages;
 
 use App\Filament\Resources\Users\UserResource;
+use App\Services\AuditLogService;
 use App\Support\ExamCollegeScope;
 use Filament\Resources\Pages\CreateRecord;
 
@@ -29,5 +30,15 @@ class CreateUser extends CreateRecord
     protected function afterCreate(): void
     {
         $this->record->syncRoles([$this->roleName]);
+
+        app(AuditLogService::class)->log(
+            action: 'user_role.assigned',
+            module: 'users',
+            auditable: $this->record,
+            description: 'تعديل صلاحيات المستخدم',
+            newValues: [
+                'roles' => [$this->roleName],
+            ],
+        );
     }
 }

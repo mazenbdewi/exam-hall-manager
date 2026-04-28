@@ -13,8 +13,6 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class StudyLevelResource extends Resource
 {
@@ -55,7 +53,7 @@ class StudyLevelResource extends Resource
 
     public static function getNavigationSort(): ?int
     {
-        return 30;
+        return 51;
     }
 
     public static function getModelLabel(): string

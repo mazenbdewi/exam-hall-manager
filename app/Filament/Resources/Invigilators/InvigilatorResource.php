@@ -54,7 +54,7 @@ class InvigilatorResource extends Resource
 
     public static function getNavigationSort(): ?int
     {
-        return 10;
+        return 41;
     }
 
     public static function getModelLabel(): string
