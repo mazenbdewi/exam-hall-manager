@@ -16,6 +16,7 @@ class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory;
+
     use HasRoles;
     use Notifiable;
 
@@ -30,6 +31,9 @@ class User extends Authenticatable implements FilamentUser
         'name',
         'email',
         'password',
+        'security_pin_hash',
+        'security_pin_enabled',
+        'security_pin_set_at',
         'college_id',
     ];
 
@@ -40,6 +44,7 @@ class User extends Authenticatable implements FilamentUser
      */
     protected $hidden = [
         'password',
+        'security_pin_hash',
         'remember_token',
     ];
 
@@ -53,6 +58,8 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'security_pin_enabled' => 'boolean',
+            'security_pin_set_at' => 'datetime',
         ];
     }
 
@@ -74,5 +81,10 @@ class User extends Authenticatable implements FilamentUser
     public function isAdmin(): bool
     {
         return $this->hasRole(RoleNames::ADMIN);
+    }
+
+    public function requiresSecurityPinChallenge(): bool
+    {
+        return $this->security_pin_enabled && filled($this->security_pin_hash);
     }
 }

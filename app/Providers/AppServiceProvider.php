@@ -15,9 +15,11 @@ use App\Models\SubjectExamOffering;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Observers\AuditModelObserver;
+use App\Support\AdminPassword;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -37,6 +39,8 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Carbon::setLocale(config('app.locale'));
+
+        Password::defaults(fn () => AdminPassword::rule());
 
         $this->registerAuditObservers();
     }

@@ -19,6 +19,13 @@ return [
     'unique' => ':attribute مستخدم مسبقاً.',
     'confirmed' => 'تأكيد :attribute غير مطابق.',
     'after' => 'يجب أن يكون :attribute بعد :date.',
+    'digits' => 'يجب أن يتكون :attribute من :digits أرقام.',
+    'password' => [
+        'mixed' => 'يجب أن تحتوي كلمة السر على حرف كبير وحرف صغير.',
+        'numbers' => 'يجب أن تحتوي كلمة السر على رقم واحد على الأقل.',
+        'symbols' => 'يجب أن تحتوي كلمة السر على رمز واحد على الأقل.',
+        'uncompromised' => 'كلمة السر ضعيفة، يرجى اختيار كلمة سر أخرى.',
+    ],
 
     'attributes' => [
         'name' => 'الاسم',
@@ -26,6 +33,8 @@ return [
         'email' => 'البريد الإلكتروني',
         'password' => 'كلمة المرور',
         'password_confirmation' => 'تأكيد كلمة المرور',
+        'security_pin' => 'رمز الدخول الإضافي',
+        'security_pin_confirmation' => 'تأكيد رمز الدخول الإضافي',
         'college_id' => 'الكلية',
         'department_id' => 'القسم',
         'study_level_id' => 'المرحلة الدراسية',

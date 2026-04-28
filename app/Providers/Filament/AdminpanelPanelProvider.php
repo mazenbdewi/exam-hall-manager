@@ -2,8 +2,12 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Auth\Pages\Login;
+use App\Filament\Auth\Pages\Profile;
+use App\Filament\Auth\Pages\SecurityPinChallenge;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Http\Middleware\AuditRequestMiddleware;
+use App\Http\Middleware\EnsureSecurityPinVerified;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -22,6 +26,7 @@ use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Route;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminpanelPanelProvider extends PanelProvider
@@ -35,7 +40,8 @@ class AdminpanelPanelProvider extends PanelProvider
             ->default()
             ->id('adminpanel')
             ->path('adminpanel')
-            ->login()
+            ->login(Login::class)
+            ->profile(Profile::class, isSimple: false)
             ->brandName(config('app.name'))
             ->colors([
                 'primary' => Color::Blue,
@@ -80,6 +86,10 @@ class AdminpanelPanelProvider extends PanelProvider
                 ->navigationGroup(__('exam.navigation.users_permissions'))
                 ->navigationLabel('الأدوار')
                 ->navigationSort(62))
+            ->authenticatedRoutes(function (): void {
+                Route::get('/security-pin', SecurityPinChallenge::class)
+                    ->name('auth.security-pin.challenge');
+            })
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -93,6 +103,7 @@ class AdminpanelPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+                EnsureSecurityPinVerified::class,
                 AuditRequestMiddleware::class,
             ]);
 

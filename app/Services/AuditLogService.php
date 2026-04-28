@@ -185,7 +185,7 @@ class AuditLogService
             return true;
         }
 
-        return Str::contains($field, ['password', 'token', 'secret', 'private_key', 'recovery_codes']);
+        return Str::contains($field, ['password', 'pin', 'token', 'secret', 'private_key', 'recovery_codes']);
     }
 
     protected function emptyToNull(array $values): ?array

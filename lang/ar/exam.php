@@ -5,7 +5,7 @@ return [
 
     'navigation' => [
         'core_operations' => 'العمليات الأساسية',
-        'public_lookup' => 'الاستعلامات العامة',
+        'public_lookup' => 'الاستعلام في الصفحة الرئيسية',
         'master_data' => 'البيانات الأساسية',
         'users_permissions' => 'إدارة المستخدمين والصلاحيات',
         'system_management' => 'إدارة النظام',
@@ -27,6 +27,7 @@ return [
         'user' => ['singular' => 'مستخدم', 'plural' => 'المستخدمون'],
         'invigilator' => ['singular' => 'مراقب', 'plural' => 'المراقبون'],
         'invigilator_distribution_setting' => ['singular' => 'إعدادات توزيع المراقبين', 'plural' => 'إعدادات توزيع المراقبين'],
+        'invigilator_public_lookup_setting' => ['singular' => 'إعدادات استعلام المراقبين', 'plural' => 'إعدادات استعلام المراقبين'],
         'invigilator_hall_requirement' => ['singular' => 'احتياج القاعات من المراقبين', 'plural' => 'احتياج القاعات من المراقبين'],
         'student_public_lookup_setting' => ['singular' => 'إعدادات استعلام الطلاب', 'plural' => 'إعدادات استعلام الطلاب'],
     ],

@@ -104,9 +104,6 @@ class InvigilatorDistributionSettingResource extends Resource
                 'max_assignments_per_day' => ['required', 'integer', 'min:1'],
                 'distribution_pattern' => ['required', Rule::in(InvigilatorDistributionPattern::values())],
                 'day_preference' => ['required', Rule::in(InvigilatorDayPreference::values())],
-                'show_all_invigilator_assignments' => ['boolean'],
-                'visibility_before_minutes' => ['required', 'integer', Rule::in([30, 60, 120, 180])],
-                'visibility_after_minutes' => ['required', 'integer', 'min:1'],
             ],
             attributes: [
                 'college_id' => __('exam.fields.college'),
@@ -116,9 +113,6 @@ class InvigilatorDistributionSettingResource extends Resource
                 'max_assignments_per_day' => __('exam.fields.max_assignments_per_day'),
                 'distribution_pattern' => __('exam.fields.distribution_pattern'),
                 'day_preference' => __('exam.fields.day_preference'),
-                'show_all_invigilator_assignments' => __('exam.fields.show_all_invigilator_assignments'),
-                'visibility_before_minutes' => __('exam.fields.visibility_before_minutes'),
-                'visibility_after_minutes' => __('exam.fields.visibility_after_minutes'),
             ],
         )->validate();
     }
