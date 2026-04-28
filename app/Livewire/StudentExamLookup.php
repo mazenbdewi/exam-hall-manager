@@ -3,6 +3,9 @@
 namespace App\Livewire;
 
 use App\Models\ExamStudent;
+use App\Models\StudentPublicLookupSetting;
+use App\Models\SubjectExamOffering;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -20,10 +23,12 @@ class StudentExamLookup extends Component
 
     public ?string $message = null;
 
+    public ?string $visibilityBadge = null;
+
     public function search(): void
     {
         $this->studentNumber = trim($this->studentNumber);
-        $this->reset(['results', 'student', 'message']);
+        $this->reset(['results', 'student', 'message', 'visibilityBadge']);
 
         try {
             $this->validate();
@@ -57,6 +62,12 @@ class StudentExamLookup extends Component
         $firstStudent = $examStudents->first();
         $firstOffering = $firstStudent?->subjectExamOffering;
         $firstSubject = $firstOffering?->subject;
+        $settings = $this->settingsForCollege($firstSubject?->college_id);
+        $now = now(config('app.timezone'));
+
+        $this->visibilityBadge = $settings->show_all_student_assignments
+            ? 'يتم عرض كامل القاعات الامتحانية'
+            : 'يتم عرض القاعة المتاحة حسب الوقت المحدد';
 
         $this->student = [
             'name' => $firstStudent?->full_name,
@@ -68,7 +79,8 @@ class StudentExamLookup extends Component
         $hasExamEndTimeColumn = Schema::hasColumn('subject_exam_offerings', 'exam_end_time');
 
         $this->results = $examStudents
-            ->map(fn (ExamStudent $examStudent): array => $this->toResult($examStudent, $hasExamEndTimeColumn))
+            ->filter(fn (ExamStudent $examStudent): bool => $this->isVisible($examStudent, $settings, $now, $hasExamEndTimeColumn))
+            ->map(fn (ExamStudent $examStudent): array => $this->toResult($examStudent, $settings, $now, $hasExamEndTimeColumn))
             ->sortBy([
                 ['sort_group', 'asc'],
                 ['sort_date', 'asc'],
@@ -79,13 +91,13 @@ class StudentExamLookup extends Component
             ->all();
 
         if ($this->results === []) {
-            $this->message = 'لا توجد مواد امتحانية مرتبطة بهذا الرقم حاليًا.';
+            $this->message = 'لا توجد قاعات متاحة للعرض حاليًا.'."\n".'قد تظهر القاعة قبل موعد الامتحان حسب إعدادات الكلية.';
         }
     }
 
     public function resetSearch(): void
     {
-        $this->reset(['studentNumber', 'searched', 'results', 'student', 'message']);
+        $this->reset(['studentNumber', 'searched', 'results', 'student', 'message', 'visibilityBadge']);
         $this->resetValidation();
     }
 
@@ -117,13 +129,52 @@ class StudentExamLookup extends Component
         ];
     }
 
-    protected function toResult(ExamStudent $examStudent, bool $hasExamEndTimeColumn): array
+    protected function settingsForCollege(?int $collegeId): StudentPublicLookupSetting
+    {
+        if (! $collegeId) {
+            return new StudentPublicLookupSetting([
+                'show_all_student_assignments' => false,
+                'visibility_before_minutes' => 60,
+                'visibility_after_minutes' => 180,
+            ]);
+        }
+
+        return StudentPublicLookupSetting::query()
+            ->where('college_id', $collegeId)
+            ->first()
+            ?? StudentPublicLookupSetting::defaultsForCollege($collegeId);
+    }
+
+    protected function isVisible(ExamStudent $examStudent, StudentPublicLookupSetting $settings, CarbonInterface $now, bool $hasExamEndTimeColumn): bool
+    {
+        if ($settings->show_all_student_assignments) {
+            return true;
+        }
+
+        $offering = $examStudent->subjectExamOffering;
+        $startAt = $this->offeringDateTime($offering, $offering?->exam_start_time);
+
+        if (! $startAt) {
+            return false;
+        }
+
+        $visibleFrom = $startAt->copy()->subMinutes((int) $settings->visibility_before_minutes);
+        $visibleUntil = $hasExamEndTimeColumn
+            ? $this->offeringDateTime($offering, $offering?->getAttribute('exam_end_time'))
+            : null;
+        $visibleUntil ??= $startAt->copy()->addMinutes((int) $settings->visibility_after_minutes);
+
+        return $now->greaterThanOrEqualTo($visibleFrom) && $now->lessThanOrEqualTo($visibleUntil);
+    }
+
+    protected function toResult(ExamStudent $examStudent, StudentPublicLookupSetting $settings, CarbonInterface $now, bool $hasExamEndTimeColumn): array
     {
         $offering = $examStudent->subjectExamOffering;
         $subject = $offering?->subject;
         $studentHallAssignment = $examStudent->hallAssignment;
         $hall = $studentHallAssignment?->hallAssignment?->examHall;
-        $statusKey = $offering?->exam_status_key ?? 'unspecified';
+        $examStatusKey = $this->statusKey($offering, $settings, $now, $hasExamEndTimeColumn);
+        $statusKey = $examStatusKey;
         $isAssigned = filled($hall?->getKey());
 
         if (! $isAssigned) {
@@ -140,10 +191,54 @@ class StudentExamLookup extends Component
             'status_key' => $statusKey,
             'status_label' => $this->statusLabel($statusKey),
             'status_tone' => $this->statusTone($statusKey),
-            'sort_group' => $this->sortGroup($statusKey),
+            'sort_group' => $this->sortGroup($examStatusKey),
             'sort_date' => $offering?->exam_date?->format('Y-m-d') ?? '9999-12-31',
             'sort_time' => (string) ($offering?->exam_start_time ?? '23:59:59'),
         ];
+    }
+
+    protected function statusKey(?SubjectExamOffering $offering, StudentPublicLookupSetting $settings, CarbonInterface $now, bool $hasExamEndTimeColumn): string
+    {
+        $startAt = $this->offeringDateTime($offering, $offering?->exam_start_time);
+
+        if (! $startAt) {
+            return 'unspecified';
+        }
+
+        $endAt = $hasExamEndTimeColumn
+            ? $this->offeringDateTime($offering, $offering?->getAttribute('exam_end_time'))
+            : null;
+        $endAt ??= $startAt->copy()->addMinutes((int) $settings->visibility_after_minutes);
+
+        if ($now->betweenIncluded($startAt, $endAt)) {
+            return 'running';
+        }
+
+        if ($endAt->lessThan($now)) {
+            return 'finished';
+        }
+
+        if ($startAt->isSameDay($now)) {
+            return 'today';
+        }
+
+        if ($startAt->greaterThan($now)) {
+            return 'upcoming';
+        }
+
+        return 'finished';
+    }
+
+    protected function offeringDateTime(?SubjectExamOffering $offering, mixed $time): ?CarbonInterface
+    {
+        if (! $offering?->exam_date || blank($time)) {
+            return null;
+        }
+
+        return $offering->exam_date
+            ->copy()
+            ->timezone(config('app.timezone'))
+            ->setTimeFromTimeString((string) $time);
     }
 
     protected function formatExamTime(mixed $startTime, mixed $endTime): string

@@ -60,6 +60,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'InvigilatorDistributionSetting',
             'InvigilatorHallRequirement',
             'InvigilatorAssignment',
+            'StudentPublicLookupSetting',
         ];
 
         $viewOnlyResources = [

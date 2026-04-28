@@ -60,6 +60,10 @@
             <p class="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{ $message }}</p>
         @enderror
 
+        <p class="mt-4 text-sm font-bold leading-6 text-slate-500">
+            قد يتم إظهار القاعة قبل موعد الامتحان بمدة تحددها الكلية من لوحة التحكم.
+        </p>
+
         @if ($searched)
             <button type="button" wire:click="resetSearch" class="mt-4 inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800">
                 بحث جديد
@@ -69,7 +73,7 @@
 
     @if ($message)
         <div class="mx-auto w-full max-w-3xl rounded-3xl border border-amber-200 bg-amber-50 p-5 text-base font-bold leading-7 text-amber-900 shadow-sm">
-            {{ $message }}
+            {!! nl2br(e($message)) !!}
         </div>
     @endif
 
@@ -107,13 +111,15 @@
         </section>
     @endif
 
-    @if ($searched && $student && $results === [])
-        <div class="rounded-3xl border border-slate-200 bg-white p-5 text-base font-bold text-slate-700 shadow-sm">
-            لا توجد مواد امتحانية مرتبطة بهذا الرقم حاليًا.
-        </div>
-    @endif
-
     @if ($results !== [])
+        @if ($visibilityBadge)
+            <div class="flex justify-center print:hidden">
+                <span class="inline-flex rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-black text-blue-800">
+                    {{ $visibilityBadge }}
+                </span>
+            </div>
+        @endif
+
         <section class="grid gap-4 lg:grid-cols-2">
             @foreach ($results as $exam)
                 @php

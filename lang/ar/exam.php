@@ -27,6 +27,7 @@ return [
         'invigilator' => ['singular' => 'مراقب', 'plural' => 'المراقبون'],
         'invigilator_distribution_setting' => ['singular' => 'إعدادات توزيع المراقبين', 'plural' => 'إعدادات توزيع المراقبين'],
         'invigilator_hall_requirement' => ['singular' => 'احتياج القاعات من المراقبين', 'plural' => 'احتياج القاعات من المراقبين'],
+        'student_public_lookup_setting' => ['singular' => 'إعدادات استعلام الطلاب', 'plural' => 'إعدادات استعلام الطلاب'],
     ],
 
     'sections' => [
@@ -51,6 +52,7 @@ return [
         'invigilator_distribution_settings' => 'إعدادات توزيع المراقبين',
         'invigilator_distribution_behavior' => 'طريقة اختيار المراقبين',
         'invigilator_public_lookup_settings' => 'إعدادات استعلام المراقبين',
+        'student_public_lookup_settings' => 'إعدادات استعلام الطلاب',
         'invigilator_hall_requirements' => 'احتياج القاعات من المراقبين',
         'student_distribution_readiness' => 'حالة توزيع الطلاب على القاعات',
         'invigilator_shortage' => 'النقص في المراقبين',
@@ -125,8 +127,11 @@ return [
         'distribution_pattern' => 'نمط التوزيع',
         'day_preference' => 'تفضيل الأيام',
         'show_all_invigilator_assignments' => 'إظهار كامل مراقبات المراقب',
+        'show_all_student_assignments' => 'إظهار كامل قاعات الطالب',
         'visibility_before_minutes' => 'مدة إظهار المراقبة قبل موعدها',
         'visibility_after_minutes' => 'مدة استمرار الظهور بعد البداية',
+        'student_visibility_before_minutes' => 'مدة إظهار القاعة قبل موعد الامتحان',
+        'student_visibility_after_minutes' => 'مدة استمرار ظهور القاعة بعد البداية',
         'default_value' => 'الافتراضي',
         'total_invigilators' => 'إجمالي المراقبين',
         'available_invigilators' => 'المراقبون المتاحون',
@@ -310,6 +315,10 @@ return [
         'show_all_invigilator_assignments' => 'عند تفعيل هذا الخيار، يستطيع المراقب رؤية جميع مراقباته ضمن الفترة الامتحانية. عند إيقافه، تظهر فقط المراقبة القريبة حسب مدة الظهور المحددة.',
         'visibility_before_minutes' => 'تحدد قبل كم دقيقة من موعد المراقبة تظهر القاعة للمراقب في صفحة الاستعلام.',
         'visibility_after_minutes' => 'تحدد كم دقيقة تبقى المراقبة ظاهرة بعد وقت بدايتها أو حتى نهاية الامتحان.',
+        'student_public_lookup_settings' => 'تتحكم هذه الإعدادات بما يظهر للطلاب في صفحة الاستعلام العامة خارج لوحة التحكم.',
+        'show_all_student_assignments' => 'عند تفعيل هذا الخيار، يستطيع الطالب رؤية جميع قاعاته الامتحانية ضمن الفترة الامتحانية. عند إيقافه، تظهر فقط القاعة القريبة حسب اليوم ومدة الظهور المحددة.',
+        'student_visibility_before_minutes' => 'تحدد قبل كم دقيقة من موعد الامتحان تظهر القاعة للطالب في صفحة الاستعلام.',
+        'student_visibility_after_minutes' => 'تحدد كم دقيقة تبقى القاعة ظاهرة بعد وقت بداية الامتحان إذا لم يكن وقت نهاية الامتحان موجودًا.',
         'distribution_pattern_descriptions' => [
             'balanced' => 'يوزع المراقبات بعدالة قدر الإمكان بحيث يحصل كل مراقب على عدد قريب من الآخر، مع مراعاة التعارضات والحد الأقصى للمراقبات.',
             'consecutive' => 'يفضل إعطاء المراقب مراقبات في أيام متقاربة أو متتالية قدر الإمكان، لتجميع تكليفه بدل توزيعه على فترات متباعدة.',

@@ -61,6 +61,11 @@ class College extends Model
         return $this->hasOne(InvigilatorDistributionSetting::class);
     }
 
+    public function studentPublicLookupSetting(): HasOne
+    {
+        return $this->hasOne(StudentPublicLookupSetting::class);
+    }
+
     public function invigilatorHallRequirements(): HasMany
     {
         return $this->hasMany(InvigilatorHallRequirement::class);
