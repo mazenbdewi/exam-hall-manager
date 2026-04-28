@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\InvigilatorDistributionSettings\Schemas;
 
-use App\Enums\InvigilatorDayPreference;
 use App\Enums\InvigilatorDistributionPattern;
 use App\Support\ExamCollegeScope;
 use Filament\Forms\Components\Select;
@@ -41,35 +40,17 @@ class InvigilatorDistributionSettingForm
                             ->step(1)
                             ->default(3)
                             ->required(),
-                        Toggle::make('allow_multiple_assignments_per_day')
-                            ->label(__('exam.fields.allow_multiple_assignments_per_day'))
-                            ->default(false)
-                            ->inline(false),
                         Toggle::make('allow_role_fallback')
                             ->label(__('exam.fields.allow_role_fallback'))
                             ->helperText(__('exam.helpers.allow_role_fallback'))
                             ->default(false)
                             ->inline(false),
-                        TextInput::make('max_assignments_per_day')
-                            ->label(__('exam.fields.max_assignments_per_day'))
-                            ->numeric()
-                            ->minValue(1)
-                            ->step(1)
-                            ->default(1)
-                            ->required(),
                         Select::make('distribution_pattern')
                             ->label(__('exam.fields.distribution_pattern'))
                             ->options(InvigilatorDistributionPattern::options())
                             ->default(InvigilatorDistributionPattern::Balanced->value)
                             ->live()
                             ->helperText(fn (Get $get): string => static::distributionPatternDescription($get('distribution_pattern')))
-                            ->required(),
-                        Select::make('day_preference')
-                            ->label(__('exam.fields.day_preference'))
-                            ->options(InvigilatorDayPreference::options())
-                            ->default(InvigilatorDayPreference::Balanced->value)
-                            ->live()
-                            ->helperText(fn (Get $get): string => static::dayPreferenceDescription($get('day_preference')))
                             ->required(),
                     ]),
             ]);
@@ -80,12 +61,5 @@ class InvigilatorDistributionSettingForm
         $value = $value ?: InvigilatorDistributionPattern::Balanced->value;
 
         return __("exam.helpers.distribution_pattern_descriptions.{$value}");
-    }
-
-    protected static function dayPreferenceDescription(?string $value): string
-    {
-        $value = $value ?: InvigilatorDayPreference::Balanced->value;
-
-        return __("exam.helpers.day_preference_descriptions.{$value}");
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Invigilators\Tables;
 
 use App\Enums\InvigilationRole;
+use App\Enums\InvigilatorDayPreference;
 use App\Enums\StaffCategory;
 use App\Support\ExamCollegeScope;
 use Filament\Actions\BulkActionGroup;
@@ -53,6 +54,25 @@ class InvigilatorsTable
                     ->label(__('exam.fields.max_assignments_per_day'))
                     ->placeholder(__('exam.fields.default_value'))
                     ->sortable(),
+                TextColumn::make('allow_multiple_assignments_per_day')
+                    ->label(__('exam.fields.allow_multiple_assignments_per_day_short'))
+                    ->formatStateUsing(fn ($state): string => match ($state) {
+                        true => __('exam.boolean.yes'),
+                        false => __('exam.boolean.no'),
+                        default => __('exam.fields.default_value'),
+                    })
+                    ->badge()
+                    ->color(fn ($state): string => match ($state) {
+                        true => 'success',
+                        false => 'gray',
+                        default => 'warning',
+                    })
+                    ->toggleable(),
+                TextColumn::make('day_preference')
+                    ->label(__('exam.fields.day_preference'))
+                    ->formatStateUsing(fn ($state): string => $state instanceof InvigilatorDayPreference ? $state->label() : (filled($state) ? __("exam.invigilator_day_preferences.{$state}") : __('exam.fields.default_value')))
+                    ->badge()
+                    ->toggleable(),
                 TextColumn::make('workload_reduction_percentage')
                     ->label(__('exam.fields.workload_reduction_percentage_short'))
                     ->badge()

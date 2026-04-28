@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\InvigilatorDistributionSettings;
 
-use App\Enums\InvigilatorDayPreference;
 use App\Enums\InvigilatorDistributionPattern;
 use App\Filament\Resources\InvigilatorDistributionSettings\Pages\CreateInvigilatorDistributionSetting;
 use App\Filament\Resources\InvigilatorDistributionSettings\Pages\EditInvigilatorDistributionSetting;
@@ -99,20 +98,14 @@ class InvigilatorDistributionSettingResource extends Resource
                     Rule::unique('invigilator_distribution_settings', 'college_id')->ignore($record?->getKey()),
                 ],
                 'default_max_assignments_per_invigilator' => ['required', 'integer', 'min:0'],
-                'allow_multiple_assignments_per_day' => ['boolean'],
                 'allow_role_fallback' => ['boolean'],
-                'max_assignments_per_day' => ['required', 'integer', 'min:1'],
                 'distribution_pattern' => ['required', Rule::in(InvigilatorDistributionPattern::values())],
-                'day_preference' => ['required', Rule::in(InvigilatorDayPreference::values())],
             ],
             attributes: [
                 'college_id' => __('exam.fields.college'),
                 'default_max_assignments_per_invigilator' => __('exam.fields.default_max_assignments_per_invigilator'),
-                'allow_multiple_assignments_per_day' => __('exam.fields.allow_multiple_assignments_per_day'),
                 'allow_role_fallback' => __('exam.fields.allow_role_fallback'),
-                'max_assignments_per_day' => __('exam.fields.max_assignments_per_day'),
                 'distribution_pattern' => __('exam.fields.distribution_pattern'),
-                'day_preference' => __('exam.fields.day_preference'),
             ],
         )->validate();
     }

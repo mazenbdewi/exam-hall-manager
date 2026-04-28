@@ -9,6 +9,7 @@ use App\Enums\ExamStudentType;
 use App\Enums\InvigilationRole;
 use App\Enums\InvigilatorAssignmentStatus;
 use App\Enums\StaffCategory;
+use App\Exports\InvigilatorsTemplateExport;
 use App\Filament\Resources\SubjectExamOfferings\Pages\GlobalDistributionResults;
 use App\Imports\InvigilatorsImport;
 use App\Models\AcademicYear;
@@ -75,8 +76,10 @@ class InvigilatorDistributionTest extends TestCase
                     'رقم الهاتف',
                     'نوع المراقبة',
                     'الحد الأقصى للمراقبات',
-                    'الحد الأقصى في اليوم',
                     'نسبة تخفيض المراقبات',
+                    'السماح بأكثر من مراقبة في اليوم',
+                    'الحد الأقصى في اليوم',
+                    'تفضيل الأيام',
                     'فعال',
                     'ملاحظات',
                 ];
@@ -85,8 +88,8 @@ class InvigilatorDistributionTest extends TestCase
             public function array(): array
             {
                 return [
-                    ['د. أحمد', 'دكتور', '0999', 'رئيس قاعة', 4, 1, '25%', 'نعم', 'محدث'],
-                    ['سارة', 'موظف إداري', '0998', 'مراقب عادي', null, null, null, 'yes', null],
+                    ['د. أحمد', 'دكتور', '0999', 'رئيس قاعة', 4, '25%', 'نعم', null, 'الأيام الأولى', 'نعم', 'محدث'],
+                    ['سارة', 'موظف إداري', '0998', 'مراقب عادي', null, null, null, null, 'استخدام الإعداد العام', 'yes', null],
                 ];
             }
         }, $path, 'local');
@@ -102,6 +105,9 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame(StaffCategory::Doctor, $updated->staff_category);
         $this->assertSame(InvigilationRole::HallHead, $updated->invigilation_role);
         $this->assertSame(25, $updated->workload_reduction_percentage);
+        $this->assertTrue($updated->allow_multiple_assignments_per_day);
+        $this->assertSame(2, $updated->max_assignments_per_day);
+        $this->assertSame('early', $updated->day_preference->value);
         $this->assertTrue($updated->is_active);
     }
 
@@ -129,6 +135,29 @@ class InvigilatorDistributionTest extends TestCase
         $this->expectExceptionMessage(__('exam.validation.invigilator_phone_required_in_import'));
 
         Excel::import(new InvigilatorsImport($college), Storage::disk('local')->path($path));
+    }
+
+    #[Test]
+    public function invigilator_template_includes_personal_distribution_columns(): void
+    {
+        $export = new InvigilatorsTemplateExport;
+
+        $this->assertSame([
+            'اسم المراقب',
+            'نوع الكادر',
+            'رقم الهاتف',
+            'نوع المراقبة',
+            'الحد الأقصى للمراقبات',
+            'نسبة تخفيض المراقبات',
+            'السماح بأكثر من مراقبة في اليوم',
+            'الحد الأقصى في اليوم',
+            'تفضيل الأيام',
+            'فعال',
+            'ملاحظات',
+        ], $export->headings());
+
+        $this->assertSame('لا', $export->collection()->first()[6]);
+        $this->assertSame('متوازن', $export->collection()->first()[8]);
     }
 
     #[Test]
@@ -406,6 +435,141 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame('partial', $result['status']);
         $this->assertSame(1, InvigilatorAssignment::query()->count());
         $this->assertSame(1, $result['shortage_count']);
+    }
+
+    #[Test]
+    public function invigilator_personal_allow_multiple_per_day_is_respected(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة 1', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 0, 1, 0);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $invigilator = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مراقب لا يسمح له بالتكرار اليومي',
+            'phone' => '0988111001',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'allow_multiple_assignments_per_day' => false,
+            'max_assignments_per_day' => 3,
+            'is_active' => true,
+        ]);
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $context['college']->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '07:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $invigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(1, InvigilatorAssignment::query()->count());
+        $this->assertSame(1, $result['shortage_count']);
+        $this->assertSame('لا يسمح لهذا المراقب بأكثر من مراقبة في اليوم.', InvigilatorUnassignedRequirement::query()->first()?->reason);
+    }
+
+    #[Test]
+    public function invigilator_personal_max_per_day_is_respected(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة 1', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 0, 1, 0);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $invigilator = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مراقب بحد يومي شخصي',
+            'phone' => '0988111002',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 1,
+            'is_active' => true,
+        ]);
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $context['college']->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '07:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $invigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(1, InvigilatorAssignment::query()->count());
+        $this->assertSame(1, $result['shortage_count']);
+        $this->assertSame('تجاوز هذا المراقب الحد الأقصى اليومي المحدد له.', InvigilatorUnassignedRequirement::query()->first()?->reason);
+    }
+
+    #[Test]
+    public function invigilator_personal_day_preference_overrides_faculty_setting(): void
+    {
+        $context = $this->createSlotContext();
+        $setting = InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'late',
+        ]);
+
+        $invigilator = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مراقب بتفضيل شخصي',
+            'phone' => '0988111003',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'day_preference' => 'early',
+            'is_active' => true,
+        ]);
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $context['college']->id,
+            'exam_date' => '2026-05-31',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $this->createUsedHall($context['college'], 'قاعة سابقة', ExamHallType::Small)->id,
+            'invigilator_id' => $invigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $method = new \ReflectionMethod(InvigilatorDistributionService::class, 'score');
+        $method->setAccessible(true);
+
+        $personalScore = $method->invoke(app(InvigilatorDistributionService::class), $invigilator->fresh(), '2026-06-01', $setting);
+
+        $invigilator->forceFill(['day_preference' => null])->save();
+        $facultyScore = $method->invoke(app(InvigilatorDistributionService::class), $invigilator->fresh(), '2026-06-01', $setting);
+
+        $this->assertSame(1, $personalScore[3]);
+        $this->assertSame(-1, $facultyScore[3]);
     }
 
     #[Test]

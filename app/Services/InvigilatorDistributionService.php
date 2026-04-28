@@ -718,14 +718,19 @@ class InvigilatorDistributionService
         }
 
         $dayAssignments = $this->assignmentCount($invigilator, $examDate);
-        $dayLimit = $invigilator->max_assignments_per_day ?? $setting->max_assignments_per_day;
+        $allowMultiplePerDay = $this->allowsMultipleAssignmentsPerDay($invigilator, $setting);
+        $dayLimit = $this->maxAssignmentsPerDay($invigilator, $setting);
 
-        if (! $setting->allow_multiple_assignments_per_day && $dayAssignments > 0) {
-            $reasons[] = 'same_day_limit';
+        if (! $allowMultiplePerDay && $dayAssignments > 0) {
+            $reasons[] = $invigilator->allow_multiple_assignments_per_day !== null
+                ? 'personal_same_day_limit'
+                : 'same_day_limit';
         }
 
         if ($dayLimit !== null && $dayAssignments >= $dayLimit) {
-            $reasons[] = 'daily_limit_reached';
+            $reasons[] = $invigilator->max_assignments_per_day !== null
+                ? 'personal_daily_limit_reached'
+                : 'daily_limit_reached';
         }
 
         return array_values(array_unique($reasons));
@@ -801,7 +806,7 @@ class InvigilatorDistributionService
         $week = $this->assignmentCountInWeek($invigilator, $examDate);
         $nearby = $this->nearbyAssignmentCount($invigilator, $examDate);
         $pattern = $setting->distribution_pattern?->value ?? $setting->distribution_pattern;
-        $dayPreference = $setting->day_preference?->value ?? $setting->day_preference;
+        $dayPreference = $this->dayPreference($invigilator, $setting);
 
         $patternScore = match ($pattern) {
             InvigilatorDistributionPattern::Consecutive->value => -$nearby,
@@ -816,6 +821,27 @@ class InvigilatorDistributionService
         };
 
         return [$total, $week, $patternScore, $dayScore, $invigilator->id];
+    }
+
+    protected function allowsMultipleAssignmentsPerDay(Invigilator $invigilator, InvigilatorDistributionSetting $setting): bool
+    {
+        if ($invigilator->allow_multiple_assignments_per_day !== null) {
+            return (bool) $invigilator->allow_multiple_assignments_per_day;
+        }
+
+        return (bool) ($setting->allow_multiple_assignments_per_day ?? false);
+    }
+
+    protected function maxAssignmentsPerDay(Invigilator $invigilator, InvigilatorDistributionSetting $setting): int
+    {
+        return (int) ($invigilator->max_assignments_per_day ?? $setting->max_assignments_per_day ?? 1);
+    }
+
+    protected function dayPreference(Invigilator $invigilator, InvigilatorDistributionSetting $setting): string
+    {
+        $preference = $invigilator->day_preference ?? $setting->day_preference ?? InvigilatorDayPreference::Balanced;
+
+        return $preference instanceof InvigilatorDayPreference ? $preference->value : (string) $preference;
     }
 
     protected function assignmentCount(Invigilator $invigilator, ?string $examDate = null): int
@@ -880,6 +906,21 @@ class InvigilatorDistributionService
             return $this->roleShortageReason($role, 'max_assignments_exceeded');
         }
 
+        if (($rejections['personal_same_day_limit'] ?? 0) >= $found) {
+            return $this->roleShortageReason($role, 'personal_multiple_per_day_not_allowed');
+        }
+
+        if (($rejections['personal_daily_limit_reached'] ?? 0) >= $found) {
+            return $this->roleShortageReason($role, 'personal_daily_limit_reached');
+        }
+
+        if (
+            (($rejections['personal_same_day_limit'] ?? 0) > 0 || ($rejections['personal_daily_limit_reached'] ?? 0) > 0)
+            && (int) ($diagnostics['eligible_count'] ?? 0) === 0
+        ) {
+            return $this->roleShortageReason($role, 'personal_settings_shortage');
+        }
+
         if (($rejections['same_day_limit'] ?? 0) >= $found || ($rejections['daily_limit_reached'] ?? 0) >= $found) {
             return $this->roleShortageReason($role, 'multiple_per_day_not_allowed');
         }
@@ -916,6 +957,9 @@ class InvigilatorDistributionService
                 InvigilationRole::Regular => 'لا يسمح للمراقب العادي بأكثر من مراقبة في نفس اليوم.',
                 InvigilationRole::Reserve => 'لا يسمح لمراقب الاحتياط بأكثر من مراقبة في نفس اليوم.',
             },
+            'personal_multiple_per_day_not_allowed' => 'لا يسمح لهذا المراقب بأكثر من مراقبة في اليوم.',
+            'personal_daily_limit_reached' => 'تجاوز هذا المراقب الحد الأقصى اليومي المحدد له.',
+            'personal_settings_shortage' => 'لم يتوفر عدد كافٍ من المراقبين ضمن الإعدادات الشخصية المحددة.',
             'max_assignments_exceeded' => match ($role) {
                 InvigilationRole::HallHead => 'جميع رؤساء القاعات تجاوزوا الحد الأقصى للمراقبات.',
                 InvigilationRole::Secretary => 'جميع أمناء السر تجاوزوا الحد الأقصى للمراقبات.',

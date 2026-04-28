@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Invigilators;
 
 use App\Enums\InvigilationRole;
+use App\Enums\InvigilatorDayPreference;
 use App\Enums\StaffCategory;
 use App\Filament\Resources\Invigilators\Pages\CreateInvigilator;
 use App\Filament\Resources\Invigilators\Pages\EditInvigilator;
@@ -93,6 +94,8 @@ class InvigilatorResource extends Resource
                 'invigilation_role' => ['required', Rule::in(InvigilationRole::values())],
                 'max_assignments' => ['nullable', 'integer', 'min:0'],
                 'max_assignments_per_day' => ['nullable', 'integer', 'min:1'],
+                'allow_multiple_assignments_per_day' => ['nullable', 'boolean'],
+                'day_preference' => ['nullable', Rule::in(InvigilatorDayPreference::values())],
                 'workload_reduction_percentage' => ['required', 'integer', 'min:0', 'max:100'],
                 'is_active' => ['boolean'],
                 'notes' => ['nullable', 'string'],
@@ -108,6 +111,8 @@ class InvigilatorResource extends Resource
                 'invigilation_role' => __('exam.fields.invigilation_role'),
                 'max_assignments' => __('exam.fields.max_assignments'),
                 'max_assignments_per_day' => __('exam.fields.max_assignments_per_day'),
+                'allow_multiple_assignments_per_day' => __('exam.fields.allow_multiple_assignments_per_day'),
+                'day_preference' => __('exam.fields.day_preference'),
                 'workload_reduction_percentage' => __('exam.fields.workload_reduction_percentage'),
                 'is_active' => __('exam.fields.is_active'),
                 'notes' => __('exam.fields.notes'),

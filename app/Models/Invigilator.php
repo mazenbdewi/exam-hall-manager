@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\InvigilationRole;
+use App\Enums\InvigilatorDayPreference;
 use App\Enums\StaffCategory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -23,6 +24,8 @@ class Invigilator extends Model
         'invigilation_role',
         'max_assignments',
         'max_assignments_per_day',
+        'allow_multiple_assignments_per_day',
+        'day_preference',
         'workload_reduction_percentage',
         'is_active',
         'notes',
@@ -35,6 +38,8 @@ class Invigilator extends Model
             'invigilation_role' => InvigilationRole::class,
             'max_assignments' => 'integer',
             'max_assignments_per_day' => 'integer',
+            'allow_multiple_assignments_per_day' => 'boolean',
+            'day_preference' => InvigilatorDayPreference::class,
             'workload_reduction_percentage' => 'integer',
             'is_active' => 'boolean',
         ];
