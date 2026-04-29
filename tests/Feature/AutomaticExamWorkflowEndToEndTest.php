@@ -39,6 +39,7 @@ use Carbon\Carbon;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Facades\Excel;
@@ -211,11 +212,6 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
             'نشط',
             'ملاحظات',
         ], (new SubjectExamRosterStudentsTemplateExport)->headings());
-        $this->assertSame([
-            'الرقم الامتحاني',
-            'اسم الطالب',
-            'ملاحظات',
-        ], (new SubjectExamRosterStudentsTemplateExport('regular'))->headings());
         $this->assertSame([], SubjectResource::getRelations());
 
         $sameTimeA = $this->createSubject($context, 'تعارض وقت 1');
@@ -286,6 +282,86 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
             ->assertSee('جاهزية قوائم طلاب المواد')
             ->assertSee('يجب استيراد الطلاب وتحديد القوائم كجاهزة قبل توليد البرنامج.')
             ->assertSee('لم يتم توليد مسودة بعد.');
+    }
+
+    #[Test]
+    public function subject_exam_rosters_page_uses_one_excel_import_action(): void
+    {
+        $context = $this->createAcademicContext();
+        $subject = $this->createSubject($context, 'مادة استيراد موحد');
+        $this->createRoster($context, $subject, []);
+
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo([
+            Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamRoster'), 'web'),
+            Permission::findOrCreate(ShieldPermission::resource('view', 'SubjectExamRoster'), 'web'),
+            Permission::findOrCreate(ShieldPermission::resource('update', 'SubjectExamRoster'), 'web'),
+        ]);
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(ListSubjectExamRosters::class)
+            ->assertSee('تحميل قالب Excel')
+            ->assertSee('استيراد الطلاب من Excel')
+            ->assertSee('عرض الطلاب')
+            ->assertSee('أرشفة')
+            ->assertDontSee('تحميل الطلاب المستجدين')
+            ->assertDontSee('تحميل طلاب الحملة');
+    }
+
+    #[Test]
+    public function unified_roster_import_requires_valid_student_type_column(): void
+    {
+        $context = $this->createAcademicContext();
+        $subject = $this->createSubject($context, 'مادة تحقق نوع الطالب');
+        $roster = $this->createRoster($context, $subject, [], ['status' => 'draft']);
+        $path = 'testing/subject-roster-missing-type.xlsx';
+
+        Excel::store(new class implements FromArray, WithHeadings
+        {
+            public function headings(): array
+            {
+                return ['الرقم الامتحاني', 'اسم الطالب', 'نشط', 'ملاحظات'];
+            }
+
+            public function array(): array
+            {
+                return [
+                    ['S-001', 'طالب بدون نوع', 'نعم', null],
+                ];
+            }
+        }, $path, 'local');
+
+        try {
+            Excel::import(new SubjectExamRosterStudentsImport($roster, markReadyAfterImport: false), Storage::disk('local')->path($path));
+            $this->fail('Expected roster import to require the student type column.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('نوع الطالب مطلوب ويجب أن يكون مستجد أو حملة.', collect($exception->errors())->flatten()->implode(' '));
+        }
+
+        $invalidTypePath = 'testing/subject-roster-invalid-type.xlsx';
+        Excel::store(new class implements FromArray, WithHeadings
+        {
+            public function headings(): array
+            {
+                return ['الرقم الامتحاني', 'اسم الطالب', 'نوع الطالب', 'نشط', 'ملاحظات'];
+            }
+
+            public function array(): array
+            {
+                return [
+                    ['S-002', 'طالب بنوع غير صحيح', 'قديم', 'نعم', null],
+                ];
+            }
+        }, $invalidTypePath, 'local');
+
+        try {
+            Excel::import(new SubjectExamRosterStudentsImport($roster, markReadyAfterImport: false), Storage::disk('local')->path($invalidTypePath));
+            $this->fail('Expected roster import to reject invalid student type values.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('نوع الطالب مطلوب ويجب أن يكون مستجد أو حملة.', collect($exception->errors())->flatten()->implode(' '));
+        }
     }
 
     #[Test]
@@ -376,30 +452,6 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         }, $path, 'local');
 
         Excel::import(new SubjectExamRosterStudentsImport($roster), Storage::disk('local')->path($path));
-    }
-
-    protected function importRosterStudentsWithoutType(SubjectExamRoster $roster, array $rows, string $studentType): void
-    {
-        $path = 'testing/subject-roster-'.$studentType.'.xlsx';
-        Excel::store(new class($rows) implements FromArray, WithHeadings
-        {
-            public function __construct(private array $rows) {}
-
-            public function headings(): array
-            {
-                return ['الرقم الامتحاني', 'اسم الطالب', 'ملاحظات'];
-            }
-
-            public function array(): array
-            {
-                return $this->rows;
-            }
-        }, $path, 'local');
-
-        Excel::import(
-            new SubjectExamRosterStudentsImport($roster, defaultStudentType: $studentType, markReadyAfterImport: false),
-            Storage::disk('local')->path($path),
-        );
     }
 
     protected function createAcademicContext(): array

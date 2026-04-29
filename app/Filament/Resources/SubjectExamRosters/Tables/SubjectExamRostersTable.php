@@ -110,12 +110,13 @@ class SubjectExamRostersTable
                         : $query),
             ])
             ->recordActions([
-                static::importStudentsAction('importRegularStudents', 'تحميل الطلاب المستجدين', 'regular'),
-                static::importStudentsAction('importCarryStudents', 'تحميل طلاب الحملة', 'carry'),
                 Action::make('downloadTemplate')
                     ->label('تحميل قالب Excel')
                     ->icon('heroicon-o-arrow-down-tray')
-                    ->action(fn () => Excel::download(new SubjectExamRosterStudentsTemplateExport('regular'), 'subject-roster-students-template.xlsx')),
+                    ->action(fn () => Excel::download(new SubjectExamRosterStudentsTemplateExport, 'subject-roster-students-template.xlsx')),
+                static::importStudentsAction(),
+                EditAction::make()
+                    ->label('عرض الطلاب'),
                 Action::make('markReady')
                     ->label('تحديد كجاهزة')
                     ->icon('heroicon-o-check-circle')
@@ -142,8 +143,6 @@ class SubjectExamRostersTable
                     ->requiresConfirmation()
                     ->visible(fn (SubjectExamRoster $record): bool => $record->status !== 'archived')
                     ->action(fn (SubjectExamRoster $record) => $record->update(['status' => 'archived'])),
-                EditAction::make()
-                    ->label('عرض الطلاب'),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
@@ -152,10 +151,10 @@ class SubjectExamRostersTable
             ]);
     }
 
-    protected static function importStudentsAction(string $name, string $label, string $studentType): Action
+    protected static function importStudentsAction(): Action
     {
-        return Action::make($name)
-            ->label($label)
+        return Action::make('importStudents')
+            ->label('استيراد الطلاب من Excel')
             ->icon('heroicon-o-arrow-up-tray')
             ->form([
                 FileUpload::make('file')
@@ -169,7 +168,7 @@ class SubjectExamRostersTable
                     ])
                     ->maxSize(5120),
             ])
-            ->action(function (SubjectExamRoster $record, array $data) use ($studentType): void {
+            ->action(function (SubjectExamRoster $record, array $data): void {
                 $path = $data['file'] ?? null;
 
                 if (! $path) {
@@ -178,7 +177,6 @@ class SubjectExamRostersTable
 
                 $import = new SubjectExamRosterStudentsImport(
                     roster: $record,
-                    defaultStudentType: $studentType,
                     markReadyAfterImport: false,
                 );
                 Excel::import($import, Storage::disk('local')->path($path));

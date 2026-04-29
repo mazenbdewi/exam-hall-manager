@@ -24,7 +24,6 @@ class SubjectExamRosterStudentsImport implements SkipsEmptyRows, ToCollection, W
 
     public function __construct(
         protected SubjectExamRoster $roster,
-        protected ?string $defaultStudentType = null,
         protected bool $markReadyAfterImport = true,
     ) {}
 
@@ -49,7 +48,8 @@ class SubjectExamRosterStudentsImport implements SkipsEmptyRows, ToCollection, W
             ],
             [
                 'rows.min' => 'يجب أن يحتوي ملف الطلاب على صف واحد على الأقل.',
-                'rows.*.student_type.in' => 'نوع الطالب يجب أن يكون مستجد أو حملة.',
+                'rows.*.student_type.required' => 'نوع الطالب مطلوب ويجب أن يكون مستجد أو حملة.',
+                'rows.*.student_type.in' => 'نوع الطالب مطلوب ويجب أن يكون مستجد أو حملة.',
             ],
             [
                 'rows.*.student_number' => 'الرقم الامتحاني',
@@ -114,7 +114,7 @@ class SubjectExamRosterStudentsImport implements SkipsEmptyRows, ToCollection, W
             'نوع_الطالب',
             'نوع الطالب',
             'noaa_altalb',
-        ]) ?: $this->defaultStudentType);
+        ]));
 
         return [
             'student_number' => (string) $this->firstFilled($row, [
