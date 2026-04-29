@@ -232,7 +232,13 @@ return [
     |
     */
 
-    'custom_permissions' => [],
+    'custom_permissions' => [
+        'view_exam_schedule_generator',
+        'generate_exam_schedule_draft',
+        'approve_exam_schedule_draft',
+        'update_exam_schedule_draft',
+        'export_exam_schedule_conflicts',
+    ],
 
     /*
     |--------------------------------------------------------------------------

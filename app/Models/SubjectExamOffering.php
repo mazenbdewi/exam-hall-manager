@@ -26,6 +26,7 @@ class SubjectExamOffering extends Model
         'subject_id',
         'academic_year_id',
         'semester_id',
+        'exam_schedule_draft_id',
         'exam_date',
         'exam_start_time',
         'notes',
@@ -53,6 +54,11 @@ class SubjectExamOffering extends Model
     public function semester(): BelongsTo
     {
         return $this->belongsTo(Semester::class);
+    }
+
+    public function examScheduleDraft(): BelongsTo
+    {
+        return $this->belongsTo(ExamScheduleDraft::class);
     }
 
     public function examStudents(): HasMany

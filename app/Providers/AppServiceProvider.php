@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Models\ExamHall;
+use App\Models\ExamScheduleDraft;
+use App\Models\ExamScheduleDraftItem;
 use App\Models\ExamStudent;
 use App\Models\ExamStudentHallAssignment;
 use App\Models\Invigilator;
@@ -49,6 +51,8 @@ class AppServiceProvider extends ServiceProvider
     {
         collect([
             SubjectExamOffering::class,
+            ExamScheduleDraft::class,
+            ExamScheduleDraftItem::class,
             ExamHall::class,
             ExamStudent::class,
             ExamStudentHallAssignment::class,

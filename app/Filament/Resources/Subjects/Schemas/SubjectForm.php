@@ -77,6 +77,22 @@ class SubjectForm
                             ->label(__('exam.fields.is_active'))
                             ->default(true)
                             ->inline(false),
+                        Toggle::make('is_shared_subject')
+                            ->label('مادة مشتركة بين عدة أقسام')
+                            ->helperText('فعّل هذا الخيار إذا كانت المادة مشتركة بين أكثر من قسم أو يدرسها طلاب من عدة أقسام.')
+                            ->default(false)
+                            ->live()
+                            ->inline(false),
+                        Select::make('shared_subject_scheduling_mode')
+                            ->label('طريقة جدولة المادة المشتركة')
+                            ->options([
+                                'all_departments_together' => 'توزيعها لكافة الأقسام في نفس الموعد',
+                                'separate_departments' => 'جدولة كل قسم في يوم مختلف إن أمكن',
+                                'auto' => 'تلقائي حسب التعارضات والسعة',
+                            ])
+                            ->default('auto')
+                            ->required()
+                            ->visible(fn (Get $get): bool => (bool) $get('is_shared_subject')),
                     ]),
             ]);
     }

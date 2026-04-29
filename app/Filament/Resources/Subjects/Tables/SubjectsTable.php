@@ -43,6 +43,21 @@ class SubjectsTable
                     ->label(__('exam.fields.is_active'))
                     ->boolean()
                     ->sortable(),
+                IconColumn::make('is_shared_subject')
+                    ->label('مادة مشتركة')
+                    ->boolean()
+                    ->sortable()
+                    ->toggleable(),
+                TextColumn::make('shared_subject_scheduling_mode')
+                    ->label('طريقة جدولة المادة المشتركة')
+                    ->formatStateUsing(fn (?string $state): string => match ($state) {
+                        'all_departments_together' => 'نفس الموعد',
+                        'separate_departments' => 'أيام مختلفة',
+                        'auto' => 'تلقائي',
+                        default => '—',
+                    })
+                    ->badge()
+                    ->toggleable(),
                 TextColumn::make('subject_exam_offerings_count')
                     ->counts('subjectExamOfferings')
                     ->label(__('exam.fields.offerings')),
@@ -59,6 +74,8 @@ class SubjectsTable
                     ->label(__('exam.fields.study_level'))
                     ->relationship('studyLevel', 'name'),
                 TernaryFilter::make('is_active'),
+                TernaryFilter::make('is_shared_subject')
+                    ->label('المواد المشتركة'),
                 TrashedFilter::make(),
             ])
             ->recordActions([

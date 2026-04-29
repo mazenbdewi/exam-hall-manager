@@ -20,12 +20,15 @@ class Subject extends Model
         'name',
         'code',
         'is_active',
+        'is_shared_subject',
+        'shared_subject_scheduling_mode',
     ];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'is_shared_subject' => 'boolean',
         ];
     }
 
