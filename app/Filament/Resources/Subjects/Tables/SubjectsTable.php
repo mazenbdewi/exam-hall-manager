@@ -2,7 +2,10 @@
 
 namespace App\Filament\Resources\Subjects\Tables;
 
+use App\Filament\Resources\SubjectExamRosters\SubjectExamRosterResource;
+use App\Models\Subject;
 use App\Support\ExamCollegeScope;
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
@@ -48,6 +51,21 @@ class SubjectsTable
                     ->boolean()
                     ->sortable()
                     ->toggleable(),
+                IconColumn::make('is_core_subject')
+                    ->label('مادة أساسية')
+                    ->boolean()
+                    ->sortable()
+                    ->toggleable(),
+                TextColumn::make('preferred_exam_period')
+                    ->label('الفترة المفضلة')
+                    ->formatStateUsing(fn (?string $state): string => match ($state) {
+                        'morning' => 'صباحية',
+                        'mid_day' => 'وسطى',
+                        'evening' => 'مسائية',
+                        default => 'لا تفضيل',
+                    })
+                    ->badge()
+                    ->toggleable(),
                 TextColumn::make('shared_subject_scheduling_mode')
                     ->label('طريقة جدولة المادة المشتركة')
                     ->formatStateUsing(fn (?string $state): string => match ($state) {
@@ -76,9 +94,21 @@ class SubjectsTable
                 TernaryFilter::make('is_active'),
                 TernaryFilter::make('is_shared_subject')
                     ->label('المواد المشتركة'),
+                TernaryFilter::make('is_core_subject')
+                    ->label('المواد الأساسية'),
                 TrashedFilter::make(),
             ])
             ->recordActions([
+                Action::make('subjectRosters')
+                    ->label('قوائم الطلاب')
+                    ->icon('heroicon-o-users')
+                    ->url(fn (Subject $record): string => SubjectExamRosterResource::getUrl('index', [
+                        'tableFilters' => [
+                            'subject_id' => [
+                                'value' => $record->getKey(),
+                            ],
+                        ],
+                    ])),
                 EditAction::make(),
             ])
             ->toolbarActions([

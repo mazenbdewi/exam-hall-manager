@@ -93,6 +93,36 @@ class SubjectForm
                             ->default('auto')
                             ->required()
                             ->visible(fn (Get $get): bool => (bool) $get('is_shared_subject')),
+                        Toggle::make('is_core_subject')
+                            ->label('مادة أساسية')
+                            ->helperText('فعّل هذا الخيار إذا كانت المادة أساسية ويفضل وضعها في الفترة الصباحية.')
+                            ->default(false)
+                            ->live()
+                            ->afterStateUpdated(function (Set $set, bool $state): void {
+                                if ($state) {
+                                    $set('preferred_exam_period', 'morning');
+                                }
+                            })
+                            ->inline(false),
+                        Select::make('preferred_exam_period')
+                            ->label('الفترة المفضلة للمادة')
+                            ->options([
+                                'morning' => 'صباحية',
+                                'mid_day' => 'وسطى',
+                                'evening' => 'مسائية',
+                                'none' => 'لا تفضيل',
+                            ])
+                            ->default('none')
+                            ->required(),
+                        Select::make('core_subject_priority')
+                            ->label('درجة إلزام الفترة المفضلة')
+                            ->options([
+                                'preference' => 'تفضيل فقط',
+                                'enforce_if_possible' => 'إلزام إن أمكن',
+                                'strict' => 'إلزام صارم',
+                            ])
+                            ->default('preference')
+                            ->required(),
                     ]),
             ]);
     }

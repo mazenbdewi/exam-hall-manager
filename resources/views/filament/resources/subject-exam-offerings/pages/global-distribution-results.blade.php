@@ -22,6 +22,16 @@
             __('exam.fields.status') => $run->statusLabel(),
             __('exam.fields.executed_at') => $run->executed_at?->format('Y-m-d H:i'),
         ] : [];
+        $problemSlots = collect($summary['unassigned_by_slot'] ?? [])
+            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->values();
+        $problemSubjects = collect($summary['unassigned_by_subject'] ?? [])
+            ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
+            ->values();
+        $problemIssues = $run?->issues
+            ? $run->issues->filter(fn ($issue): bool => (int) $issue->affected_students_count > 0)->values()
+            : collect();
+        $slotSummaries = collect($summary['slots'] ?? []);
     @endphp
 
     <div dir="rtl" class="space-y-5 text-right">
@@ -37,7 +47,7 @@
                             {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message')) }}
                         </h2>
                         <p class="mt-1 text-sm {{ $statusTone === 'success' ? 'text-success-800 dark:text-success-200' : ($statusTone === 'warning' ? 'text-warning-800 dark:text-warning-200' : 'text-danger-800 dark:text-danger-200') }}">
-                            {{ $run->notes ?: __('exam.global_hall_distribution.results_hint') }}
+                            {{ $run->status === 'success' && (int) $run->unassigned_students === 0 ? __('exam.global_hall_distribution.no_issues_success_hint') : ($run->notes ?: __('exam.global_hall_distribution.results_hint')) }}
                         </p>
                     </div>
                     <div class="flex flex-wrap gap-2">
@@ -75,11 +85,38 @@
                 </div>
             @endif
 
+            @if ($slotSummaries->isNotEmpty())
+                <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
+                    <h3 class="mb-3 font-semibold text-gray-950 dark:text-white">{{ __('exam.global_hall_distribution.slot_summary_title') }}</h3>
+                    <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        @foreach ($slotSummaries as $slot)
+                            @php
+                                $slotUnassigned = (int) ($slot['unassigned_students_count'] ?? 0);
+                                $slotShortage = (int) ($slot['capacity_shortage'] ?? 0);
+                                $slotOk = $slotUnassigned === 0 && $slotShortage === 0;
+                            @endphp
+                            <div class="rounded-md border border-gray-100 bg-gray-50 p-3 text-sm dark:border-white/10 dark:bg-white/5">
+                                <div class="font-medium text-gray-950 dark:text-white">
+                                    {{ $slot['exam_date'] ?? '—' }} · {{ substr((string) ($slot['exam_start_time'] ?? ''), 0, 5) }}
+                                </div>
+                                <div class="mt-1 text-gray-600 dark:text-gray-300">
+                                    {{ __('exam.global_hall_distribution.summary.students_count') }}: {{ $slot['students_count'] ?? 0 }}
+                                    · {{ __('exam.global_hall_distribution.summary.used_halls_count') }}: {{ $slot['used_halls_count'] ?? 0 }}
+                                </div>
+                                <div class="mt-1 font-semibold {{ $slotOk ? 'text-success-700 dark:text-success-300' : 'text-warning-700 dark:text-warning-300' }}">
+                                    {{ $slotOk ? __('exam.global_hall_distribution.slot_all_distributed') : ($slot['message'] ?? __('exam.global_hall_distribution.partial_message')) }}
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                </div>
+            @endif
+
             <div class="grid gap-4 lg:grid-cols-3">
                 <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
                     <h3 class="mb-3 font-semibold text-gray-950 dark:text-white">{{ __('exam.global_hall_distribution.by_slot') }}</h3>
                     <div class="space-y-2 text-sm">
-                        @forelse ($summary['unassigned_by_slot'] ?? [] as $slot)
+                        @forelse ($problemSlots as $slot)
                             <div class="rounded-md bg-gray-50 p-2 dark:bg-white/5">
                                 {{ $slot['exam_date'] }} · {{ substr((string) $slot['start_time'], 0, 5) }}
                                 <br>
@@ -96,7 +133,7 @@
                 <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
                     <h3 class="mb-3 font-semibold text-gray-950 dark:text-white">{{ __('exam.global_hall_distribution.by_subject') }}</h3>
                     <div class="space-y-2 text-sm">
-                        @forelse ($summary['unassigned_by_subject'] ?? [] as $subject)
+                        @forelse ($problemSubjects as $subject)
                             <div class="rounded-md bg-gray-50 p-2 dark:bg-white/5">
                                 {{ $subject['subject_name'] ?? '—' }}
                                 <br>
@@ -113,7 +150,7 @@
                 <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
                     <h3 class="mb-3 font-semibold text-gray-950 dark:text-white">{{ __('exam.global_hall_distribution.by_reason') }}</h3>
                     <div class="space-y-2 text-sm">
-                        @forelse ($run->issues->groupBy('message') as $reason => $issues)
+                        @forelse ($problemIssues->groupBy('message') as $reason => $issues)
                             <div class="rounded-md bg-gray-50 p-2 dark:bg-white/5">
                                 {{ $reason }}
                                 <br>

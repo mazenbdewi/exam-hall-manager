@@ -37,9 +37,11 @@ use App\Support\RoleNames;
 use App\Support\ShieldPermission;
 use Carbon\Carbon;
 use Database\Seeders\InvigilatorSeeder;
+use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Livewire\Livewire;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Facades\Excel;
@@ -868,6 +870,125 @@ class InvigilatorDistributionTest extends TestCase
         $page->mount($run);
 
         $this->assertTrue($page->run?->is($run));
+    }
+
+    #[Test]
+    public function successful_global_distribution_does_not_create_zero_count_problem_items(): void
+    {
+        $context = $this->createSlotContext();
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة كافية',
+            'location' => 'المبنى الأول',
+            'capacity' => 20,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        foreach (range(1, 4) as $index) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $context['offering']->id,
+                'student_number' => 'SUCCESS'.$index,
+                'full_name' => 'طالب موزع '.$index,
+                'student_type' => ExamStudentType::Regular->value,
+            ]);
+        }
+
+        SubjectExamOffering::query()->create([
+            'subject_id' => $context['offering']->subject_id,
+            'academic_year_id' => $context['offering']->academic_year_id,
+            'semester_id' => $context['offering']->semester_id,
+            'exam_date' => '2026-06-02',
+            'exam_start_time' => '09:00:00',
+            'status' => ExamOfferingStatus::Draft->value,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-02',
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(0, $result['unassigned_students']);
+        $this->assertSame(0, $result['capacity_shortage']);
+        $this->assertSame([], $result['issues']);
+        $this->assertSame([], $result['unassigned_by_slot']);
+        $this->assertSame([], $result['unassigned_by_subject']);
+        $this->assertSame(0, StudentDistributionRunIssue::query()->count());
+    }
+
+    #[Test]
+    public function global_distribution_results_page_hides_legacy_zero_count_issues(): void
+    {
+        $context = $this->createSlotContext();
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $run = StudentDistributionRun::query()->create([
+            'college_id' => $context['college']->id,
+            'from_date' => '2026-06-01',
+            'to_date' => '2026-06-01',
+            'status' => 'success',
+            'total_offerings' => 1,
+            'total_slots' => 1,
+            'total_students' => 4,
+            'distributed_students' => 4,
+            'unassigned_students' => 0,
+            'total_capacity' => 20,
+            'used_halls' => 1,
+            'capacity_shortage' => 0,
+            'executed_by' => $user->id,
+            'executed_at' => now(),
+            'summary_json' => [
+                'slots' => [[
+                    'status' => 'success',
+                    'exam_date' => '2026-06-01',
+                    'exam_start_time' => '09:00:00',
+                    'students_count' => 4,
+                    'used_halls_count' => 1,
+                    'unassigned_students_count' => 0,
+                    'capacity_shortage' => 0,
+                    'message' => 'لا توجد قاعات متاحة',
+                ]],
+                'unassigned_by_slot' => [[
+                    'exam_date' => '2026-06-01',
+                    'start_time' => '09:00:00',
+                    'unassigned_count' => 0,
+                    'reason' => 'لا توجد قاعات متاحة',
+                    'capacity_shortage' => 0,
+                ]],
+                'unassigned_by_subject' => [[
+                    'subject_name' => 'تحليل',
+                    'exam_date' => '2026-06-01',
+                    'start_time' => '09:00:00',
+                    'unassigned_count' => 0,
+                    'reason' => 'لا توجد قاعات متاحة',
+                ]],
+            ],
+        ]);
+
+        StudentDistributionRunIssue::query()->create([
+            'student_distribution_run_id' => $run->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'issue_type' => 'no_available_halls',
+            'message' => 'لا توجد قاعات متاحة',
+            'affected_students_count' => 0,
+            'payload_json' => [],
+        ]);
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(GlobalDistributionResults::class, ['run' => $run])
+            ->assertSee('كل الطلاب تم توزيعهم بنجاح')
+            ->assertSee('ولا توجد مشاكل مسجلة.')
+            ->assertSee('ملخص المواعيد الامتحانية')
+            ->assertSee('لا توجد مشاكل مسجلة ضمن هذا التصنيف.')
+            ->assertDontSee('لا توجد قاعات متاحة');
     }
 
     #[Test]

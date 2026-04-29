@@ -22,6 +22,9 @@ class Subject extends Model
         'is_active',
         'is_shared_subject',
         'shared_subject_scheduling_mode',
+        'is_core_subject',
+        'preferred_exam_period',
+        'core_subject_priority',
     ];
 
     protected function casts(): array
@@ -29,6 +32,7 @@ class Subject extends Model
         return [
             'is_active' => 'boolean',
             'is_shared_subject' => 'boolean',
+            'is_core_subject' => 'boolean',
         ];
     }
 
@@ -50,5 +54,10 @@ class Subject extends Model
     public function subjectExamOfferings(): HasMany
     {
         return $this->hasMany(SubjectExamOffering::class);
+    }
+
+    public function subjectExamRosters(): HasMany
+    {
+        return $this->hasMany(SubjectExamRoster::class);
     }
 }

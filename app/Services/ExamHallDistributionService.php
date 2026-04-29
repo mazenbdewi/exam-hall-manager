@@ -169,7 +169,7 @@ class ExamHallDistributionService
             $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
             $summary['distributed_slots_count']++;
 
-            if (($result['status'] ?? 'warning') !== 'success' || $unassignedStudentsCount > 0 || $slotCapacityShortage > 0) {
+            if ($unassignedStudentsCount > 0 || $slotCapacityShortage > 0) {
                 $summary['issue_slots_count']++;
                 $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
             }
@@ -793,7 +793,8 @@ class ExamHallDistributionService
         $distributedStudents = (int) $assignmentCounts->sum();
         $totalStudents = (int) $slotOfferings->sum('exam_students_count');
         $unassignedStudents = max(0, $totalStudents - $distributedStudents);
-        $reason = $this->globalDistributionIssueReason($slotCapacityShortage, $usedHalls);
+        $hasSlotProblem = $unassignedStudents > 0 || $slotCapacityShortage > 0;
+        $reason = $hasSlotProblem ? $this->globalDistributionIssueReason($slotCapacityShortage, $usedHalls) : null;
         $issues = [];
         $unassignedBySubject = [];
 
@@ -811,7 +812,7 @@ class ExamHallDistributionService
                 'subject_exam_offering_id' => $offering->id,
                 'subject_name' => $offering->subject?->name,
                 'unassigned_count' => $unassigned,
-                'reason' => $reason,
+                'reason' => $reason ?? __('exam.global_hall_distribution.issue_reasons.unassigned_students'),
                 'issue_type' => $slotCapacityShortage > 0 ? 'capacity_shortage' : 'unassigned_students',
             ];
 
@@ -884,7 +885,7 @@ class ExamHallDistributionService
             'skipped_slots_count' => 0,
             'issue_slots_count' => count($unassignedBySlot),
             'slots' => [],
-            'issues' => $issues !== [] ? $issues : [[
+            'issues' => $issues !== [] ? $issues : ($totalStudents > 0 ? [[
                 'exam_date' => null,
                 'start_time' => null,
                 'subject_exam_offering_id' => null,
@@ -892,7 +893,7 @@ class ExamHallDistributionService
                 'unassigned_count' => $totalStudents,
                 'reason' => $reason,
                 'issue_type' => $issueType,
-            ]],
+            ]] : []),
             'unassigned_by_subject' => $unassignedBySubject,
             'unassigned_by_slot' => $unassignedBySlot,
         ]);
@@ -972,6 +973,8 @@ class ExamHallDistributionService
 
     protected function persistGlobalDistributionResult(array $summary): array
     {
+        $summary = $this->filterGlobalDistributionProblemSummaries($summary);
+
         $run = StudentDistributionRun::query()->create([
             'college_id' => $summary['college_id'],
             'from_date' => $summary['from_date'],
@@ -992,6 +995,12 @@ class ExamHallDistributionService
         ]);
 
         foreach ($summary['issues'] ?? [] as $issue) {
+            $affectedStudentsCount = (int) ($issue['unassigned_count'] ?? $issue['affected_students_count'] ?? 0);
+
+            if ($affectedStudentsCount <= 0) {
+                continue;
+            }
+
             StudentDistributionRunIssue::query()->create([
                 'student_distribution_run_id' => $run->id,
                 'exam_date' => $issue['exam_date'] ?? null,
@@ -999,7 +1008,7 @@ class ExamHallDistributionService
                 'subject_exam_offering_id' => $issue['subject_exam_offering_id'] ?? null,
                 'issue_type' => $issue['issue_type'] ?? 'unknown',
                 'message' => $issue['reason'] ?? ($summary['reason'] ?? $summary['message']),
-                'affected_students_count' => (int) ($issue['unassigned_count'] ?? 0),
+                'affected_students_count' => $affectedStudentsCount,
                 'payload_json' => $issue,
             ]);
         }
@@ -1008,6 +1017,28 @@ class ExamHallDistributionService
         $summary['result_url'] = route('filament.adminpanel.resources.subject-exam-offerings.global-distribution-results', ['run' => $run]);
 
         $run->update(['summary_json' => $summary]);
+
+        return $summary;
+    }
+
+    protected function filterGlobalDistributionProblemSummaries(array $summary): array
+    {
+        $summary['issues'] = collect($summary['issues'] ?? [])
+            ->filter(fn (array $issue): bool => (int) ($issue['unassigned_count'] ?? $issue['affected_students_count'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $summary['unassigned_by_subject'] = collect($summary['unassigned_by_subject'] ?? [])
+            ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $summary['unassigned_by_slot'] = collect($summary['unassigned_by_slot'] ?? [])
+            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $summary['issue_slots_count'] = count($summary['unassigned_by_slot']);
 
         return $summary;
     }

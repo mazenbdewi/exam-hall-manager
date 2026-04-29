@@ -14,6 +14,8 @@ use App\Models\InvigilatorHallRequirement;
 use App\Models\StudentPublicLookupSetting;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
+use App\Models\SubjectExamRoster;
+use App\Models\SubjectExamRosterStudent;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Observers\AuditModelObserver;
@@ -64,6 +66,8 @@ class AppServiceProvider extends ServiceProvider
             Role::class,
             Permission::class,
             Subject::class,
+            SubjectExamRoster::class,
+            SubjectExamRosterStudent::class,
             SystemSetting::class,
             StudentPublicLookupSetting::class,
         ])->each(function (string $model): void {

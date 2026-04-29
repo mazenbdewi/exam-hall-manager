@@ -10,6 +10,7 @@ use App\Models\ExamScheduleDraft;
 use App\Models\ExamScheduleDraftItem;
 use App\Models\Semester;
 use App\Models\StudyLevel;
+use App\Models\SubjectExamRoster;
 use App\Services\AuditLogService;
 use App\Services\ExamScheduleGeneratorService;
 use App\Support\ExamCollegeScope;
@@ -68,11 +69,11 @@ class ExamScheduleGenerator extends Page
 
     public int $period_count = 2;
 
-    /** @var array<int, array{name:string,start_time:string,end_time:string}> */
+    /** @var array<int, array{name:string,start_time:string,end_time:string,period_type:string}> */
     public array $periods = [
-        ['name' => 'الفترة الأولى', 'start_time' => '09:00', 'end_time' => '11:00'],
-        ['name' => 'الفترة الثانية', 'start_time' => '12:00', 'end_time' => '14:00'],
-        ['name' => 'الفترة الثالثة', 'start_time' => '15:00', 'end_time' => '17:00'],
+        ['name' => 'الفترة الأولى', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+        ['name' => 'الفترة الثانية', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
+        ['name' => 'الفترة الثالثة', 'start_time' => '15:00', 'end_time' => '17:00', 'period_type' => 'evening'],
     ];
 
     public int $break_minutes = 30;
@@ -80,6 +81,8 @@ class ExamScheduleGenerator extends Page
     public int $default_exam_duration_minutes = 120;
 
     public bool $prevent_same_day = false;
+
+    public string $approval_existing_strategy = 'create_missing';
 
     public ?int $draft_id = null;
 
@@ -90,6 +93,8 @@ class ExamScheduleGenerator extends Page
     public ?int $filter_study_level_id = null;
 
     public bool $show_shared_only = false;
+
+    public bool $show_core_only = false;
 
     public bool $show_conflicts_only = false;
 
@@ -239,6 +244,7 @@ class ExamScheduleGenerator extends Page
             'exam_date' => filled($edit['exam_date'] ?? null) ? Carbon::parse($edit['exam_date'])->toDateString() : null,
             'start_time' => $period['start_time'] ?? null,
             'end_time' => $period['end_time'] ?? null,
+            'period_type' => $period['period_type'] ?? null,
             'status' => 'manually_adjusted',
             'metadata' => array_merge($item->metadata ?? [], [
                 'period_name' => $period['name'] ?? null,
@@ -295,7 +301,7 @@ class ExamScheduleGenerator extends Page
         }
 
         try {
-            $result = app(ExamScheduleGeneratorService::class)->approveDraft($draft);
+            $result = app(ExamScheduleGeneratorService::class)->approveDraft($draft, $this->approval_existing_strategy);
             $this->refreshDraftState();
 
             app(AuditLogService::class)->log(
@@ -311,12 +317,10 @@ class ExamScheduleGenerator extends Page
             );
 
             Notification::make()
-                ->title('تم اعتماد البرنامج الامتحاني بنجاح. يمكنك الآن رفع الطلاب المستجدين والحملة لكل برنامج امتحاني.')
-                ->body('تم إنشاء '.$result['created_count'].' من البرامج الامتحانية بدون إضافة طلاب.')
+                ->title('تم اعتماد البرنامج الامتحاني بنجاح ونقل الطلاب إلى البرامج الامتحانية.')
+                ->body('تم إنشاء '.($result['created_count'] ?? 0).' من البرامج الامتحانية، وتجاوز '.($result['skipped_existing_count'] ?? 0).' برنامج موجود مسبقاً.')
                 ->success()
                 ->send();
-
-            $this->redirect(SubjectExamOfferingResource::getUrl('index'));
         } catch (ValidationException $exception) {
             Notification::make()
                 ->title('لا يمكن اعتماد المسودة')
@@ -429,6 +433,20 @@ class ExamScheduleGenerator extends Page
             'عدد الأيام المستخدمة' => $summary['used_days_count'] ?? 0,
             'أكثر يوم ازدحامًا' => $summary['busiest_day'] ?? '-',
             'ملاحظات المواد المشتركة' => $summary['shared_subject_notes_count'] ?? 0,
+            'تحذيرات المواد الأساسية' => $summary['core_subject_notes_count'] ?? 0,
+        ];
+    }
+
+    public function readinessSummary(): array
+    {
+        $rosters = $this->readyRostersForCurrentSettings();
+
+        return [
+            'ready_rosters_count' => $rosters->count(),
+            'students_count' => (int) $rosters->sum('eligible_roster_students_count'),
+            'carry_count' => (int) $rosters->sum('carry_students_count'),
+            'core_subjects_count' => $rosters->filter(fn (SubjectExamRoster $roster): bool => (bool) $roster->subject?->is_core_subject)->pluck('subject_id')->unique()->count(),
+            'shared_subjects_count' => $rosters->filter(fn (SubjectExamRoster $roster): bool => (bool) $roster->subject?->is_shared_subject)->pluck('subject_id')->unique()->count(),
         ];
     }
 
@@ -449,6 +467,7 @@ class ExamScheduleGenerator extends Page
                 'name' => $period['name'],
                 'start_time' => $this->timeString($period['start_time']),
                 'end_time' => $this->timeString($period['end_time']),
+                'period_type' => $period['period_type'] ?? 'morning',
             ])
             ->all();
 
@@ -466,6 +485,49 @@ class ExamScheduleGenerator extends Page
         $draft = $this->currentDraft();
 
         return $draft ? $this->filteredItems($draft->items)->sortBy([['exam_date', 'asc'], ['start_time', 'asc'], ['subject.name', 'asc']])->values() : collect();
+    }
+
+    public function unscheduledDraftItems(): Collection
+    {
+        return $this->draftItems()->where('status', 'unscheduled')->values();
+    }
+
+    public function coreSubjectsOutsidePreferredPeriod(): Collection
+    {
+        return collect($this->validationData()['conflicts'] ?? [])
+            ->whereIn('type', ['core_subject_not_preferred_period', 'core_subject_strict_period'])
+            ->values();
+    }
+
+    public function sharedSubjectScheduleSummary(): Collection
+    {
+        $draft = $this->currentDraft();
+
+        if (! $draft) {
+            return collect();
+        }
+
+        return $draft->items
+            ->where('is_shared_subject', true)
+            ->groupBy(fn (ExamScheduleDraftItem $item): string => $item->shared_group_key ?: 'item-'.$item->id)
+            ->map(function (Collection $items): array {
+                $first = $items->first();
+                $metadata = $first?->metadata ?? [];
+
+                return [
+                    'subject' => $first?->subject?->name,
+                    'mode' => match ($metadata['shared_subject_scheduling_mode'] ?? null) {
+                        'all_departments_together' => 'توزيعها لكافة الأقسام في نفس الموعد',
+                        'separate_departments' => 'جدولة كل قسم في يوم مختلف إن أمكن',
+                        'auto' => 'تلقائي حسب التعارضات والسعة',
+                        default => 'مادة واحدة',
+                    },
+                    'departments_count' => $items->pluck('department_id')->filter()->unique()->count(),
+                    'dates' => $items->pluck('exam_date')->filter()->map(fn ($date) => $date->toDateString())->unique()->values()->implode('، '),
+                    'times' => $items->pluck('start_time')->filter()->map(fn ($time) => substr((string) $time, 0, 5))->unique()->values()->implode('، '),
+                ];
+            })
+            ->values();
     }
 
     public function collegeOptions(): array
@@ -518,6 +580,11 @@ class ExamScheduleGenerator extends Page
         return url('/adminpanel/invigilator-distribution');
     }
 
+    public function studentReviewUrl(): string
+    {
+        return SubjectExamOfferingResource::getUrl('index');
+    }
+
     protected function settingsPayload(): array
     {
         return [
@@ -535,6 +602,27 @@ class ExamScheduleGenerator extends Page
             'default_exam_duration_minutes' => $this->default_exam_duration_minutes,
             'prevent_same_day' => $this->prevent_same_day,
         ];
+    }
+
+    protected function readyRostersForCurrentSettings(): Collection
+    {
+        if (! $this->college_id || ! $this->academic_year_id || ! $this->semester_id) {
+            return collect();
+        }
+
+        return SubjectExamRoster::query()
+            ->with('subject')
+            ->withCount([
+                'eligibleRosterStudents',
+                'eligibleRosterStudents as carry_students_count' => fn (Builder $query) => $query->where('student_type', 'carry'),
+            ])
+            ->where('college_id', $this->college_id)
+            ->where('academic_year_id', $this->academic_year_id)
+            ->where('semester_id', $this->semester_id)
+            ->where('status', 'ready')
+            ->when($this->department_id, fn (Builder $query) => $query->where('department_id', $this->department_id))
+            ->when($this->study_level_id, fn (Builder $query) => $query->where('study_level_id', $this->study_level_id))
+            ->get();
     }
 
     protected function parsedHolidays(): array
@@ -700,6 +788,7 @@ class ExamScheduleGenerator extends Page
             ->when($this->filter_department_id, fn (Collection $items) => $items->where('department_id', $this->filter_department_id))
             ->when($this->filter_study_level_id, fn (Collection $items) => $items->filter(fn (ExamScheduleDraftItem $item): bool => (int) $item->subject?->study_level_id === (int) $this->filter_study_level_id))
             ->when($this->show_shared_only, fn (Collection $items) => $items->where('is_shared_subject', true))
+            ->when($this->show_core_only, fn (Collection $items) => $items->where('is_core_subject', true))
             ->when($this->show_conflicts_only, fn (Collection $items) => $items->filter(fn (ExamScheduleDraftItem $item): bool => in_array($item->status, ['conflict', 'unscheduled'], true)));
     }
 

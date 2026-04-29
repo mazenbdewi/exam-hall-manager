@@ -19,6 +19,12 @@
 <body>
     @php
         $runPeriod = __('exam.fields.period').': '.($run->from_date?->format('Y-m-d') ?? '—').' - '.($run->to_date?->format('Y-m-d') ?? '—');
+        $problemSlots = collect($summary['unassigned_by_slot'] ?? [])
+            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->values();
+        $problemSubjects = collect($summary['unassigned_by_subject'] ?? [])
+            ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
+            ->values();
     @endphp
 
     @include('pdf.partials.report-header', [
@@ -74,7 +80,7 @@
             </tr>
         </thead>
         <tbody>
-            @forelse (($summary['unassigned_by_slot'] ?? []) as $slot)
+            @forelse ($problemSlots as $slot)
                 <tr>
                     <td>{{ $slot['exam_date'] ?? '—' }}</td>
                     <td>{{ substr((string) ($slot['start_time'] ?? ''), 0, 5) }}</td>
@@ -99,7 +105,7 @@
             </tr>
         </thead>
         <tbody>
-            @forelse (($summary['unassigned_by_subject'] ?? []) as $subject)
+            @forelse ($problemSubjects as $subject)
                 <tr>
                     <td>{{ $subject['subject_name'] ?? '—' }}</td>
                     <td>{{ $subject['exam_date'] ?? '—' }}</td>

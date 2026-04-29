@@ -54,6 +54,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'Department',
             'ExamHall',
             'Subject',
+            'SubjectExamRoster',
             'SubjectExamOffering',
             'User',
             'Invigilator',
