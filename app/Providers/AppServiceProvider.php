@@ -25,6 +25,7 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Support\Facades\FilamentTimezone;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
 use Spatie\Permission\Models\Permission;
@@ -32,6 +33,14 @@ use Spatie\Permission\Models\Role;
 
 class AppServiceProvider extends ServiceProvider
 {
+    private const BACKUP_ABILITIES = [
+        'view-backup',
+        'create-backup',
+        'download-backup',
+        'delete-backup',
+        'restore-backup',
+    ];
+
     /**
      * Register any application services.
      */
@@ -47,6 +56,7 @@ class AppServiceProvider extends ServiceProvider
     {
         Carbon::setLocale(config('app.locale'));
         $this->configureFilamentDateComponents();
+        $this->configureBackupAuthorization();
 
         Password::defaults(fn () => AdminPassword::rule());
 
@@ -101,6 +111,17 @@ class AppServiceProvider extends ServiceProvider
             if (is_subclass_of($model, Model::class)) {
                 $model::observe(AuditModelObserver::class);
             }
+        });
+    }
+
+    protected function configureBackupAuthorization(): void
+    {
+        Gate::before(function (User $user, string $ability): ?bool {
+            if (! in_array($ability, self::BACKUP_ABILITIES, true)) {
+                return null;
+            }
+
+            return $user->isSuperAdmin() ? true : false;
         });
     }
 }

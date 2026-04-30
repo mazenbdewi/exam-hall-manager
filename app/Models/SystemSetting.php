@@ -12,6 +12,7 @@ class SystemSetting extends Model
     protected $fillable = [
         'university_name',
         'university_logo',
+        'database_backup_time',
     ];
 
     public static function defaults(): array
@@ -19,6 +20,7 @@ class SystemSetting extends Model
         return [
             'university_name' => 'الجامعة الافتراضية السورية',
             'university_logo' => null,
+            'database_backup_time' => '02:00',
         ];
     }
 

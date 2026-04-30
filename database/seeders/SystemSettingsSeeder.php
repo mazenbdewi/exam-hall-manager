@@ -15,6 +15,7 @@ class SystemSettingsSeeder extends Seeder
             $existing->update([
                 'university_name' => 'الجامعة الافتراضية السورية',
                 'university_logo' => null,
+                'database_backup_time' => $existing->database_backup_time ?: '02:00',
             ]);
 
             return;
@@ -23,6 +24,7 @@ class SystemSettingsSeeder extends Seeder
         SystemSetting::query()->create([
             'university_name' => 'الجامعة الافتراضية السورية',
             'university_logo' => null,
+            'database_backup_time' => '02:00',
         ]);
     }
 }

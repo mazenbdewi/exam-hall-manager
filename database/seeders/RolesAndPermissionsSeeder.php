@@ -110,7 +110,7 @@ class RolesAndPermissionsSeeder extends Seeder
 
     protected function ensureCustomPermissions(): void
     {
-        collect([...$this->customPermissions(), ...$this->auditPermissions()])
+        collect([...$this->customPermissions(), ...$this->auditPermissions(), ...$this->backupPermissions()])
             ->each(fn (string $permission): Permission => Permission::findOrCreate($permission, 'web'));
     }
 
@@ -140,6 +140,17 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_any_audit_log',
             'delete_audit_log',
             'export_audit_log',
+        ];
+    }
+
+    protected function backupPermissions(): array
+    {
+        return [
+            'view-backup',
+            'create-backup',
+            'download-backup',
+            'delete-backup',
+            'restore-backup',
         ];
     }
 }

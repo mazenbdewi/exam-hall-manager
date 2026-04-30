@@ -47,6 +47,13 @@ return [
             'report' => false,
         ],
 
+        'backups' => [
+            'driver' => 'local',
+            'root' => storage_path('backups'),
+            'throw' => true,
+            'report' => true,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

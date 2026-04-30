@@ -5,9 +5,11 @@ namespace App\Providers\Filament;
 use App\Filament\Auth\Pages\Login;
 use App\Filament\Auth\Pages\Profile;
 use App\Filament\Auth\Pages\SecurityPinChallenge;
+use App\Filament\Backup\Pages\Backups;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Http\Middleware\AuditRequestMiddleware;
 use App\Http\Middleware\EnsureSecurityPinVerified;
+use App\Support\ExamCollegeScope;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -28,6 +30,7 @@ use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Route;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
+use ShuvroRoy\FilamentSpatieLaravelBackup\FilamentSpatieLaravelBackupPlugin;
 
 class AdminpanelPanelProvider extends PanelProvider
 {
@@ -86,6 +89,14 @@ class AdminpanelPanelProvider extends PanelProvider
                 ->navigationGroup(__('exam.navigation.users_permissions'))
                 ->navigationLabel('الأدوار')
                 ->navigationSort(62))
+            ->plugin(FilamentSpatieLaravelBackupPlugin::make()
+                ->usingPage(Backups::class)
+                ->navigationIcon('heroicon-o-archive-box-arrow-down')
+                ->navigationLabel('النسخ الاحتياطي')
+                ->navigationGroup(__('exam.navigation.system_management'))
+                ->navigationSort(74)
+                ->authorize(fn (): bool => ExamCollegeScope::isSuperAdmin())
+                ->noTimeout())
             ->authenticatedRoutes(function (): void {
                 Route::get('/security-pin', SecurityPinChallenge::class)
                     ->name('auth.security-pin.challenge');
