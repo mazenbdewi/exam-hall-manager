@@ -61,12 +61,6 @@ class ExamScheduleGenerator extends Page
         ['date' => null, 'reason' => null],
     ];
 
-    public ?string $holiday_range_start = null;
-
-    public ?string $holiday_range_end = null;
-
-    public ?string $holiday_range_reason = null;
-
     public int $period_count = 2;
 
     /** @var array<int, array{name:string,start_time:string,end_time:string,period_type:string}> */
@@ -652,38 +646,6 @@ class ExamScheduleGenerator extends Page
         if ($this->specific_holidays === []) {
             $this->addHolidayRow();
         }
-    }
-
-    public function addHolidayRange(): void
-    {
-        if (blank($this->holiday_range_start) || blank($this->holiday_range_end)) {
-            Notification::make()
-                ->title('حدد تاريخ بداية ونهاية الفترة')
-                ->warning()
-                ->send();
-
-            return;
-        }
-
-        $start = Carbon::parse($this->holiday_range_start);
-        $end = Carbon::parse($this->holiday_range_end);
-
-        if ($end->lt($start)) {
-            [$start, $end] = [$end, $start];
-        }
-
-        foreach (\Carbon\CarbonPeriod::create($start, $end) as $date) {
-            $this->upsertHoliday($date->toDateString(), trim((string) $this->holiday_range_reason));
-        }
-
-        $this->holiday_range_start = null;
-        $this->holiday_range_end = null;
-        $this->holiday_range_reason = null;
-
-        Notification::make()
-            ->title('تمت إضافة الفترة إلى العطل')
-            ->success()
-            ->send();
     }
 
     public function excludedDatesPreview(): array

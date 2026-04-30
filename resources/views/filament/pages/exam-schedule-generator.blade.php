@@ -104,14 +104,64 @@
                     </select>
                 </label>
 
-                <label class="space-y-1">
+                <label class="space-y-1" x-data="nativeDatePicker(@entangle('start_date').live)">
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-200">تاريخ بداية الامتحانات</span>
-                    <input type="date" wire:model.live="start_date" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
+                    <div class="relative">
+                        <input
+                            x-ref="native"
+                            x-model="value"
+                            type="date"
+                            class="pointer-events-none absolute inset-0 opacity-0"
+                            tabindex="-1"
+                        >
+                        <input
+                            type="text"
+                            :value="formattedValue"
+                            placeholder="dd/mm/yyyy"
+                            readonly
+                            dir="ltr"
+                            @click="openPicker()"
+                            class="w-full cursor-pointer rounded-md border-gray-300 pe-10 dark:border-white/10 dark:bg-gray-800"
+                        >
+                        <button
+                            type="button"
+                            @click="openPicker()"
+                            class="absolute inset-y-0 left-0 flex items-center px-3 text-gray-500 dark:text-gray-400"
+                            aria-label="فتح التقويم"
+                        >
+                            <x-filament::icon icon="heroicon-o-calendar-days" class="h-5 w-5" />
+                        </button>
+                    </div>
                 </label>
 
-                <label class="space-y-1">
+                <label class="space-y-1" x-data="nativeDatePicker(@entangle('end_date').live)">
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-200">تاريخ نهاية الامتحانات</span>
-                    <input type="date" wire:model.live="end_date" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
+                    <div class="relative">
+                        <input
+                            x-ref="native"
+                            x-model="value"
+                            type="date"
+                            class="pointer-events-none absolute inset-0 opacity-0"
+                            tabindex="-1"
+                        >
+                        <input
+                            type="text"
+                            :value="formattedValue"
+                            placeholder="dd/mm/yyyy"
+                            readonly
+                            dir="ltr"
+                            @click="openPicker()"
+                            class="w-full cursor-pointer rounded-md border-gray-300 pe-10 dark:border-white/10 dark:bg-gray-800"
+                        >
+                        <button
+                            type="button"
+                            @click="openPicker()"
+                            class="absolute inset-y-0 left-0 flex items-center px-3 text-gray-500 dark:text-gray-400"
+                            aria-label="فتح التقويم"
+                        >
+                            <x-filament::icon icon="heroicon-o-calendar-days" class="h-5 w-5" />
+                        </button>
+                    </div>
                 </label>
 
                 <label class="space-y-1">
@@ -149,9 +199,37 @@
                     </div>
                     @foreach ($specific_holidays as $index => $holiday)
                         <div class="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-                            <label class="space-y-1">
+                            <label
+                                class="space-y-1"
+                                x-data="nativeDatePicker(@entangle('specific_holidays.' . $index . '.date').live)"
+                            >
                                 <span class="text-xs text-gray-500 dark:text-gray-400">التاريخ</span>
-                                <input type="date" wire:model.live="specific_holidays.{{ $index }}.date" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
+                                <div class="relative">
+                                    <input
+                                        x-ref="native"
+                                        x-model="value"
+                                        type="date"
+                                        class="pointer-events-none absolute inset-0 opacity-0"
+                                        tabindex="-1"
+                                    >
+                                    <input
+                                        type="text"
+                                        :value="formattedValue"
+                                        placeholder="dd/mm/yyyy"
+                                        readonly
+                                        dir="ltr"
+                                        @click="openPicker()"
+                                        class="w-full cursor-pointer rounded-md border-gray-300 pe-10 dark:border-white/10 dark:bg-gray-800"
+                                    >
+                                    <button
+                                        type="button"
+                                        @click="openPicker()"
+                                        class="absolute inset-y-0 left-0 flex items-center px-3 text-gray-500 dark:text-gray-400"
+                                        aria-label="فتح التقويم"
+                                    >
+                                        <x-filament::icon icon="heroicon-o-calendar-days" class="h-5 w-5" />
+                                    </button>
+                                </div>
                             </label>
                             <label class="space-y-1">
                                 <span class="text-xs text-gray-500 dark:text-gray-400">السبب</span>
@@ -162,27 +240,6 @@
                             </div>
                         </div>
                     @endforeach
-                </div>
-
-                <div class="mt-5 rounded-md border border-gray-200 p-3 dark:border-white/10">
-                    <div class="mb-3 text-sm font-medium text-gray-700 dark:text-gray-200">إضافة عطلة لمدة عدة أيام</div>
-                    <div class="grid gap-2 sm:grid-cols-2">
-                        <label class="space-y-1">
-                            <span class="text-xs text-gray-500 dark:text-gray-400">من تاريخ</span>
-                            <input type="date" wire:model.live="holiday_range_start" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
-                        </label>
-                        <label class="space-y-1">
-                            <span class="text-xs text-gray-500 dark:text-gray-400">إلى تاريخ</span>
-                            <input type="date" wire:model.live="holiday_range_end" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
-                        </label>
-                        <label class="space-y-1 sm:col-span-2">
-                            <span class="text-xs text-gray-500 dark:text-gray-400">السبب</span>
-                            <input type="text" wire:model.live="holiday_range_reason" placeholder="عطلة رسمية" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
-                        </label>
-                    </div>
-                    <div class="mt-3">
-                        <x-filament::button size="sm" color="gray" icon="heroicon-o-calendar-days" wire:click="addHolidayRange" type="button">إضافة الفترة إلى العطل</x-filament::button>
-                    </div>
                 </div>
 
                 <div class="mt-5">
@@ -199,7 +256,7 @@
                             <tbody class="divide-y divide-gray-100 dark:divide-white/5">
                                 @forelse ($this->excludedDatesPreview() as $excludedDate)
                                     <tr>
-                                        <td class="px-3 py-2">{{ $excludedDate['date'] }}</td>
+                                        <td class="px-3 py-2">{{ \Illuminate\Support\Carbon::parse($excludedDate['date'])->format('d/m/Y') }}</td>
                                         <td class="px-3 py-2">{{ $excludedDate['day'] }}</td>
                                         <td class="px-3 py-2">{{ $excludedDate['reason'] }}</td>
                                     </tr>
@@ -576,4 +633,38 @@
             </div>
         @endif
     </div>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('nativeDatePicker', (value = '') => ({
+                value,
+                get formattedValue() {
+                    return this.formatDate(this.value);
+                },
+                formatDate(date) {
+                    if (! date) {
+                        return '';
+                    }
+
+                    const [year, month, day] = String(date).split('-');
+
+                    if (! year || ! month || ! day) {
+                        return '';
+                    }
+
+                    return `${day}/${month}/${year}`;
+                },
+                openPicker() {
+                    if (typeof this.$refs.native?.showPicker === 'function') {
+                        this.$refs.native.showPicker();
+
+                        return;
+                    }
+
+                    this.$refs.native?.focus();
+                    this.$refs.native?.click();
+                },
+            }));
+        });
+    </script>
 </x-filament-panels::page>
