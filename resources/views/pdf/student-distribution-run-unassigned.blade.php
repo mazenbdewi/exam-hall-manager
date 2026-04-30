@@ -38,6 +38,7 @@
             <tr>
                 <th>{{ __('exam.fields.student_number') }}</th>
                 <th>{{ __('exam.fields.full_name') }}</th>
+                <th>{{ __('exam.fields.student_type') }}</th>
                 <th>{{ __('exam.fields.subject') }}</th>
                 <th>{{ __('exam.fields.exam_date') }}</th>
                 <th>{{ __('exam.fields.exam_start_time') }}</th>
@@ -49,6 +50,7 @@
                 <tr>
                     <td>{{ $student['student_number'] }}</td>
                     <td>{{ $student['full_name'] }}</td>
+                    <td>{{ $student['student_type_label'] ?? '—' }}</td>
                     <td>{{ $student['subject_name'] }}</td>
                     <td>{{ $student['exam_date'] }}</td>
                     <td>{{ $student['start_time'] }}</td>
@@ -56,7 +58,7 @@
                 </tr>
             @empty
                 <tr>
-                    <td colspan="6">{{ __('exam.global_hall_distribution.no_unassigned_students') }}</td>
+                    <td colspan="7">{{ __('exam.global_hall_distribution.no_unassigned_students') }}</td>
                 </tr>
             @endforelse
         </tbody>

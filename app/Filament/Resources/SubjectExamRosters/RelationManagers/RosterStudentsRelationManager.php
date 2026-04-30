@@ -15,6 +15,7 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Model;
 
@@ -82,6 +83,14 @@ class RosterStudentsRelationManager extends RelationManager
                     ->label('ملاحظات')
                     ->limit(40)
                     ->toggleable(),
+            ])
+            ->filters([
+                SelectFilter::make('student_type')
+                    ->label('نوع الطالب')
+                    ->options([
+                        'regular' => 'مستجد',
+                        'carry' => 'حملة',
+                    ]),
             ])
             ->headerActions([
                 CreateAction::make()

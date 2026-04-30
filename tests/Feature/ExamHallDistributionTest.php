@@ -6,6 +6,7 @@ use App\Enums\ExamHallPriority;
 use App\Enums\ExamHallType;
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use App\Exports\StudentDistributionUnassignedExport;
 use App\Models\AcademicYear;
 use App\Models\College;
 use App\Models\Department;
@@ -112,6 +113,190 @@ class ExamHallDistributionTest extends TestCase
         $this->assertSame(ExamOfferingStatus::Ready, $slotOffering->fresh()->status);
     }
 
+    #[Test]
+    public function it_keeps_existing_mixed_hall_behavior_when_carry_separation_is_disabled(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'مادة مختلطة',
+            studentsCount: 6,
+            studentTypes: [
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Carry->value,
+                ExamStudentType::Carry->value,
+            ],
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة واحدة',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering($offering);
+        $summary = app(ExamHallDistributionService::class)->getSlotSummary($offering);
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame('mixed', $summary['hall_assignments'][0]['hall_student_type_key']);
+    }
+
+    #[Test]
+    public function it_separates_carry_students_from_regular_students_when_capacity_allows(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'مادة فصل الحملة',
+            studentsCount: 8,
+            studentTypes: [
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Carry->value,
+                ExamStudentType::Carry->value,
+            ],
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة حملة صغيرة',
+            'location' => 'المبنى الأول',
+            'capacity' => 2,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة مستجدين',
+            'location' => 'المبنى الثاني',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering($offering, separateCarryStudents: true);
+        $summary = app(ExamHallDistributionService::class)->getSlotSummary($offering);
+        $hallTypes = collect($summary['hall_assignments'])->pluck('hall_student_type_key')->sort()->values()->all();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(['carry_only', 'regular_only'], $hallTypes);
+        $this->assertSame(0, collect($summary['hall_assignments'])->where('hall_student_type_key', 'mixed')->count());
+    }
+
+    #[Test]
+    public function it_records_a_warning_when_carry_separation_requires_fallback_mixing(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'مادة سعة غير كافية للفصل',
+            studentsCount: 8,
+            studentTypes: [
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Carry->value,
+                ExamStudentType::Carry->value,
+            ],
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة وحيدة',
+            'location' => 'المبنى الأول',
+            'capacity' => 8,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+            separateCarryStudents: true,
+        );
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertTrue($result['separate_carry_students']);
+        $this->assertSame(2, $result['carry_students_count']);
+        $this->assertSame(6, $result['regular_students_count']);
+        $this->assertSame(1, $result['mixed_halls_count']);
+        $this->assertSame(1, $result['carry_regular_mixing_cases_count']);
+        $this->assertStringContainsString('لم يتم فصل جميع طلاب الحملة', $result['separation_status_message']);
+        $this->assertDatabaseHas('student_distribution_run_issues', [
+            'issue_type' => 'carry_regular_mixed_due_to_capacity',
+        ]);
+    }
+
+    #[Test]
+    public function distribution_reports_include_student_type_and_hall_classification(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'مادة تقرير الفصل',
+            studentsCount: 4,
+            studentTypes: [
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Carry->value,
+                ExamStudentType::Carry->value,
+            ],
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة حملة',
+            'location' => 'المبنى الأول',
+            'capacity' => 2,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة مستجدين',
+            'location' => 'المبنى الثاني',
+            'capacity' => 2,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        app(ExamHallDistributionService::class)->distributeForOffering($offering, separateCarryStudents: true);
+        $summary = app(ExamHallDistributionService::class)->getSlotSummary($offering);
+        $html = view('pdf.hall-distribution-slot', [
+            'summary' => $summary,
+            'systemSetting' => (object) ['university_name' => 'جامعة الاختبار'],
+            'logoDataUri' => null,
+        ])->render();
+
+        $this->assertStringContainsString('نوع الطالب', $html);
+        $this->assertStringContainsString('قاعة طلاب حملة', $html);
+        $this->assertStringContainsString('قاعة طلاب مستجدين', $html);
+        $this->assertContains('نوع الطالب', (new StudentDistributionUnassignedExport(new \App\Models\StudentDistributionRun))->headings());
+    }
+
     protected function createAcademicContext(): array
     {
         $college = College::query()->create([
@@ -156,6 +341,7 @@ class ExamHallDistributionTest extends TestCase
         int $studentsCount,
         string $date = '2026-06-01',
         string $startTime = '09:00:00',
+        array|string|ExamStudentType $studentTypes = ExamStudentType::Regular,
     ): SubjectExamOffering {
         $subject = Subject::query()->create([
             'college_id' => $context['college']->id,
@@ -175,11 +361,16 @@ class ExamHallDistributionTest extends TestCase
         ]);
 
         for ($index = 1; $index <= $studentsCount; $index++) {
+            $studentType = is_array($studentTypes)
+                ? ($studentTypes[$index - 1] ?? ExamStudentType::Regular->value)
+                : $studentTypes;
+            $studentType = $studentType instanceof ExamStudentType ? $studentType->value : $studentType;
+
             ExamStudent::query()->create([
                 'subject_exam_offering_id' => $offering->id,
                 'student_number' => sprintf('%s-%03d', $offering->id, $index),
                 'full_name' => sprintf('طالب %s %03d', $subjectName, $index),
-                'student_type' => ExamStudentType::Regular->value,
+                'student_type' => $studentType,
             ]);
         }
 

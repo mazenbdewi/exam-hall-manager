@@ -19,11 +19,19 @@
             __('exam.global_hall_distribution.summary.used_halls_count') => $run->used_halls,
             __('exam.global_hall_distribution.summary.total_capacity') => $run->total_capacity,
             __('exam.global_hall_distribution.summary.capacity_shortage') => $run->capacity_shortage,
+            __('exam.global_hall_distribution.summary.separate_carry_students') => (bool) ($summary['separate_carry_students'] ?? false) ? 'نعم' : 'لا',
+            __('exam.global_hall_distribution.summary.carry_students_count') => $summary['carry_students_count'] ?? 0,
+            __('exam.global_hall_distribution.summary.regular_students_count') => $summary['regular_students_count'] ?? 0,
+            __('exam.global_hall_distribution.summary.carry_halls_count') => $summary['carry_halls_count'] ?? 0,
+            __('exam.global_hall_distribution.summary.regular_halls_count') => $summary['regular_halls_count'] ?? 0,
+            __('exam.global_hall_distribution.summary.mixing_cases_count') => $summary['carry_regular_mixing_cases_count'] ?? 0,
             __('exam.fields.status') => $run->statusLabel(),
             __('exam.fields.executed_at') => $run->executed_at?->format('Y-m-d H:i'),
         ] : [];
         $problemSlots = collect($summary['unassigned_by_slot'] ?? [])
-            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0
+                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0
+                || (int) ($slot['mixed_halls_count'] ?? 0) > 0)
             ->values();
         $problemSubjects = collect($summary['unassigned_by_subject'] ?? [])
             ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
@@ -73,6 +81,20 @@
                 @endforeach
             </div>
 
+            @if ((bool) ($summary['separate_carry_students'] ?? false))
+                @php
+                    $hasMixing = (int) ($summary['carry_regular_mixing_cases_count'] ?? 0) > 0;
+                @endphp
+                <div class="rounded-lg border p-4 shadow-sm {{ $hasMixing ? 'border-warning-200 bg-warning-50 dark:border-warning-500/20 dark:bg-warning-500/10' : 'border-success-200 bg-success-50 dark:border-success-500/20 dark:bg-success-500/10' }}">
+                    <h3 class="font-semibold {{ $hasMixing ? 'text-warning-900 dark:text-warning-200' : 'text-success-900 dark:text-success-200' }}">
+                        {{ __('exam.global_hall_distribution.distribution_settings_title') }}
+                    </h3>
+                    <p class="mt-2 text-sm {{ $hasMixing ? 'text-warning-800 dark:text-warning-200' : 'text-success-800 dark:text-success-200' }}">
+                        {{ $summary['separation_status_message'] ?? __('exam.global_hall_distribution.carry_regular_separated_success') }}
+                    </p>
+                </div>
+            @endif
+
             @if ($run->unassigned_students > 0)
                 <div class="rounded-lg border border-danger-200 bg-danger-50 p-4 shadow-sm dark:border-danger-500/20 dark:bg-danger-500/10">
                     <h2 class="text-base font-semibold text-danger-900 dark:text-danger-200">{{ __('exam.global_hall_distribution.problem_title') }}</h2>
@@ -121,6 +143,10 @@
                                 {{ $slot['exam_date'] }} · {{ substr((string) $slot['start_time'], 0, 5) }}
                                 <br>
                                 {{ __('exam.fields.unassigned_students') }}: {{ $slot['unassigned_count'] ?? 0 }}
+                                @if ((int) ($slot['mixed_halls_count'] ?? 0) > 0)
+                                    <br>
+                                    {{ __('exam.global_hall_distribution.summary.mixing_cases_count') }}: {{ $slot['mixed_halls_count'] }}
+                                @endif
                                 <br>
                                 {{ $slot['reason'] ?? '—' }}
                             </div>

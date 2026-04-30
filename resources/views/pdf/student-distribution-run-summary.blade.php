@@ -20,7 +20,9 @@
     @php
         $runPeriod = __('exam.fields.period').': '.($run->from_date?->format('Y-m-d') ?? '—').' - '.($run->to_date?->format('Y-m-d') ?? '—');
         $problemSlots = collect($summary['unassigned_by_slot'] ?? [])
-            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0
+                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0
+                || (int) ($slot['mixed_halls_count'] ?? 0) > 0)
             ->values();
         $problemSubjects = collect($summary['unassigned_by_subject'] ?? [])
             ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
@@ -66,8 +68,32 @@
                 <th>{{ __('exam.global_hall_distribution.summary.capacity_shortage') }}</th>
                 <td>{{ $run->capacity_shortage }}</td>
             </tr>
+            <tr>
+                <th>{{ __('exam.global_hall_distribution.summary.separate_carry_students') }}</th>
+                <td>{{ (bool) ($summary['separate_carry_students'] ?? false) ? 'نعم' : 'لا' }}</td>
+                <th>{{ __('exam.global_hall_distribution.summary.mixing_cases_count') }}</th>
+                <td>{{ $summary['carry_regular_mixing_cases_count'] ?? 0 }}</td>
+            </tr>
+            <tr>
+                <th>{{ __('exam.global_hall_distribution.summary.carry_students_count') }}</th>
+                <td>{{ $summary['carry_students_count'] ?? 0 }}</td>
+                <th>{{ __('exam.global_hall_distribution.summary.regular_students_count') }}</th>
+                <td>{{ $summary['regular_students_count'] ?? 0 }}</td>
+            </tr>
+            <tr>
+                <th>{{ __('exam.global_hall_distribution.summary.carry_halls_count') }}</th>
+                <td>{{ $summary['carry_halls_count'] ?? 0 }}</td>
+                <th>{{ __('exam.global_hall_distribution.summary.regular_halls_count') }}</th>
+                <td>{{ $summary['regular_halls_count'] ?? 0 }}</td>
+            </tr>
         </tbody>
     </table>
+
+    @if (! empty($summary['separation_status_message']))
+        <div class="{{ (int) ($summary['carry_regular_mixing_cases_count'] ?? 0) > 0 ? 'warning' : 'success' }}">
+            {{ $summary['separation_status_message'] }}
+        </div>
+    @endif
 
     <h3>{{ __('exam.global_hall_distribution.by_slot') }}</h3>
     <table class="grid">
@@ -76,6 +102,7 @@
                 <th>{{ __('exam.fields.exam_date') }}</th>
                 <th>{{ __('exam.fields.exam_start_time') }}</th>
                 <th>{{ __('exam.fields.unassigned_students') }}</th>
+                <th>{{ __('exam.global_hall_distribution.summary.mixing_cases_count') }}</th>
                 <th>{{ __('exam.fields.reason') }}</th>
             </tr>
         </thead>
@@ -85,10 +112,11 @@
                     <td>{{ $slot['exam_date'] ?? '—' }}</td>
                     <td>{{ substr((string) ($slot['start_time'] ?? ''), 0, 5) }}</td>
                     <td>{{ $slot['unassigned_count'] ?? 0 }}</td>
+                    <td>{{ $slot['mixed_halls_count'] ?? 0 }}</td>
                     <td>{{ $slot['reason'] ?? '—' }}</td>
                 </tr>
             @empty
-                <tr><td colspan="4">{{ __('exam.global_hall_distribution.no_grouped_issues') }}</td></tr>
+                <tr><td colspan="5">{{ __('exam.global_hall_distribution.no_grouped_issues') }}</td></tr>
             @endforelse
         </tbody>
     </table>

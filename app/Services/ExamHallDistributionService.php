@@ -19,10 +19,19 @@ use Illuminate\Support\Facades\Log;
 
 class ExamHallDistributionService
 {
-    public function distributeForFacultyDateRange(int $collegeId, string $fromDate, string $toDate, bool $redistribute = false): array
+    public function distributeForFacultyDateRange(
+        int $collegeId,
+        string $fromDate,
+        string $toDate,
+        bool $redistribute = false,
+        bool $separateCarryStudents = false,
+    ): array
     {
         $fromDate = substr($fromDate, 0, 10);
         $toDate = substr($toDate, 0, 10);
+        $settings = [
+            'separate_carry_students' => $separateCarryStudents,
+        ];
 
         $offerings = SubjectExamOffering::query()
             ->with(['subject'])
@@ -42,6 +51,7 @@ class ExamHallDistributionService
                 toDate: $toDate,
                 reason: __('exam.global_hall_distribution.reasons.no_offerings'),
                 issueType: 'no_offerings',
+                settings: $settings,
             ));
         }
 
@@ -74,6 +84,7 @@ class ExamHallDistributionService
                 issues: $failureIssues['issues'],
                 unassignedBySubject: $failureIssues['unassigned_by_subject'],
                 unassignedBySlot: $failureIssues['unassigned_by_slot'],
+                settings: $settings,
             ));
         }
 
@@ -88,6 +99,7 @@ class ExamHallDistributionService
                 issueType: 'no_students',
                 totalOfferings: $offerings->count(),
                 totalSlots: $slots->count(),
+                settings: $settings,
             ));
         }
 
@@ -113,6 +125,14 @@ class ExamHallDistributionService
             'issues' => [],
             'unassigned_by_subject' => [],
             'unassigned_by_slot' => [],
+            'settings' => $settings,
+            'separate_carry_students' => $separateCarryStudents,
+            'regular_students_count' => 0,
+            'carry_students_count' => 0,
+            'regular_halls_count' => 0,
+            'carry_halls_count' => 0,
+            'mixed_halls_count' => 0,
+            'carry_regular_mixing_cases_count' => 0,
         ];
 
         foreach ($slots as $slotOfferings) {
@@ -127,15 +147,16 @@ class ExamHallDistributionService
             $summary['capacity_shortage'] += $slotCapacityShortage;
 
             if (! $redistribute && $this->slotHasDistribution($collegeId, $examDate, $examStartTime)) {
-                $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage);
+                $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage, $separateCarryStudents);
                 $summary['skipped_slots_count']++;
                 $summary['distributed_students'] += $slotStats['distributed_students'];
                 $summary['unassigned_students'] += $slotStats['unassigned_students'];
                 $summary['used_halls'] += $slotStats['used_halls'];
                 $summary['issues'] = array_merge($summary['issues'], $slotStats['issues']);
                 $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
+                $this->addSeparationStatsToGlobalSummary($summary, $slotStats);
 
-                if ($slotStats['unassigned_students'] > 0 || $slotCapacityShortage > 0) {
+                if ($slotStats['unassigned_students'] > 0 || $slotCapacityShortage > 0 || ($separateCarryStudents && $slotStats['mixed_halls_count'] > 0)) {
                     $summary['issue_slots_count']++;
                     $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
                 }
@@ -151,14 +172,19 @@ class ExamHallDistributionService
                     'used_halls_count' => $slotStats['used_halls'],
                     'capacity' => $slotCapacity,
                     'capacity_shortage' => $slotCapacityShortage,
+                    'regular_students_count' => $slotStats['regular_students_count'],
+                    'carry_students_count' => $slotStats['carry_students_count'],
+                    'regular_halls_count' => $slotStats['regular_halls_count'],
+                    'carry_halls_count' => $slotStats['carry_halls_count'],
+                    'mixed_halls_count' => $slotStats['mixed_halls_count'],
                     'message' => __('exam.global_hall_distribution.slot_skipped'),
                 ];
 
                 continue;
             }
 
-            $result = $this->distributeForOffering($firstOffering);
-            $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage);
+            $result = $this->distributeForOffering($firstOffering, separateCarryStudents: $separateCarryStudents);
+            $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage, $separateCarryStudents);
             $assignedStudentsCount = $slotStats['distributed_students'];
             $unassignedStudentsCount = $slotStats['unassigned_students'];
 
@@ -168,8 +194,9 @@ class ExamHallDistributionService
             $summary['issues'] = array_merge($summary['issues'], $slotStats['issues']);
             $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
             $summary['distributed_slots_count']++;
+            $this->addSeparationStatsToGlobalSummary($summary, $slotStats);
 
-            if ($unassignedStudentsCount > 0 || $slotCapacityShortage > 0) {
+            if ($unassignedStudentsCount > 0 || $slotCapacityShortage > 0 || ($separateCarryStudents && $slotStats['mixed_halls_count'] > 0)) {
                 $summary['issue_slots_count']++;
                 $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
             }
@@ -185,11 +212,18 @@ class ExamHallDistributionService
                 'used_halls_count' => (int) ($result['used_halls_count'] ?? 0),
                 'capacity' => $slotCapacity,
                 'capacity_shortage' => $slotCapacityShortage,
+                'regular_students_count' => $slotStats['regular_students_count'],
+                'carry_students_count' => $slotStats['carry_students_count'],
+                'regular_halls_count' => $slotStats['regular_halls_count'],
+                'carry_halls_count' => $slotStats['carry_halls_count'],
+                'mixed_halls_count' => $slotStats['mixed_halls_count'],
                 'message' => $result['message'] ?? null,
             ];
         }
 
-        if ($summary['unassigned_students'] > 0 || $summary['capacity_shortage'] > 0) {
+        $summary['separation_status_message'] = $this->carrySeparationStatusMessage($summary);
+
+        if ($summary['unassigned_students'] > 0 || $summary['capacity_shortage'] > 0 || $summary['carry_regular_mixing_cases_count'] > 0) {
             $summary['status'] = 'partial';
             $summary['message'] = __('exam.notifications.global_hall_distribution_completed_with_issues');
         }
@@ -197,7 +231,7 @@ class ExamHallDistributionService
         return $this->persistGlobalDistributionResult($this->withLegacyGlobalDistributionKeys($summary));
     }
 
-    public function distributeForOffering(SubjectExamOffering $offering): array
+    public function distributeForOffering(SubjectExamOffering $offering, bool $separateCarryStudents = false): array
     {
         $slot = $this->getSlotContext($offering);
         $slotOfferings = $slot['offerings'];
@@ -224,12 +258,21 @@ class ExamHallDistributionService
             ];
         }
 
-        return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents): array {
+        return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents): array {
             $this->clearSlotDistribution(
                 collegeId: $slot['college_id'],
                 examDate: $slot['exam_date'],
                 examStartTime: $slot['exam_start_time'],
             );
+
+            if ($separateCarryStudents) {
+                return $this->distributeSlotWithCarrySeparation(
+                    slot: $slot,
+                    slotOfferings: $slotOfferings,
+                    availableHalls: $availableHalls,
+                    totalStudents: $totalStudents,
+                );
+            }
 
             $studentQueues = [];
             $remainingCounts = [];
@@ -354,6 +397,366 @@ class ExamHallDistributionService
                 'used_halls_count' => $usedHallsCount,
             ];
         });
+    }
+
+    protected function distributeSlotWithCarrySeparation(
+        array $slot,
+        Collection $slotOfferings,
+        Collection $availableHalls,
+        int $totalStudents,
+    ): array {
+        [$studentQueues, $remainingCounts] = $this->buildStudentTypeQueues($slotOfferings);
+        $plans = [];
+
+        $regularStudentsCount = array_sum($remainingCounts[ExamStudentType::Regular->value]);
+        $carryStudentsCount = array_sum($remainingCounts[ExamStudentType::Carry->value]);
+
+        foreach ($this->hallsForCarryStudents($availableHalls) as $hall) {
+            if (array_sum($remainingCounts[ExamStudentType::Carry->value]) === 0) {
+                break;
+            }
+
+            $hallId = $hall->getKey();
+            $plans[$hallId] ??= $this->emptyHallPlan($hall);
+
+            $this->assignStudentTypeToHallPlan(
+                studentType: ExamStudentType::Carry->value,
+                plan: $plans[$hallId],
+                slotOfferings: $slotOfferings,
+                studentQueues: $studentQueues,
+                remainingCounts: $remainingCounts,
+            );
+        }
+
+        foreach ($availableHalls as $hall) {
+            if (array_sum($remainingCounts[ExamStudentType::Regular->value]) === 0) {
+                break;
+            }
+
+            $hallId = $hall->getKey();
+
+            if (isset($plans[$hallId]) && $this->planAssignedStudentsCount($plans[$hallId]) > 0) {
+                continue;
+            }
+
+            $plans[$hallId] ??= $this->emptyHallPlan($hall);
+
+            $this->assignStudentTypeToHallPlan(
+                studentType: ExamStudentType::Regular->value,
+                plan: $plans[$hallId],
+                slotOfferings: $slotOfferings,
+                studentQueues: $studentQueues,
+                remainingCounts: $remainingCounts,
+            );
+        }
+
+        $fallbackMixedStudents = 0;
+        $fallbackMixedStudents += $this->mixRemainingStudentTypeIntoExistingPlans(
+            studentType: ExamStudentType::Regular->value,
+            plans: $plans,
+            slotOfferings: $slotOfferings,
+            studentQueues: $studentQueues,
+            remainingCounts: $remainingCounts,
+        );
+        $fallbackMixedStudents += $this->mixRemainingStudentTypeIntoExistingPlans(
+            studentType: ExamStudentType::Carry->value,
+            plans: $plans,
+            slotOfferings: $slotOfferings,
+            studentQueues: $studentQueues,
+            remainingCounts: $remainingCounts,
+        );
+
+        [$assignedStudentsCount, $usedHallsCount] = $this->persistHallPlans($plans, $slot);
+        $unassignedStudentsCount = max(0, $totalStudents - $assignedStudentsCount);
+
+        SubjectExamOffering::query()
+            ->whereKey($slotOfferings->modelKeys())
+            ->update([
+                'status' => $unassignedStudentsCount === 0
+                    ? ExamOfferingStatus::Distributed->value
+                    : ExamOfferingStatus::Ready->value,
+            ]);
+
+        $mixedHallsCount = collect($plans)
+            ->filter(fn (array $plan): bool => $this->planIsMixed($plan))
+            ->count();
+
+        $hasMixing = $mixedHallsCount > 0 || $fallbackMixedStudents > 0;
+
+        return [
+            'status' => $unassignedStudentsCount === 0 && ! $hasMixing ? 'success' : 'warning',
+            'message' => match (true) {
+                $unassignedStudentsCount > 0 => __('exam.notifications.distribution_completed_with_unassigned', [
+                    'count' => $unassignedStudentsCount,
+                ]),
+                $hasMixing => __('exam.global_hall_distribution.carry_regular_mixed_warning'),
+                default => __('exam.notifications.distribution_completed'),
+            },
+            'assigned_students_count' => $assignedStudentsCount,
+            'unassigned_students_count' => $unassignedStudentsCount,
+            'used_halls_count' => $usedHallsCount,
+            'regular_students_count' => $regularStudentsCount,
+            'carry_students_count' => $carryStudentsCount,
+            'mixed_halls_count' => $mixedHallsCount,
+        ];
+    }
+
+    protected function buildStudentTypeQueues(Collection $slotOfferings): array
+    {
+        $queues = [
+            ExamStudentType::Regular->value => [],
+            ExamStudentType::Carry->value => [],
+        ];
+        $remainingCounts = [
+            ExamStudentType::Regular->value => [],
+            ExamStudentType::Carry->value => [],
+        ];
+
+        foreach ($slotOfferings as $slotOffering) {
+            $students = $slotOffering->examStudents()
+                ->orderBy('student_number')
+                ->orderBy('full_name')
+                ->get();
+
+            foreach ([ExamStudentType::Carry->value, ExamStudentType::Regular->value] as $studentType) {
+                $typedStudents = $students
+                    ->filter(fn (ExamStudent $student): bool => (string) $student->getRawOriginal('student_type') === $studentType)
+                    ->values();
+
+                $queues[$studentType][$slotOffering->getKey()] = $typedStudents;
+                $remainingCounts[$studentType][$slotOffering->getKey()] = $typedStudents->count();
+            }
+        }
+
+        return [$queues, $remainingCounts];
+    }
+
+    protected function hallsForCarryStudents(Collection $availableHalls): Collection
+    {
+        return $availableHalls
+            ->sort(function (ExamHall $first, ExamHall $second): int {
+                $capacityComparison = $first->capacity <=> $second->capacity;
+
+                if ($capacityComparison !== 0) {
+                    return $capacityComparison;
+                }
+
+                $priorityComparison = $this->priorityRank($first->priority?->value)
+                    <=> $this->priorityRank($second->priority?->value);
+
+                if ($priorityComparison !== 0) {
+                    return $priorityComparison;
+                }
+
+                return strcmp($first->name, $second->name);
+            })
+            ->values();
+    }
+
+    protected function emptyHallPlan(ExamHall $hall): array
+    {
+        return [
+            'hall' => $hall,
+            'subject_counts' => [],
+            'student_assignment_rows' => [],
+            'student_type_counts' => [
+                ExamStudentType::Regular->value => 0,
+                ExamStudentType::Carry->value => 0,
+            ],
+        ];
+    }
+
+    protected function assignStudentTypeToHallPlan(
+        string $studentType,
+        array &$plan,
+        Collection $slotOfferings,
+        array &$studentQueues,
+        array &$remainingCounts,
+    ): int {
+        $assignedCount = 0;
+        $visitedOfferingIds = [];
+
+        while ($this->planRemainingCapacity($plan) > 0) {
+            $nextOffering = $this->nextOfferingForHallPlan(
+                slotOfferings: $slotOfferings,
+                remainingCounts: $remainingCounts[$studentType],
+                subjectCounts: $plan['subject_counts'],
+                visitedOfferingIds: $visitedOfferingIds,
+            );
+
+            if (! $nextOffering) {
+                break;
+            }
+
+            $offeringId = $nextOffering->getKey();
+            $take = min($this->planRemainingCapacity($plan), $remainingCounts[$studentType][$offeringId] ?? 0);
+
+            if ($take <= 0) {
+                $visitedOfferingIds[] = $offeringId;
+
+                continue;
+            }
+
+            /** @var Collection<int, ExamStudent> $students */
+            $students = $studentQueues[$studentType][$offeringId]->splice(0, $take);
+            $count = $students->count();
+
+            if ($count === 0) {
+                $remainingCounts[$studentType][$offeringId] = 0;
+                $visitedOfferingIds[] = $offeringId;
+
+                continue;
+            }
+
+            $plan['subject_counts'][$offeringId] = ($plan['subject_counts'][$offeringId] ?? 0) + $count;
+            $plan['student_type_counts'][$studentType] += $count;
+            $remainingCounts[$studentType][$offeringId] -= $count;
+            $assignedCount += $count;
+            $visitedOfferingIds[] = $offeringId;
+
+            foreach ($students as $student) {
+                $plan['student_assignment_rows'][] = [
+                    'exam_student_id' => $student->getKey(),
+                    'subject_exam_offering_id' => $offeringId,
+                    'seat_number' => null,
+                    'student_type' => $studentType,
+                ];
+            }
+        }
+
+        return $assignedCount;
+    }
+
+    protected function nextOfferingForHallPlan(
+        Collection $slotOfferings,
+        array $remainingCounts,
+        array $subjectCounts,
+        array $visitedOfferingIds,
+    ): ?SubjectExamOffering {
+        return $slotOfferings
+            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $subjectCounts, $visitedOfferingIds): bool {
+                $offeringId = $slotOffering->getKey();
+
+                if (in_array($offeringId, $visitedOfferingIds, true)) {
+                    return false;
+                }
+
+                if (($remainingCounts[$offeringId] ?? 0) <= 0) {
+                    return false;
+                }
+
+                return isset($subjectCounts[$offeringId]) || count($subjectCounts) < 3;
+            });
+    }
+
+    protected function mixRemainingStudentTypeIntoExistingPlans(
+        string $studentType,
+        array &$plans,
+        Collection $slotOfferings,
+        array &$studentQueues,
+        array &$remainingCounts,
+    ): int {
+        if (array_sum($remainingCounts[$studentType]) === 0) {
+            return 0;
+        }
+
+        $oppositeStudentType = $studentType === ExamStudentType::Carry->value
+            ? ExamStudentType::Regular->value
+            : ExamStudentType::Carry->value;
+        $mixedAssignedCount = 0;
+
+        foreach ($plans as &$plan) {
+            if (array_sum($remainingCounts[$studentType]) === 0) {
+                break;
+            }
+
+            if ($this->planRemainingCapacity($plan) <= 0) {
+                continue;
+            }
+
+            $hadOppositeStudents = ($plan['student_type_counts'][$oppositeStudentType] ?? 0) > 0;
+            $assigned = $this->assignStudentTypeToHallPlan(
+                studentType: $studentType,
+                plan: $plan,
+                slotOfferings: $slotOfferings,
+                studentQueues: $studentQueues,
+                remainingCounts: $remainingCounts,
+            );
+
+            if ($hadOppositeStudents) {
+                $mixedAssignedCount += $assigned;
+            }
+        }
+
+        return $mixedAssignedCount;
+    }
+
+    protected function persistHallPlans(array $plans, array $slot): array
+    {
+        $assignedStudentsCount = 0;
+        $usedHallsCount = 0;
+
+        foreach ($plans as $plan) {
+            $hallAssignedStudentsCount = $this->planAssignedStudentsCount($plan);
+
+            if ($hallAssignedStudentsCount === 0) {
+                continue;
+            }
+
+            /** @var ExamHall $hall */
+            $hall = $plan['hall'];
+            $hallAssignment = HallAssignment::query()->create([
+                'exam_hall_id' => $hall->getKey(),
+                'exam_date' => $slot['exam_date'],
+                'exam_start_time' => $slot['exam_start_time'],
+                'college_id' => $slot['college_id'],
+                'total_capacity' => $hall->capacity,
+                'assigned_students_count' => $hallAssignedStudentsCount,
+                'remaining_capacity' => $hall->capacity - $hallAssignedStudentsCount,
+            ]);
+
+            foreach ($plan['subject_counts'] as $offeringId => $count) {
+                HallAssignmentSubject::query()->create([
+                    'hall_assignment_id' => $hallAssignment->getKey(),
+                    'subject_exam_offering_id' => $offeringId,
+                    'assigned_students_count' => $count,
+                ]);
+            }
+
+            ExamStudentHallAssignment::query()->insert(
+                collect($plan['student_assignment_rows'])
+                    ->map(fn (array $row): array => [
+                        'exam_student_id' => $row['exam_student_id'],
+                        'subject_exam_offering_id' => $row['subject_exam_offering_id'],
+                        'seat_number' => $row['seat_number'],
+                        'hall_assignment_id' => $hallAssignment->getKey(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ])
+                    ->all(),
+            );
+
+            $assignedStudentsCount += $hallAssignedStudentsCount;
+            $usedHallsCount++;
+        }
+
+        return [$assignedStudentsCount, $usedHallsCount];
+    }
+
+    protected function planAssignedStudentsCount(array $plan): int
+    {
+        return array_sum($plan['student_type_counts']);
+    }
+
+    protected function planRemainingCapacity(array $plan): int
+    {
+        return max(0, (int) $plan['hall']->capacity - $this->planAssignedStudentsCount($plan));
+    }
+
+    protected function planIsMixed(array $plan): bool
+    {
+        return ($plan['student_type_counts'][ExamStudentType::Regular->value] ?? 0) > 0
+            && ($plan['student_type_counts'][ExamStudentType::Carry->value] ?? 0) > 0;
     }
 
     public function getSlotSummary(SubjectExamOffering $offering): array
@@ -777,7 +1180,15 @@ class ExamHallDistributionService
             ->exists();
     }
 
-    protected function slotDistributionStats(Collection $slotOfferings, int $collegeId, string $examDate, string $examStartTime, int $slotCapacity, int $slotCapacityShortage): array
+    protected function slotDistributionStats(
+        Collection $slotOfferings,
+        int $collegeId,
+        string $examDate,
+        string $examStartTime,
+        int $slotCapacity,
+        int $slotCapacityShortage,
+        bool $separateCarryStudents = false,
+    ): array
     {
         $assignmentCounts = ExamStudentHallAssignment::query()
             ->whereIn('subject_exam_offering_id', $slotOfferings->pluck('id'))
@@ -790,6 +1201,8 @@ class ExamHallDistributionService
             ->whereTime('exam_start_time', $examStartTime)
             ->where('assigned_students_count', '>', 0)
             ->count();
+        $hallTypeStats = $this->slotHallStudentTypeStats($collegeId, $examDate, $examStartTime);
+        $studentTypeTotals = $this->slotStudentTypeTotals($slotOfferings);
         $distributedStudents = (int) $assignmentCounts->sum();
         $totalStudents = (int) $slotOfferings->sum('exam_students_count');
         $unassignedStudents = max(0, $totalStudents - $distributedStudents);
@@ -820,22 +1233,133 @@ class ExamHallDistributionService
             $unassignedBySubject[] = $issue;
         }
 
+        if ($separateCarryStudents && $hallTypeStats['mixed_halls_count'] > 0) {
+            $issues[] = [
+                'exam_date' => $examDate,
+                'start_time' => $examStartTime,
+                'subject_exam_offering_id' => null,
+                'subject_name' => null,
+                'affected_students_count' => $hallTypeStats['mixed_students_count'],
+                'reason' => __('exam.global_hall_distribution.carry_regular_mixed_issue'),
+                'issue_type' => 'carry_regular_mixed_due_to_capacity',
+            ];
+        }
+
+        $slotReason = $reason ?? ($separateCarryStudents && $hallTypeStats['mixed_halls_count'] > 0
+            ? __('exam.global_hall_distribution.carry_regular_mixed_issue')
+            : null);
+
         return [
             'distributed_students' => $distributedStudents,
             'unassigned_students' => $unassignedStudents,
             'used_halls' => $usedHalls,
             'issues' => $issues,
             'unassigned_by_subject' => $unassignedBySubject,
+            ...$hallTypeStats,
+            'regular_students_count' => $studentTypeTotals[ExamStudentType::Regular->value],
+            'carry_students_count' => $studentTypeTotals[ExamStudentType::Carry->value],
             'slot_issue' => [
                 'exam_date' => $examDate,
                 'start_time' => $examStartTime,
                 'unassigned_count' => $unassignedStudents,
-                'reason' => $reason,
+                'reason' => $slotReason,
                 'capacity_shortage' => $slotCapacityShortage,
                 'total_capacity' => $slotCapacity,
                 'used_halls' => $usedHalls,
+                'mixed_halls_count' => $hallTypeStats['mixed_halls_count'],
+                'mixed_students_count' => $hallTypeStats['mixed_students_count'],
             ],
         ];
+    }
+
+    protected function slotHallStudentTypeStats(int $collegeId, string $examDate, string $examStartTime): array
+    {
+        $assignments = HallAssignment::query()
+            ->where('college_id', $collegeId)
+            ->whereDate('exam_date', $examDate)
+            ->whereTime('exam_start_time', $examStartTime)
+            ->with(['studentAssignments.examStudent'])
+            ->get();
+
+        $regularStudentsCount = 0;
+        $carryStudentsCount = 0;
+        $regularHallsCount = 0;
+        $carryHallsCount = 0;
+        $mixedHallsCount = 0;
+        $mixedStudentsCount = 0;
+
+        foreach ($assignments as $assignment) {
+            $typeCounts = $this->studentTypeCountsForAssignment($assignment);
+            $regularStudentsCount += $typeCounts[ExamStudentType::Regular->value];
+            $carryStudentsCount += $typeCounts[ExamStudentType::Carry->value];
+            $classification = $this->hallStudentTypeClassification($typeCounts);
+
+            if ($classification['key'] === 'regular_only') {
+                $regularHallsCount++;
+            } elseif ($classification['key'] === 'carry_only') {
+                $carryHallsCount++;
+            } elseif ($classification['key'] === 'mixed') {
+                $mixedHallsCount++;
+                $mixedStudentsCount += $typeCounts[ExamStudentType::Regular->value] + $typeCounts[ExamStudentType::Carry->value];
+            }
+        }
+
+        return [
+            'assigned_regular_students_count' => $regularStudentsCount,
+            'assigned_carry_students_count' => $carryStudentsCount,
+            'regular_halls_count' => $regularHallsCount,
+            'carry_halls_count' => $carryHallsCount,
+            'mixed_halls_count' => $mixedHallsCount,
+            'mixed_students_count' => $mixedStudentsCount,
+        ];
+    }
+
+    protected function slotStudentTypeTotals(Collection $slotOfferings): array
+    {
+        $counts = ExamStudent::query()
+            ->whereIn('subject_exam_offering_id', $slotOfferings->pluck('id'))
+            ->selectRaw('student_type, count(*) as students_count')
+            ->groupBy('student_type')
+            ->pluck('students_count', 'student_type');
+
+        return [
+            ExamStudentType::Regular->value => (int) ($counts[ExamStudentType::Regular->value] ?? 0),
+            ExamStudentType::Carry->value => (int) ($counts[ExamStudentType::Carry->value] ?? 0),
+        ];
+    }
+
+    protected function addSeparationStatsToGlobalSummary(array &$summary, array $slotStats): void
+    {
+        foreach ([
+            'regular_students_count',
+            'carry_students_count',
+            'regular_halls_count',
+            'carry_halls_count',
+            'mixed_halls_count',
+        ] as $key) {
+            $summary[$key] += (int) ($slotStats[$key] ?? 0);
+        }
+
+        if ((bool) ($summary['separate_carry_students'] ?? false)) {
+            $summary['carry_regular_mixing_cases_count'] += (int) ($slotStats['mixed_halls_count'] ?? 0);
+        }
+    }
+
+    protected function carrySeparationStatusMessage(array $summary): ?string
+    {
+        if (! (bool) ($summary['separate_carry_students'] ?? false)) {
+            return null;
+        }
+
+        if ((int) ($summary['carry_students_count'] ?? 0) === 0) {
+            return __('exam.global_hall_distribution.no_carry_students');
+        }
+
+        if ((int) ($summary['carry_regular_mixing_cases_count'] ?? 0) > 0) {
+            return __('exam.global_hall_distribution.carry_regular_mixed_warning');
+        }
+
+        return __('exam.global_hall_distribution.carry_regular_separated_success');
     }
 
     protected function globalDistributionIssueReason(int $capacityShortage, int $usedHalls): string
@@ -864,7 +1388,10 @@ class ExamHallDistributionService
         array $issues = [],
         array $unassignedBySubject = [],
         array $unassignedBySlot = [],
+        array $settings = [],
     ): array {
+        $separateCarryStudents = (bool) ($settings['separate_carry_students'] ?? false);
+
         return $this->withLegacyGlobalDistributionKeys([
             'status' => 'failed',
             'faculty_id' => $collegeId,
@@ -896,6 +1423,17 @@ class ExamHallDistributionService
             ]] : []),
             'unassigned_by_subject' => $unassignedBySubject,
             'unassigned_by_slot' => $unassignedBySlot,
+            'settings' => $settings,
+            'separate_carry_students' => $separateCarryStudents,
+            'regular_students_count' => 0,
+            'carry_students_count' => 0,
+            'regular_halls_count' => 0,
+            'carry_halls_count' => 0,
+            'mixed_halls_count' => 0,
+            'carry_regular_mixing_cases_count' => 0,
+            'separation_status_message' => $separateCarryStudents
+                ? __('exam.global_hall_distribution.no_carry_students')
+                : null,
         ]);
     }
 
@@ -1034,7 +1572,9 @@ class ExamHallDistributionService
             ->all();
 
         $summary['unassigned_by_slot'] = collect($summary['unassigned_by_slot'] ?? [])
-            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0
+                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0
+                || (int) ($slot['mixed_halls_count'] ?? 0) > 0)
             ->values()
             ->all();
 
@@ -1071,6 +1611,8 @@ class ExamHallDistributionService
                     'subject_name' => $offering?->subject?->name,
                     'exam_date' => $offering?->exam_date?->format('Y-m-d'),
                     'start_time' => substr((string) $offering?->exam_start_time, 0, 5),
+                    'student_type' => (string) $student->getRawOriginal('student_type'),
+                    'student_type_label' => $this->studentTypeLabel((string) $student->getRawOriginal('student_type')),
                     'reason' => $issue?->message ?? __('exam.global_hall_distribution.issue_reasons.unassigned_students'),
                 ];
             })
@@ -1139,6 +1681,8 @@ class ExamHallDistributionService
 
     protected function toHallAssignmentSummary(HallAssignment $assignment): array
     {
+        $studentTypeCounts = $this->studentTypeCountsForAssignment($assignment);
+        $hallStudentTypeClassification = $this->hallStudentTypeClassification($studentTypeCounts);
         $subjects = $assignment->assignmentSubjects
             ->map(fn (HallAssignmentSubject $assignmentSubject): array => [
                 'subject_exam_offering_id' => $assignmentSubject->subject_exam_offering_id,
@@ -1158,6 +1702,8 @@ class ExamHallDistributionService
                 'student_number' => $this->sanitizeString($studentAssignment->examStudent?->student_number ?? ''),
                 'full_name' => $this->sanitizeString($studentAssignment->examStudent?->full_name ?? ''),
                 'subject_name' => $this->sanitizeString($studentAssignment->subjectExamOffering?->subject?->name ?? ''),
+                'student_type' => (string) $studentAssignment->examStudent?->getRawOriginal('student_type'),
+                'student_type_label' => $this->studentTypeLabel((string) $studentAssignment->examStudent?->getRawOriginal('student_type')),
             ])
             ->all();
 
@@ -1177,11 +1723,66 @@ class ExamHallDistributionService
             'subjects_count' => count($subjects),
             'subjects' => $subjects,
             'students' => $students,
+            'student_type_counts' => $studentTypeCounts,
+            'regular_students_count' => $studentTypeCounts[ExamStudentType::Regular->value],
+            'carry_students_count' => $studentTypeCounts[ExamStudentType::Carry->value],
+            'hall_student_type_key' => $hallStudentTypeClassification['key'],
+            'hall_student_type_label' => $hallStudentTypeClassification['label'],
             'status_key' => $assignment->remaining_capacity === 0 ? 'full' : 'available',
             'status_label' => $assignment->remaining_capacity === 0
                 ? __('exam.distribution_statuses.full')
                 : __('exam.distribution_statuses.available'),
         ];
+    }
+
+    protected function studentTypeCountsForAssignment(HallAssignment $assignment): array
+    {
+        $counts = [
+            ExamStudentType::Regular->value => 0,
+            ExamStudentType::Carry->value => 0,
+        ];
+
+        foreach ($assignment->studentAssignments as $studentAssignment) {
+            $studentType = (string) $studentAssignment->examStudent?->getRawOriginal('student_type');
+
+            if (array_key_exists($studentType, $counts)) {
+                $counts[$studentType]++;
+            }
+        }
+
+        return $counts;
+    }
+
+    protected function hallStudentTypeClassification(array $studentTypeCounts): array
+    {
+        $regularCount = (int) ($studentTypeCounts[ExamStudentType::Regular->value] ?? 0);
+        $carryCount = (int) ($studentTypeCounts[ExamStudentType::Carry->value] ?? 0);
+
+        $key = match (true) {
+            $carryCount > 0 && $regularCount === 0 => 'carry_only',
+            $regularCount > 0 && $carryCount === 0 => 'regular_only',
+            $regularCount > 0 && $carryCount > 0 => 'mixed',
+            default => 'empty',
+        };
+
+        return [
+            'key' => $key,
+            'label' => match ($key) {
+                'carry_only' => __('exam.global_hall_distribution.hall_classifications.carry_only'),
+                'regular_only' => __('exam.global_hall_distribution.hall_classifications.regular_only'),
+                'mixed' => __('exam.global_hall_distribution.hall_classifications.mixed'),
+                default => __('exam.distribution_statuses.unused'),
+            },
+        ];
+    }
+
+    protected function studentTypeLabel(string $studentType): string
+    {
+        return match ($studentType) {
+            ExamStudentType::Regular->value => __('exam.student_types.regular'),
+            ExamStudentType::Carry->value => __('exam.student_types.carry'),
+            default => __('exam.student_types.unknown'),
+        };
     }
 
     protected function sanitizeSubjectExamOffering(SubjectExamOffering $offering): SubjectExamOffering

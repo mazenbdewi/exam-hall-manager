@@ -306,12 +306,17 @@
                     <span class="pill {{ $hallAssignment['remaining_capacity'] === 0 ? 'danger' : 'success' }}">
                         {{ $hallAssignment['status_label'] }}
                     </span>
+                    <span class="pill {{ $hallAssignment['hall_student_type_key'] === 'mixed' ? 'warning' : 'gray' }}">
+                        {{ $hallAssignment['hall_student_type_label'] }}
+                    </span>
                 </div>
 
                 <div class="hall-meta" style="margin-top: 12px;">
                     <span>{{ __('exam.fields.capacity') }}: {{ $hallAssignment['total_capacity'] }}</span>
                     <span>{{ __('exam.fields.assigned_students') }}: {{ $hallAssignment['assigned_students_count'] }}</span>
                     <span>{{ __('exam.fields.remaining_capacity') }}: {{ $hallAssignment['remaining_capacity'] }}</span>
+                    <span>{{ __('exam.global_hall_distribution.summary.carry_students_count') }}: {{ $hallAssignment['carry_students_count'] }}</span>
+                    <span>{{ __('exam.global_hall_distribution.summary.regular_students_count') }}: {{ $hallAssignment['regular_students_count'] }}</span>
                     <span>نسبة الإشغال: {{ $hallAssignment['usage_percentage'] }}%</span>
                 </div>
 
@@ -335,6 +340,7 @@
                         <tr>
                             <th>{{ __('exam.fields.student_number') }}</th>
                             <th>{{ __('exam.fields.full_name') }}</th>
+                            <th>{{ __('exam.fields.student_type') }}</th>
                             <th>{{ __('exam.fields.subject') }}</th>
                             <th>{{ __('exam.fields.hall_name') }}</th>
                             <th>{{ __('exam.fields.exam_date') }}</th>
@@ -346,6 +352,7 @@
                             <tr>
                                 <td class="ltr">{{ $studentAssignment['student_number'] }}</td>
                                 <td class="student-name">{{ $studentAssignment['full_name'] }}</td>
+                                <td>{{ $studentAssignment['student_type_label'] }}</td>
                                 <td>{{ $studentAssignment['subject_name'] }}</td>
                                 <td>{{ $hallAssignment['hall_name'] }}</td>
                                 <td class="ltr">{{ $summary['exam_date'] }}</td>

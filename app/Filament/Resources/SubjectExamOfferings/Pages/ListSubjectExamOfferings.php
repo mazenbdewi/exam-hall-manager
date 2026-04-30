@@ -85,6 +85,11 @@ class ListSubjectExamOfferings extends ListRecords
                         ->label(__('exam.global_hall_distribution.redistribute_label'))
                         ->helperText(__('exam.global_hall_distribution.redistribute_helper'))
                         ->live(),
+                    Checkbox::make('separate_carry_students')
+                        ->label(__('exam.global_hall_distribution.separate_carry_students_label'))
+                        ->helperText(__('exam.global_hall_distribution.separate_carry_students_helper'))
+                        ->default(false)
+                        ->live(),
                     Checkbox::make('confirmed')
                         ->label(__('exam.global_hall_distribution.confirmation_label'))
                         ->accepted()
@@ -128,6 +133,7 @@ class ListSubjectExamOfferings extends ListRecords
                         fromDate: (string) $data['from_date'],
                         toDate: (string) $data['to_date'],
                         redistribute: (bool) ($data['redistribute'] ?? false),
+                        separateCarryStudents: (bool) ($data['separate_carry_students'] ?? false),
                     );
 
                     app(AuditLogService::class)->log(
@@ -148,6 +154,7 @@ class ListSubjectExamOfferings extends ListRecords
                             'used_halls' => $result['used_halls'] ?? null,
                             'status' => $result['status'] ?? null,
                             'run_id' => $result['run_id'] ?? null,
+                            'separate_carry_students' => (bool) ($data['separate_carry_students'] ?? false),
                         ],
                         status: match ($result['status'] ?? 'failed') {
                             'success' => 'success',
@@ -235,6 +242,8 @@ class ListSubjectExamOfferings extends ListRecords
             __('exam.global_hall_distribution.summary.distributed_slots_count').': '.($result['distributed_slots_count'] ?? 0),
             __('exam.global_hall_distribution.summary.skipped_slots_count').': '.($result['skipped_slots_count'] ?? 0),
             __('exam.global_hall_distribution.summary.issue_slots_count').': '.($result['issue_slots_count'] ?? 0),
+            __('exam.global_hall_distribution.summary.separate_carry_students').': '.((bool) ($result['separate_carry_students'] ?? false) ? 'نعم' : 'لا'),
+            (bool) ($result['separate_carry_students'] ?? false) ? ($result['separation_status_message'] ?? null) : null,
         ])->implode(' | ');
     }
 
