@@ -70,10 +70,6 @@ class ExamScheduleGenerator extends Page
         ['name' => 'الفترة الثالثة', 'start_time' => '15:00', 'end_time' => '17:00', 'period_type' => 'evening'],
     ];
 
-    public int $break_minutes = 30;
-
-    public int $default_exam_duration_minutes = 120;
-
     public bool $prevent_same_day = false;
 
     public string $approval_existing_strategy = 'create_missing';
@@ -270,16 +266,34 @@ class ExamScheduleGenerator extends Page
         $this->authorizeGeneratorAction('update_exam_schedule_draft');
 
         $item = $this->draftItem($itemId);
+        $metadata = $item->metadata ?? [];
+        $isPinned = (bool) ($metadata['pinned'] ?? false);
+
+        if ($isPinned) {
+            unset($metadata['pinned'], $metadata['pinned_at'], $metadata['pinned_by']);
+
+            $item->update(['metadata' => $metadata]);
+            $this->refreshDraftState();
+
+            Notification::make()
+                ->title('تم إلغاء تثبيت موعد المادة')
+                ->success()
+                ->send();
+
+            return;
+        }
+
         $item->update([
-            'metadata' => array_merge($item->metadata ?? [], [
+            'metadata' => array_merge($metadata, [
                 'pinned' => true,
                 'pinned_at' => now()->toDateTimeString(),
                 'pinned_by' => auth()->id(),
             ]),
         ]);
+        $this->refreshDraftState();
 
         Notification::make()
-            ->title('تم تثبيت المادة في موعدها الحالي')
+            ->title('تم تثبيت موعد المادة بنجاح')
             ->success()
             ->send();
     }
@@ -478,7 +492,19 @@ class ExamScheduleGenerator extends Page
     {
         $draft = $this->currentDraft();
 
-        return $draft ? $this->filteredItems($draft->items)->sortBy([['exam_date', 'asc'], ['start_time', 'asc'], ['subject.name', 'asc']])->values() : collect();
+        $items = $draft ? $this->filteredItems($draft->items)->sortBy([['exam_date', 'asc'], ['start_time', 'asc'], ['subject.name', 'asc']])->values() : collect();
+
+        $items->each(function (ExamScheduleDraftItem $item): void {
+            logger()->info('Manual adjustment row', [
+                'item_id' => $item->id,
+                'subject_id' => $item->subject_id,
+                'subject_name' => $item->subject?->name,
+                'exam_date' => $item->exam_date?->toDateString(),
+                'item_edit_exam_date' => $this->itemEdits[$item->id]['exam_date'] ?? null,
+            ]);
+        });
+
+        return $items;
     }
 
     public function unscheduledDraftItems(): Collection
@@ -592,8 +618,7 @@ class ExamScheduleGenerator extends Page
             'excluded_weekdays' => $this->excluded_weekdays,
             'holidays' => $this->parsedHolidays(),
             'periods' => $this->activePeriods(),
-            'break_minutes' => $this->break_minutes,
-            'default_exam_duration_minutes' => $this->default_exam_duration_minutes,
+            'previous_draft_id' => $this->draft_id,
             'prevent_same_day' => $this->prevent_same_day,
         ];
     }
@@ -721,6 +746,48 @@ class ExamScheduleGenerator extends Page
         return collect($this->periods)
             ->take(max(1, min(3, $this->period_count)))
             ->values()
+            ->all();
+    }
+
+    public function periodTimingPreview(): array
+    {
+        $periods = collect($this->activePeriods())
+            ->map(function (array $period, int $index): array {
+                $start = $this->timeString($period['start_time'] ?? null);
+                $end = $this->timeString($period['end_time'] ?? null);
+                $duration = null;
+
+                if ($start && $end) {
+                    $startTime = Carbon::parse($start);
+                    $endTime = Carbon::parse($end);
+                    $duration = $endTime->gt($startTime) ? (int) $startTime->diffInMinutes($endTime) : null;
+                }
+
+                return [
+                    'index' => $index,
+                    'name' => filled($period['name'] ?? null) ? (string) $period['name'] : 'الفترة '.($index + 1),
+                    'start_time' => $start,
+                    'end_time' => $end,
+                    'duration_minutes' => $duration,
+                    'break_after_minutes' => null,
+                ];
+            })
+            ->values();
+
+        return $periods
+            ->map(function (array $period, int $index) use ($periods): array {
+                $next = $periods->get($index + 1);
+
+                if ($next && filled($period['end_time']) && filled($next['start_time'])) {
+                    $endTime = Carbon::parse($period['end_time']);
+                    $nextStartTime = Carbon::parse($next['start_time']);
+                    $period['break_after_minutes'] = $nextStartTime->gte($endTime)
+                        ? (int) $endTime->diffInMinutes($nextStartTime)
+                        : null;
+                }
+
+                return $period;
+            })
             ->all();
     }
 

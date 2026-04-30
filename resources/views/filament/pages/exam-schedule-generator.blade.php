@@ -291,15 +291,32 @@
                     @endforeach
                 </div>
 
+                <div class="mt-4 overflow-hidden rounded-md border border-gray-200 text-sm dark:border-white/10">
+                    <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                        <thead class="bg-gray-50 text-gray-600 dark:bg-white/5 dark:text-gray-300">
+                            <tr>
+                                <th class="px-3 py-2 text-right">الفترة</th>
+                                <th class="px-3 py-2 text-right">مدة الامتحان</th>
+                                <th class="px-3 py-2 text-right">الاستراحة بعدها</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 dark:divide-white/5">
+                            @foreach ($this->periodTimingPreview() as $period)
+                                <tr>
+                                    <td class="px-3 py-2 font-medium text-gray-950 dark:text-white">{{ $period['name'] }}</td>
+                                    <td class="px-3 py-2">
+                                        {{ filled($period['duration_minutes']) ? $period['duration_minutes'].' دقيقة' : 'راجع وقت البداية والنهاية' }}
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        {{ filled($period['break_after_minutes']) ? $period['break_after_minutes'].' دقيقة' : '—' }}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+
                 <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                    <label class="space-y-1">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">مدة الاستراحة بين الفترات</span>
-                        <input type="number" min="0" wire:model.live="break_minutes" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
-                    </label>
-                    <label class="space-y-1">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">مدة الامتحان الافتراضية</span>
-                        <input type="number" min="30" wire:model.live="default_exam_duration_minutes" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
-                    </label>
                     <label class="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/10">
                         <input type="checkbox" wire:model.live="prevent_same_day" class="rounded border-gray-300 text-primary-600">
                         <span>منع مادتين في نفس اليوم لنفس الطالب</span>
@@ -618,7 +635,7 @@
                                     <td class="px-3 py-2">{{ $item->subject?->department?->name }}</td>
                                     <td class="px-3 py-2">{{ $item->subject?->studyLevel?->name }}</td>
                                     <td class="px-3 py-2">
-                                        <div class="w-36" x-data="generatorDatePicker(@entangle('itemEdits.' . $item->id . '.exam_date').defer)">
+                                        <div class="w-36" x-data="generatorDatePicker(@entangle('itemEdits.' . $item->id . '.exam_date').defer, @js($item->exam_date?->toDateString()))">
                                             <div class="relative">
                                                 <input
                                                     x-ref="native"
@@ -661,8 +678,19 @@
                                     <td class="max-w-xs whitespace-pre-line px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ $item->conflict_notes ?: '—' }}</td>
                                     <td class="px-3 py-2">
                                         <div class="flex flex-wrap gap-1">
+                                            @php
+                                                $isPinned = (bool) (($item->metadata ?? [])['pinned'] ?? false);
+                                            @endphp
                                             <x-filament::button size="xs" icon="heroicon-o-pencil-square" wire:click="updateDraftItem({{ $item->id }})">تغيير الموعد</x-filament::button>
-                                            <x-filament::button size="xs" color="gray" icon="heroicon-o-lock-closed" wire:click="pinDraftItem({{ $item->id }})">تثبيت</x-filament::button>
+                                            <x-filament::button
+                                                size="xs"
+                                                :color="$isPinned ? 'success' : 'gray'"
+                                                :icon="$isPinned ? 'heroicon-o-check-circle' : 'heroicon-o-lock-closed'"
+                                                wire:click="pinDraftItem({{ $item->id }})"
+                                                :tooltip="$isPinned ? 'هذا الموعد مثبت ولن يتغير عند إعادة التوليد' : 'تثبيت هذا الموعد عند إعادة التوليد'"
+                                            >
+                                                {{ $isPinned ? 'مثبت' : 'تثبيت' }}
+                                            </x-filament::button>
                                             <x-filament::button size="xs" color="danger" icon="heroicon-o-x-circle" wire:click="cancelDraftItem({{ $item->id }})">إلغاء</x-filament::button>
                                         </div>
                                     </td>
@@ -693,10 +721,16 @@
 
     <script>
         document.addEventListener('alpine:init', () => {
-            Alpine.data('generatorDatePicker', (value = '') => ({
+            Alpine.data('generatorDatePicker', (value = '', initialValue = '') => ({
                 value,
+                initialValue,
+                init() {
+                    if (! this.formatDate(this.value) && this.initialValue) {
+                        this.value = this.initialValue;
+                    }
+                },
                 get formattedValue() {
-                    return this.formatDate(this.value);
+                    return this.formatDate(this.value) || this.formatDate(this.initialValue);
                 },
                 formatDate(date) {
                     if (! date) {

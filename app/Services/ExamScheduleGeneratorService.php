@@ -60,6 +60,15 @@ class ExamScheduleGeneratorService
             $dayLoads = [];
             $academicAssignments = [];
             $studentAssignments = [];
+            $pinnedRosterIds = $this->copyPinnedItemsFromPreviousDraft(
+                draft: $draft,
+                settings: $settings,
+                slotLoads: $slotLoads,
+                dayLoads: $dayLoads,
+                academicAssignments: $academicAssignments,
+                studentAssignments: $studentAssignments,
+            );
+            $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
 
             foreach ($units->sortByDesc(fn (array $unit): int => count($unit['subjects']))->values() as $unit) {
                 $choice = $this->chooseSlot($unit, $slots, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments, $settings);
@@ -454,12 +463,16 @@ class ExamScheduleGeneratorService
             ];
         }
 
+        $this->validatePeriods($periods);
+        $periods = $this->withDerivedPeriodTiming($periods);
+
         return [
             'faculty_id' => $settings['faculty_id'] ?? $settings['college_id'] ?? null,
             'academic_year_id' => filled($settings['academic_year_id'] ?? null) ? (int) $settings['academic_year_id'] : null,
             'semester_id' => filled($settings['semester_id'] ?? null) ? (int) $settings['semester_id'] : null,
             'study_level_id' => filled($settings['study_level_id'] ?? null) ? (int) $settings['study_level_id'] : null,
             'department_id' => filled($settings['department_id'] ?? null) ? (int) $settings['department_id'] : null,
+            'previous_draft_id' => filled($settings['previous_draft_id'] ?? null) ? (int) $settings['previous_draft_id'] : null,
             'start_date' => Carbon::parse($settings['start_date'] ?? now())->toDateString(),
             'end_date' => Carbon::parse($settings['end_date'] ?? $settings['start_date'] ?? now())->toDateString(),
             'excluded_weekdays' => collect($settings['excluded_weekdays'] ?? [5, 6])->map(fn ($day): int => (int) $day)->unique()->values()->all(),
@@ -474,10 +487,81 @@ class ExamScheduleGeneratorService
                 ->values()
                 ->all(),
             'periods' => $periods,
-            'break_minutes' => (int) ($settings['break_minutes'] ?? 30),
-            'default_exam_duration_minutes' => (int) ($settings['default_exam_duration_minutes'] ?? 120),
             'prevent_same_day' => (bool) ($settings['prevent_same_day'] ?? false),
         ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $periods
+     */
+    protected function validatePeriods(array $periods): void
+    {
+        $periodsByStartTime = collect($periods)
+            ->map(function (array $period, int $index): array {
+                $start = Carbon::parse($period['start_time']);
+                $end = Carbon::parse($period['end_time']);
+                $name = filled($period['name'] ?? null) ? (string) $period['name'] : 'الفترة '.($index + 1);
+
+                if ($end->lte($start)) {
+                    throw ValidationException::withMessages([
+                        "periods.{$index}.end_time" => "وقت نهاية {$name} يجب أن يكون بعد وقت البداية.",
+                    ]);
+                }
+
+                return [
+                    'index' => $index,
+                    'name' => $name,
+                    'start' => $start,
+                    'end' => $end,
+                ];
+            })
+            ->sortBy(fn (array $period): int => $this->timeInSeconds($period['start']))
+            ->values();
+
+        $previous = null;
+
+        foreach ($periodsByStartTime as $period) {
+            if ($previous && $period['start']->lt($previous['end'])) {
+                throw ValidationException::withMessages([
+                    "periods.{$period['index']}.start_time" => "{$period['name']} تتداخل مع {$previous['name']}. عدّل أوقات الفترات بحيث لا تتقاطع.",
+                ]);
+            }
+
+            $previous = $period;
+        }
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $periods
+     * @return array<int, array<string, mixed>>
+     */
+    protected function withDerivedPeriodTiming(array $periods): array
+    {
+        $periodsByStartTime = collect($periods)
+            ->sortBy(fn (array $period): int => $this->timeInSeconds(Carbon::parse($period['start_time'])))
+            ->values();
+
+        return $periodsByStartTime
+            ->map(function (array $period, int $index) use ($periodsByStartTime): array {
+                $start = Carbon::parse($period['start_time']);
+                $end = Carbon::parse($period['end_time']);
+                $next = $periodsByStartTime->get($index + 1);
+
+                return $period + [
+                    'duration_minutes' => (int) $start->diffInMinutes($end),
+                    'break_after_minutes' => $next
+                        ? (int) $end->diffInMinutes(Carbon::parse($next['start_time']))
+                        : null,
+                ];
+            })
+            ->all();
+    }
+
+    protected function timeInSeconds(CarbonInterface $time): int
+    {
+        return (((int) $time->format('H')) * 3600)
+            + (((int) $time->format('i')) * 60)
+            + ((int) $time->format('s'));
     }
 
     /**
@@ -507,6 +591,149 @@ class ExamScheduleGeneratorService
         }
 
         return $slots;
+    }
+
+    /**
+     * @param  array<string, int>  $slotLoads
+     * @param  array<string, int>  $dayLoads
+     * @param  array<string, array<int, array<string, mixed>>>  $academicAssignments
+     * @param  array<string, array<int, array<string, mixed>>>  $studentAssignments
+     * @return array<int>
+     */
+    protected function copyPinnedItemsFromPreviousDraft(
+        ExamScheduleDraft $draft,
+        array $settings,
+        array &$slotLoads,
+        array &$dayLoads,
+        array &$academicAssignments,
+        array &$studentAssignments,
+    ): array {
+        if (blank($settings['previous_draft_id'] ?? null)) {
+            return [];
+        }
+
+        $previousDraft = ExamScheduleDraft::query()
+            ->with(['items.subject.department', 'items.subject.studyLevel'])
+            ->whereKey($settings['previous_draft_id'])
+            ->where('faculty_id', $settings['faculty_id'])
+            ->where('academic_year_id', $settings['academic_year_id'])
+            ->where('semester_id', $settings['semester_id'])
+            ->first();
+
+        if (! $previousDraft) {
+            return [];
+        }
+
+        $pinnedRosterIds = [];
+
+        foreach ($previousDraft->items as $item) {
+            if (! (bool) (($item->metadata ?? [])['pinned'] ?? false)) {
+                continue;
+            }
+
+            $metadata = array_merge($item->metadata ?? [], [
+                'pinned' => true,
+                'carried_from_draft_item_id' => $item->id,
+                'carried_from_draft_id' => $previousDraft->id,
+            ]);
+
+            $copiedItem = $draft->items()->create([
+                'source_roster_id' => $item->source_roster_id,
+                'subject_id' => $item->subject_id,
+                'department_id' => $item->department_id,
+                'exam_date' => $item->exam_date?->toDateString(),
+                'start_time' => $this->timeString($item->start_time),
+                'end_time' => $this->timeString($item->end_time),
+                'period_type' => $item->period_type,
+                'student_count' => $item->student_count,
+                'regular_count' => $item->regular_count,
+                'carry_count' => $item->carry_count,
+                'is_shared_subject' => $item->is_shared_subject,
+                'is_core_subject' => $item->is_core_subject,
+                'shared_group_key' => $item->shared_group_key,
+                'status' => $item->status === 'unscheduled' ? 'manually_adjusted' : $item->status,
+                'conflict_notes' => $item->conflict_notes,
+                'metadata' => $metadata,
+            ]);
+
+            if (filled($item->source_roster_id)) {
+                $pinnedRosterIds[] = (int) $item->source_roster_id;
+            }
+
+            $this->reservePinnedItemSlot($copiedItem, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments);
+        }
+
+        return array_values(array_unique($pinnedRosterIds));
+    }
+
+    /**
+     * @param  array<string, int>  $slotLoads
+     * @param  array<string, int>  $dayLoads
+     * @param  array<string, array<int, array<string, mixed>>>  $academicAssignments
+     * @param  array<string, array<int, array<string, mixed>>>  $studentAssignments
+     */
+    protected function reservePinnedItemSlot(
+        ExamScheduleDraftItem $item,
+        array &$slotLoads,
+        array &$dayLoads,
+        array &$academicAssignments,
+        array &$studentAssignments,
+    ): void {
+        $date = $item->exam_date?->toDateString();
+        $startTime = $this->timeString($item->start_time);
+
+        if (blank($date) || blank($startTime)) {
+            return;
+        }
+
+        $slotKey = $date.'|'.$startTime;
+        $slotLoads[$slotKey] = ($slotLoads[$slotKey] ?? 0) + 1;
+        $dayLoads[$date] = ($dayLoads[$date] ?? 0) + 1;
+
+        $academicAssignments[$this->academicGroupKeyForItem($item)][] = [
+            'date' => $date,
+            'start_time' => $startTime,
+            'shared_group_key' => $item->shared_group_key,
+        ];
+
+        foreach ($this->studentNumbersForItem($item) as $studentNumber) {
+            $studentAssignments[$studentNumber][] = [
+                'date' => $date,
+                'start_time' => $startTime,
+                'shared_group_key' => $item->shared_group_key,
+            ];
+        }
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $units
+     * @param  array<int>  $pinnedRosterIds
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function withoutPinnedSubjects(Collection $units, array $pinnedRosterIds): Collection
+    {
+        if ($pinnedRosterIds === []) {
+            return $units;
+        }
+
+        return $units
+            ->map(function (array $unit) use ($pinnedRosterIds): ?array {
+                $subjects = collect($unit['subjects'])
+                    ->reject(fn (array $payload): bool => in_array((int) $payload['roster']->id, $pinnedRosterIds, true))
+                    ->values();
+
+                if ($subjects->isEmpty()) {
+                    return null;
+                }
+
+                return $this->unitFromPayloads(
+                    $subjects,
+                    $unit['shared_group_key'] ?? null,
+                    $unit['shared_subject_scheduling_mode'] ?? 'single',
+                );
+            })
+            ->filter()
+            ->values();
     }
 
     /**
