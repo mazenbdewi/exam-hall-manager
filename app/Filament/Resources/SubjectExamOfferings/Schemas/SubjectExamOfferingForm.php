@@ -78,7 +78,9 @@ class SubjectExamOfferingForm
                         DatePicker::make('exam_date')
                             ->label(__('exam.fields.exam_date'))
                             ->required()
-                            ->native(false),
+                            ->native(false)
+                            ->displayFormat('d/m/Y')
+                            ->format('Y-m-d'),
                         TimePicker::make('exam_start_time')
                             ->label(__('exam.fields.exam_start_time'))
                             ->required()

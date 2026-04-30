@@ -21,6 +21,9 @@ use App\Models\User;
 use App\Observers\AuditModelObserver;
 use App\Support\AdminPassword;
 use Carbon\Carbon;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\DateTimePicker;
+use Filament\Support\Facades\FilamentTimezone;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -43,10 +46,34 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Carbon::setLocale(config('app.locale'));
+        $this->configureFilamentDateComponents();
 
         Password::defaults(fn () => AdminPassword::rule());
 
         $this->registerAuditObservers();
+
+        FilamentTimezone::set('Asia/Damascus');
+
+    }
+
+    protected function configureFilamentDateComponents(): void
+    {
+        DatePicker::configureUsing(function (DatePicker $component): void {
+            $component
+                ->native(false)
+                ->displayFormat('d/m/Y')
+                ->format('Y-m-d')
+                ->placeholder('dd/mm/yyyy');
+        });
+
+        DateTimePicker::configureUsing(function (DateTimePicker $component): void {
+            $component
+                ->native(false)
+                ->displayFormat('d/m/Y H:i')
+                ->format('Y-m-d H:i:s')
+                ->seconds(false)
+                ->placeholder('dd/mm/yyyy hh:mm');
+        });
     }
 
     protected function registerAuditObservers(): void

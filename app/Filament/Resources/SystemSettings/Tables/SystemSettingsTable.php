@@ -22,7 +22,7 @@ class SystemSettingsTable
                     ->searchable(),
                 TextColumn::make('updated_at')
                     ->label(__('exam.fields.updated_at'))
-                    ->dateTime('Y-m-d H:i'),
+                    ->dateTime('d/m/Y H:i'),
             ])
             ->recordActions([
                 EditAction::make(),

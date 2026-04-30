@@ -37,7 +37,7 @@ class AuditLogResource extends Resource
             ->columns([
                 TextColumn::make('created_at')
                     ->label('التاريخ والوقت')
-                    ->dateTime('Y-m-d H:i:s')
+                    ->dateTime('d/m/Y H:i')
                     ->sortable(),
                 TextColumn::make('user_name')
                     ->label('المستخدم')
@@ -116,9 +116,15 @@ class AuditLogResource extends Resource
                     ->label('تاريخ التنفيذ')
                     ->schema([
                         DatePicker::make('from')
-                            ->label('التاريخ من'),
+                            ->label('التاريخ من')
+                            ->native(false)
+                            ->displayFormat('d/m/Y')
+                            ->format('Y-m-d'),
                         DatePicker::make('until')
-                            ->label('التاريخ إلى'),
+                            ->label('التاريخ إلى')
+                            ->native(false)
+                            ->displayFormat('d/m/Y')
+                            ->format('Y-m-d'),
                     ])
                     ->query(fn (Builder $query, array $data): Builder => $query
                         ->when($data['from'] ?? null, fn (Builder $query, string $date): Builder => $query->whereDate('created_at', '>=', $date))
@@ -189,7 +195,7 @@ class AuditLogResource extends Resource
             Section::make('معلومات العملية')
                 ->columns(3)
                 ->schema([
-                    TextEntry::make('created_at')->label('تاريخ التنفيذ')->dateTime('Y-m-d H:i:s'),
+                    TextEntry::make('created_at')->label('تاريخ التنفيذ')->dateTime('d/m/Y H:i'),
                     TextEntry::make('user_name')->label('المستخدم')->placeholder('-'),
                     TextEntry::make('user_email')->label('البريد الإلكتروني')->placeholder('-'),
                     TextEntry::make('action')->label('العملية')->badge(),

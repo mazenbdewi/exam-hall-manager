@@ -104,15 +104,16 @@
                     </select>
                 </label>
 
-                <label class="space-y-1" x-data="nativeDatePicker(@entangle('start_date').live)">
+                <label class="space-y-1" x-data="generatorDatePicker(@entangle('start_date').live)">
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-200">تاريخ بداية الامتحانات</span>
                     <div class="relative">
                         <input
                             x-ref="native"
                             x-model="value"
                             type="date"
-                            class="pointer-events-none absolute inset-0 opacity-0"
+                            style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%);"
                             tabindex="-1"
+                            aria-hidden="true"
                         >
                         <input
                             type="text"
@@ -134,15 +135,16 @@
                     </div>
                 </label>
 
-                <label class="space-y-1" x-data="nativeDatePicker(@entangle('end_date').live)">
+                <label class="space-y-1" x-data="generatorDatePicker(@entangle('end_date').live)">
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-200">تاريخ نهاية الامتحانات</span>
                     <div class="relative">
                         <input
                             x-ref="native"
                             x-model="value"
                             type="date"
-                            class="pointer-events-none absolute inset-0 opacity-0"
+                            style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%);"
                             tabindex="-1"
+                            aria-hidden="true"
                         >
                         <input
                             type="text"
@@ -201,7 +203,7 @@
                         <div class="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
                             <label
                                 class="space-y-1"
-                                x-data="nativeDatePicker(@entangle('specific_holidays.' . $index . '.date').live)"
+                                x-data="generatorDatePicker(@entangle('specific_holidays.' . $index . '.date').live)"
                             >
                                 <span class="text-xs text-gray-500 dark:text-gray-400">التاريخ</span>
                                 <div class="relative">
@@ -209,8 +211,9 @@
                                         x-ref="native"
                                         x-model="value"
                                         type="date"
-                                        class="pointer-events-none absolute inset-0 opacity-0"
+                                        style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%);"
                                         tabindex="-1"
+                                        aria-hidden="true"
                                     >
                                     <input
                                         type="text"
@@ -437,9 +440,35 @@
                 </div>
 
                 <div class="mb-4 grid gap-3 md:grid-cols-4">
-                    <label class="space-y-1">
+                    <label class="space-y-1" x-data="generatorDatePicker(@entangle('active_week_start').live)">
                         <span class="text-sm font-medium text-gray-700 dark:text-gray-200">الأسبوع</span>
-                        <input type="date" wire:model.live="active_week_start" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
+                        <div class="relative">
+                            <input
+                                x-ref="native"
+                                x-model="value"
+                                type="date"
+                                style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%);"
+                                tabindex="-1"
+                                aria-hidden="true"
+                            >
+                            <input
+                                type="text"
+                                :value="formattedValue"
+                                placeholder="dd/mm/yyyy"
+                                readonly
+                                dir="ltr"
+                                @click="openPicker()"
+                                class="w-full cursor-pointer rounded-md border-gray-300 pe-10 dark:border-white/10 dark:bg-gray-800"
+                            >
+                            <button
+                                type="button"
+                                @click="openPicker()"
+                                class="absolute inset-y-0 left-0 flex items-center px-3 text-gray-500 dark:text-gray-400"
+                                aria-label="فتح التقويم"
+                            >
+                                <x-filament::icon icon="heroicon-o-calendar-days" class="h-5 w-5" />
+                            </button>
+                        </div>
                     </label>
                     <label class="space-y-1">
                         <span class="text-sm font-medium text-gray-700 dark:text-gray-200">القسم</span>
@@ -589,7 +618,35 @@
                                     <td class="px-3 py-2">{{ $item->subject?->department?->name }}</td>
                                     <td class="px-3 py-2">{{ $item->subject?->studyLevel?->name }}</td>
                                     <td class="px-3 py-2">
-                                        <input type="date" wire:model.defer="itemEdits.{{ $item->id }}.exam_date" class="w-36 rounded-md border-gray-300 text-sm dark:border-white/10 dark:bg-gray-800">
+                                        <div class="w-36" x-data="generatorDatePicker(@entangle('itemEdits.' . $item->id . '.exam_date').defer)">
+                                            <div class="relative">
+                                                <input
+                                                    x-ref="native"
+                                                    x-model="value"
+                                                    type="date"
+                                                    style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%);"
+                                                    tabindex="-1"
+                                                    aria-hidden="true"
+                                                >
+                                                <input
+                                                    type="text"
+                                                    :value="formattedValue"
+                                                    placeholder="dd/mm/yyyy"
+                                                    readonly
+                                                    dir="ltr"
+                                                    @click="openPicker()"
+                                                    class="w-full cursor-pointer rounded-md border-gray-300 pe-10 text-sm dark:border-white/10 dark:bg-gray-800"
+                                                >
+                                                <button
+                                                    type="button"
+                                                    @click="openPicker()"
+                                                    class="absolute inset-y-0 left-0 flex items-center px-2 text-gray-500 dark:text-gray-400"
+                                                    aria-label="فتح التقويم"
+                                                >
+                                                    <x-filament::icon icon="heroicon-o-calendar-days" class="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </td>
                                     <td class="px-3 py-2">
                                         <select wire:model.defer="itemEdits.{{ $item->id }}.period_key" class="w-40 rounded-md border-gray-300 text-sm dark:border-white/10 dark:bg-gray-800">
@@ -636,7 +693,7 @@
 
     <script>
         document.addEventListener('alpine:init', () => {
-            Alpine.data('nativeDatePicker', (value = '') => ({
+            Alpine.data('generatorDatePicker', (value = '') => ({
                 value,
                 get formattedValue() {
                     return this.formatDate(this.value);

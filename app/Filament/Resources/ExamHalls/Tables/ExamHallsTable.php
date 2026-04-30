@@ -69,7 +69,7 @@ class ExamHallsTable
                     ->sortable(),
                 TextColumn::make('created_at')
                     ->label(__('exam.fields.created_at'))
-                    ->dateTime('Y-m-d H:i')
+                    ->dateTime('d/m/Y H:i')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])

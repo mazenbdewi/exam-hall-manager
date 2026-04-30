@@ -71,7 +71,7 @@ class SubjectExamRostersTable
                     }),
                 TextColumn::make('updated_at')
                     ->label('تاريخ آخر تعديل')
-                    ->dateTime()
+                    ->dateTime('d/m/Y H:i')
                     ->sortable(),
             ])
             ->filters([

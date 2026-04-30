@@ -75,10 +75,16 @@ class ListSubjectExamOfferings extends ListRecords
                     DatePicker::make('from_date')
                         ->label(__('exam.fields.from_date'))
                         ->required()
+                        ->native(false)
+                        ->displayFormat('d/m/Y')
+                        ->format('Y-m-d')
                         ->live(),
                     DatePicker::make('to_date')
                         ->label(__('exam.fields.to_date'))
                         ->required()
+                        ->native(false)
+                        ->displayFormat('d/m/Y')
+                        ->format('Y-m-d')
                         ->live()
                         ->afterOrEqual('from_date'),
                     Checkbox::make('redistribute')
