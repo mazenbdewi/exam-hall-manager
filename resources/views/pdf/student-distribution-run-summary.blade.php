@@ -19,6 +19,7 @@
 <body>
     @php
         $runPeriod = __('exam.fields.period').': '.($run->from_date?->format('Y-m-d') ?? '—').' - '.($run->to_date?->format('Y-m-d') ?? '—');
+        $validation = $summary['validation'] ?? [];
         $problemSlots = collect($summary['unassigned_by_slot'] ?? [])
             ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0
                 || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0
@@ -69,6 +70,12 @@
                 <td>{{ $run->capacity_shortage }}</td>
             </tr>
             <tr>
+                <th>{{ __('exam.global_hall_distribution.summary.remaining_capacity') }}</th>
+                <td>{{ $validation['remaining_capacity'] ?? 0 }}</td>
+                <th>{{ __('exam.global_hall_distribution.validation.data_source') }}</th>
+                <td>{{ $validation['data_source'] ?? '—' }}</td>
+            </tr>
+            <tr>
                 <th>{{ __('exam.global_hall_distribution.summary.separate_carry_students') }}</th>
                 <td>{{ (bool) ($summary['separate_carry_students'] ?? false) ? 'نعم' : 'لا' }}</td>
                 <th>{{ __('exam.global_hall_distribution.summary.mixing_cases_count') }}</th>
@@ -85,6 +92,30 @@
                 <td>{{ $summary['carry_halls_count'] ?? 0 }}</td>
                 <th>{{ __('exam.global_hall_distribution.summary.regular_halls_count') }}</th>
                 <td>{{ $summary['regular_halls_count'] ?? 0 }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>{{ __('exam.global_hall_distribution.validation_summary_title') }}</h3>
+    <table class="grid">
+        <tbody>
+            <tr>
+                <th>{{ __('exam.global_hall_distribution.validation.expected_students') }}</th>
+                <td>{{ $validation['expected_students'] ?? $run->total_students }}</td>
+                <th>{{ __('exam.global_hall_distribution.validation.assigned_students') }}</th>
+                <td>{{ $validation['assigned_students'] ?? $run->distributed_students }}</td>
+            </tr>
+            <tr>
+                <th>{{ __('exam.global_hall_distribution.validation.unassigned_students') }}</th>
+                <td>{{ $validation['unassigned_students'] ?? $run->unassigned_students }}</td>
+                <th>{{ __('exam.global_hall_distribution.validation.used_hall_capacity') }}</th>
+                <td>{{ $validation['used_hall_capacity'] ?? 0 }}</td>
+            </tr>
+            <tr>
+                <th>{{ __('exam.global_hall_distribution.validation.remaining_capacity') }}</th>
+                <td>{{ $validation['remaining_capacity'] ?? 0 }}</td>
+                <th>{{ __('exam.global_hall_distribution.summary.used_halls_count') }}</th>
+                <td>{{ $validation['used_halls_count'] ?? $run->used_halls }}</td>
             </tr>
         </tbody>
     </table>

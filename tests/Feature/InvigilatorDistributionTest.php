@@ -48,6 +48,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Tests\TestCase;
 
 class InvigilatorDistributionTest extends TestCase
@@ -989,6 +990,113 @@ class InvigilatorDistributionTest extends TestCase
             ->assertSee('ملخص المواعيد الامتحانية')
             ->assertSee('لا توجد مشاكل مسجلة ضمن هذا التصنيف.')
             ->assertDontSee('لا توجد قاعات متاحة');
+    }
+
+    #[Test]
+    public function global_distribution_results_page_disables_unassigned_exports_when_saved_validation_has_zero_unassigned(): void
+    {
+        $context = $this->createSlotContext();
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $run = StudentDistributionRun::query()->create([
+            'college_id' => $context['college']->id,
+            'from_date' => '2026-06-01',
+            'to_date' => '2026-06-01',
+            'status' => 'success',
+            'total_offerings' => 1,
+            'total_slots' => 1,
+            'total_students' => 4,
+            'distributed_students' => 4,
+            'unassigned_students' => 0,
+            'total_capacity' => 20,
+            'used_halls' => 1,
+            'capacity_shortage' => 0,
+            'executed_by' => $user->id,
+            'executed_at' => now(),
+            'summary_json' => [
+                'validation' => [
+                    'expected_students' => 4,
+                    'assigned_students' => 4,
+                    'unassigned_students' => 0,
+                    'used_halls_count' => 1,
+                    'used_hall_capacity' => 20,
+                    'remaining_capacity' => 16,
+                    'data_source' => 'student_distribution_runs.summary_json.validation',
+                    'unassigned_students_list' => [],
+                ],
+            ],
+        ]);
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(GlobalDistributionResults::class, ['run' => $run])
+            ->assertSee(__('exam.global_hall_distribution.unassigned_report_not_needed'))
+            ->assertSeeHtml('disabled');
+
+        $page = app(GlobalDistributionResults::class);
+        $page->mount($run);
+
+        $this->assertSame(0, $page->savedUnassignedStudentsCount());
+        $this->assertFalse($page->canExportUnassignedReports());
+        $this->assertNull($page->exportUnassignedPdf());
+        $this->assertNull($page->exportUnassignedExcel());
+    }
+
+    #[Test]
+    public function global_distribution_results_page_keeps_unassigned_exports_enabled_when_saved_validation_has_students(): void
+    {
+        $context = $this->createSlotContext();
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $run = StudentDistributionRun::query()->create([
+            'college_id' => $context['college']->id,
+            'from_date' => '2026-06-01',
+            'to_date' => '2026-06-01',
+            'status' => 'partial',
+            'total_offerings' => 1,
+            'total_slots' => 1,
+            'total_students' => 10,
+            'distributed_students' => 8,
+            'unassigned_students' => 2,
+            'total_capacity' => 8,
+            'used_halls' => 1,
+            'capacity_shortage' => 2,
+            'executed_by' => $user->id,
+            'executed_at' => now(),
+            'summary_json' => [
+                'validation' => [
+                    'expected_students' => 10,
+                    'assigned_students' => 8,
+                    'unassigned_students' => 2,
+                    'used_halls_count' => 1,
+                    'used_hall_capacity' => 8,
+                    'remaining_capacity' => 0,
+                    'data_source' => 'student_distribution_runs.summary_json.validation',
+                    'unassigned_students_list' => [
+                        ['student_number' => '2026001', 'full_name' => 'طالب 1', 'student_type_label' => 'مستجد', 'subject_name' => 'تحليل', 'exam_date' => '2026-06-01', 'start_time' => '09:00', 'reason' => 'يوجد طلاب غير موزعين يحتاجون إلى مراجعة'],
+                        ['student_number' => '2026002', 'full_name' => 'طالب 2', 'student_type_label' => 'مستجد', 'subject_name' => 'تحليل', 'exam_date' => '2026-06-01', 'start_time' => '09:00', 'reason' => 'يوجد طلاب غير موزعين يحتاجون إلى مراجعة'],
+                    ],
+                ],
+            ],
+        ]);
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(GlobalDistributionResults::class, ['run' => $run])
+            ->assertSee(__('exam.actions.export_unassigned_students_pdf'))
+            ->assertSee(__('exam.actions.export_unassigned_students_excel'))
+            ->assertSee('(2)');
+
+        $page = app(GlobalDistributionResults::class);
+        $page->mount($run);
+
+        $this->assertSame(2, $page->savedUnassignedStudentsCount());
+        $this->assertTrue($page->canExportUnassignedReports());
+        $this->assertInstanceOf(StreamedResponse::class, $page->exportUnassignedPdf());
     }
 
     #[Test]

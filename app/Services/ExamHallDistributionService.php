@@ -1512,6 +1512,7 @@ class ExamHallDistributionService
     protected function persistGlobalDistributionResult(array $summary): array
     {
         $summary = $this->filterGlobalDistributionProblemSummaries($summary);
+        $summary = $this->applyFinalValidationToGlobalSummary($summary);
 
         $run = StudentDistributionRun::query()->create([
             'college_id' => $summary['college_id'],
@@ -1551,10 +1552,28 @@ class ExamHallDistributionService
             ]);
         }
 
+        $run->load('issues');
+        $summary['validation']['unassigned_students_list'] = $this->buildUnassignedStudentsSnapshot($run);
+
         $summary['run_id'] = $run->id;
         $summary['result_url'] = route('filament.adminpanel.resources.subject-exam-offerings.global-distribution-results', ['run' => $run]);
 
         $run->update(['summary_json' => $summary]);
+
+        Log::info('student_distribution.global_run_persisted', [
+            'run_id' => $run->id,
+            'college_id' => $run->college_id,
+            'from_date' => $run->from_date?->format('Y-m-d'),
+            'to_date' => $run->to_date?->format('Y-m-d'),
+            'status' => $run->status,
+            'query_source' => 'student_distribution_runs.summary_json + hall assignments validation',
+            'students_expected' => $summary['validation']['expected_students'] ?? $summary['total_students'],
+            'students_assigned' => $summary['validation']['assigned_students'] ?? $summary['distributed_students'],
+            'students_unassigned' => $summary['validation']['unassigned_students'] ?? $summary['unassigned_students'],
+            'used_hall_capacity' => $summary['validation']['used_hall_capacity'] ?? null,
+            'remaining_capacity' => $summary['validation']['remaining_capacity'] ?? null,
+            'problem_offering_ids' => collect($summary['unassigned_by_subject'] ?? [])->pluck('subject_exam_offering_id')->filter()->values()->all(),
+        ]);
 
         return $summary;
     }
@@ -1585,6 +1604,32 @@ class ExamHallDistributionService
 
     public function unassignedStudentsForRun(StudentDistributionRun $run): array
     {
+        $snapshot = $run->summary_json['validation']['unassigned_students_list'] ?? null;
+
+        if (is_array($snapshot)) {
+            Log::info('student_distribution.unassigned_report_source', [
+                'run_id' => $run->id,
+                'source' => 'summary_json.validation.unassigned_students_list',
+                'students_unassigned' => count($snapshot),
+            ]);
+
+            return $snapshot;
+        }
+
+        if ((int) $run->unassigned_students === 0) {
+            Log::info('student_distribution.unassigned_report_legacy_zero_short_circuit', [
+                'run_id' => $run->id,
+                'source' => 'student_distribution_runs.unassigned_students',
+            ]);
+
+            return [];
+        }
+
+        Log::warning('student_distribution.unassigned_report_live_fallback', [
+            'run_id' => $run->id,
+            'source' => 'live_exam_students_query',
+        ]);
+
         $issuesByOffering = $run->issues
             ->filter(fn (StudentDistributionRunIssue $issue): bool => filled($issue->subject_exam_offering_id))
             ->keyBy('subject_exam_offering_id');
@@ -1609,6 +1654,110 @@ class ExamHallDistributionService
                     'student_number' => $student->student_number,
                     'full_name' => $student->full_name,
                     'subject_name' => $offering?->subject?->name,
+                    'exam_date' => $offering?->exam_date?->format('Y-m-d'),
+                    'start_time' => substr((string) $offering?->exam_start_time, 0, 5),
+                    'student_type' => (string) $student->getRawOriginal('student_type'),
+                    'student_type_label' => $this->studentTypeLabel((string) $student->getRawOriginal('student_type')),
+                    'reason' => $issue?->message ?? __('exam.global_hall_distribution.issue_reasons.unassigned_students'),
+                ];
+            })
+            ->all();
+    }
+
+    protected function applyFinalValidationToGlobalSummary(array $summary): array
+    {
+        $validation = $this->buildGlobalDistributionValidationSummary(
+            collegeId: (int) $summary['college_id'],
+            fromDate: (string) $summary['from_date'],
+            toDate: (string) $summary['to_date'],
+            expectedStudents: (int) ($summary['total_students'] ?? 0),
+        );
+
+        $summary['distributed_students'] = $validation['assigned_students'];
+        $summary['unassigned_students'] = $validation['unassigned_students'];
+        $summary['used_halls'] = $validation['used_halls_count'];
+        $summary['assigned_students_count'] = $validation['assigned_students'];
+        $summary['unassigned_students_count'] = $validation['unassigned_students'];
+        $summary['used_halls_count'] = $validation['used_halls_count'];
+        $summary['validation'] = $validation;
+
+        $hasValidationProblem = $validation['unassigned_students'] > 0;
+        $hasMixingProblem = (int) ($summary['carry_regular_mixing_cases_count'] ?? 0) > 0;
+        $hasCapacityProblem = (int) ($summary['capacity_shortage'] ?? 0) > 0;
+
+        if (($summary['status'] ?? null) !== 'failed') {
+            $summary['status'] = ($hasValidationProblem || $hasMixingProblem || $hasCapacityProblem) ? 'partial' : 'success';
+            $summary['message'] = $summary['status'] === 'success'
+                ? __('exam.notifications.global_hall_distribution_completed')
+                : __('exam.notifications.global_hall_distribution_completed_with_issues');
+        }
+
+        return $this->withLegacyGlobalDistributionKeys($summary);
+    }
+
+    protected function buildGlobalDistributionValidationSummary(
+        int $collegeId,
+        string $fromDate,
+        string $toDate,
+        int $expectedStudents,
+    ): array {
+        $hallAssignments = HallAssignment::query()
+            ->where('college_id', $collegeId)
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate);
+
+        $assignedStudents = ExamStudentHallAssignment::query()
+            ->whereHas('subjectExamOffering', fn ($query) => $query
+                ->whereDate('exam_date', '>=', $fromDate)
+                ->whereDate('exam_date', '<=', $toDate)
+                ->whereHas('subject', fn ($subjectQuery) => $subjectQuery->where('college_id', $collegeId)))
+            ->distinct('exam_student_id')
+            ->count('exam_student_id');
+
+        $usedHallCapacity = (int) (clone $hallAssignments)->sum('total_capacity');
+        $remainingCapacity = (int) (clone $hallAssignments)->sum('remaining_capacity');
+        $usedHallsCount = (int) (clone $hallAssignments)->where('assigned_students_count', '>', 0)->count();
+        $unassignedStudents = max(0, $expectedStudents - $assignedStudents);
+
+        return [
+            'expected_students' => $expectedStudents,
+            'assigned_students' => $assignedStudents,
+            'unassigned_students' => $unassignedStudents,
+            'used_halls_count' => $usedHallsCount,
+            'used_hall_capacity' => $usedHallCapacity,
+            'remaining_capacity' => $remainingCapacity,
+            'status' => $unassignedStudents > 0 ? 'partial' : 'success',
+            'data_source' => 'exam_student_hall_assignments + hall_assignments',
+        ];
+    }
+
+    protected function buildUnassignedStudentsSnapshot(StudentDistributionRun $run): array
+    {
+        $issuesByOffering = $run->issues
+            ->filter(fn (StudentDistributionRunIssue $issue): bool => filled($issue->subject_exam_offering_id))
+            ->keyBy('subject_exam_offering_id');
+        $issuesBySlot = $run->issues
+            ->groupBy(fn (StudentDistributionRunIssue $issue): string => ($issue->exam_date?->format('Y-m-d') ?? '-').'|'.substr((string) $issue->start_time, 0, 8));
+
+        return ExamStudent::query()
+            ->with(['subjectExamOffering.subject'])
+            ->whereDoesntHave('hallAssignment')
+            ->whereHas('subjectExamOffering', fn ($query) => $query
+                ->whereDate('exam_date', '>=', $run->from_date)
+                ->whereDate('exam_date', '<=', $run->to_date)
+                ->whereHas('subject', fn ($subjectQuery) => $subjectQuery->where('college_id', $run->college_id)))
+            ->orderBy('student_number')
+            ->get()
+            ->map(function (ExamStudent $student) use ($issuesByOffering, $issuesBySlot): array {
+                $offering = $student->subjectExamOffering;
+                $slotKey = ($offering?->exam_date?->format('Y-m-d') ?? '-').'|'.substr((string) $offering?->exam_start_time, 0, 8);
+                $issue = $issuesByOffering->get($offering?->id) ?? $issuesBySlot->get($slotKey)?->first();
+
+                return [
+                    'student_number' => $student->student_number,
+                    'full_name' => $student->full_name,
+                    'subject_name' => $offering?->subject?->name,
+                    'subject_exam_offering_id' => $offering?->id,
                     'exam_date' => $offering?->exam_date?->format('Y-m-d'),
                     'start_time' => substr((string) $offering?->exam_start_time, 0, 5),
                     'student_type' => (string) $student->getRawOriginal('student_type'),

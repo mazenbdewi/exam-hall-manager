@@ -2,6 +2,10 @@
     @php
         $run = $this->run;
         $summary = $run?->summary_json ?? [];
+        $validation = $summary['validation'] ?? [];
+        $unassignedCount = $this->savedUnassignedStudentsCount();
+        $canExportUnassignedReports = $this->canExportUnassignedReports();
+        $unassignedReportDisabledMessage = $this->unassignedReportDisabledMessage();
         $statusTone = match ($run?->status) {
             'success' => 'success',
             'partial' => 'warning',
@@ -19,6 +23,7 @@
             __('exam.global_hall_distribution.summary.used_halls_count') => $run->used_halls,
             __('exam.global_hall_distribution.summary.total_capacity') => $run->total_capacity,
             __('exam.global_hall_distribution.summary.capacity_shortage') => $run->capacity_shortage,
+            __('exam.global_hall_distribution.summary.remaining_capacity') => $validation['remaining_capacity'] ?? 0,
             __('exam.global_hall_distribution.summary.separate_carry_students') => (bool) ($summary['separate_carry_students'] ?? false) ? 'نعم' : 'لا',
             __('exam.global_hall_distribution.summary.carry_students_count') => $summary['carry_students_count'] ?? 0,
             __('exam.global_hall_distribution.summary.regular_students_count') => $summary['regular_students_count'] ?? 0,
@@ -55,21 +60,34 @@
                             {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message')) }}
                         </h2>
                         <p class="mt-1 text-sm {{ $statusTone === 'success' ? 'text-success-800 dark:text-success-200' : ($statusTone === 'warning' ? 'text-warning-800 dark:text-warning-200' : 'text-danger-800 dark:text-danger-200') }}">
-                            {{ $run->status === 'success' && (int) $run->unassigned_students === 0 ? __('exam.global_hall_distribution.no_issues_success_hint') : ($run->notes ?: __('exam.global_hall_distribution.results_hint')) }}
+                            {{ $run->status === 'success' && $unassignedCount === 0 ? __('exam.global_hall_distribution.no_issues_success_hint') : ($run->notes ?: __('exam.global_hall_distribution.results_hint')) }}
                         </p>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <x-filament::button color="gray" icon="heroicon-o-document-arrow-down" wire:click="exportSummaryPdf">
                             {{ __('exam.actions.export_global_distribution_summary_pdf') }}
                         </x-filament::button>
-                        <x-filament::button color="warning" icon="heroicon-o-document-arrow-down" wire:click="exportUnassignedPdf">
-                            {{ __('exam.actions.export_unassigned_students_pdf') }}
-                        </x-filament::button>
-                        <x-filament::button color="gray" icon="heroicon-o-table-cells" wire:click="exportUnassignedExcel">
-                            {{ __('exam.actions.export_unassigned_students_excel') }}
-                        </x-filament::button>
+                        <span title="{{ $canExportUnassignedReports ? '' : $unassignedReportDisabledMessage }}">
+                            <x-filament::button color="warning" icon="heroicon-o-document-arrow-down" wire:click="exportUnassignedPdf" :disabled="! $canExportUnassignedReports">
+                                {{ __('exam.actions.export_unassigned_students_pdf') }}
+                                @if ($canExportUnassignedReports)
+                                    ({{ $unassignedCount }})
+                                @endif
+                            </x-filament::button>
+                        </span>
+                        <span title="{{ $canExportUnassignedReports ? '' : $unassignedReportDisabledMessage }}">
+                            <x-filament::button color="gray" icon="heroicon-o-table-cells" wire:click="exportUnassignedExcel" :disabled="! $canExportUnassignedReports">
+                                {{ __('exam.actions.export_unassigned_students_excel') }}
+                                @if ($canExportUnassignedReports)
+                                    ({{ $unassignedCount }})
+                                @endif
+                            </x-filament::button>
+                        </span>
                     </div>
                 </div>
+                @if (! $canExportUnassignedReports)
+                    <p class="mt-3 text-sm text-success-800 dark:text-success-200">{{ $unassignedReportDisabledMessage }}</p>
+                @endif
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -95,10 +113,13 @@
                 </div>
             @endif
 
-            @if ($run->unassigned_students > 0)
+            @if ($unassignedCount > 0)
                 <div class="rounded-lg border border-danger-200 bg-danger-50 p-4 shadow-sm dark:border-danger-500/20 dark:bg-danger-500/10">
                     <h2 class="text-base font-semibold text-danger-900 dark:text-danger-200">{{ __('exam.global_hall_distribution.problem_title') }}</h2>
-                    <p class="mt-1 text-sm text-danger-800 dark:text-danger-200">{{ __('exam.global_hall_distribution.problem_message') }}</p>
+                    <p class="mt-1 text-sm text-danger-800 dark:text-danger-200">
+                        {{ __('exam.global_hall_distribution.problem_message') }}
+                        {{ __('exam.global_hall_distribution.summary.unassigned_students_count') }}: {{ $unassignedCount }}
+                    </p>
                     <div class="mt-3 flex flex-wrap gap-2 text-sm">
                         @foreach (__('exam.global_hall_distribution.suggested_actions') as $action)
                             <span class="rounded-full bg-white px-3 py-1 text-danger-700 dark:bg-black/10 dark:text-danger-200">{{ $action }}</span>
@@ -106,6 +127,18 @@
                     </div>
                 </div>
             @endif
+
+            <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
+                <h3 class="mb-3 font-semibold text-gray-950 dark:text-white">{{ __('exam.global_hall_distribution.validation_summary_title') }}</h3>
+                <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 text-sm">
+                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">{{ __('exam.global_hall_distribution.validation.expected_students') }}: {{ $validation['expected_students'] ?? $run->total_students }}</div>
+                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">{{ __('exam.global_hall_distribution.validation.assigned_students') }}: {{ $validation['assigned_students'] ?? $run->distributed_students }}</div>
+                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">{{ __('exam.global_hall_distribution.validation.unassigned_students') }}: {{ $validation['unassigned_students'] ?? $run->unassigned_students }}</div>
+                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">{{ __('exam.global_hall_distribution.validation.used_hall_capacity') }}: {{ $validation['used_hall_capacity'] ?? 0 }}</div>
+                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">{{ __('exam.global_hall_distribution.validation.remaining_capacity') }}: {{ $validation['remaining_capacity'] ?? 0 }}</div>
+                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">{{ __('exam.global_hall_distribution.validation.data_source') }}: {{ $validation['data_source'] ?? '—' }}</div>
+                </div>
+            </div>
 
             @if ($slotSummaries->isNotEmpty())
                 <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">

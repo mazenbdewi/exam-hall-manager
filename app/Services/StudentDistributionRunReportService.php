@@ -6,6 +6,7 @@ use App\Exports\StudentDistributionUnassignedExport;
 use App\Models\StudentDistributionRun;
 use App\Models\SystemSetting;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Maatwebsite\Excel\Facades\Excel;
 use Mpdf\Config\ConfigVariables;
@@ -74,6 +75,18 @@ class StudentDistributionRunReportService
     {
         $run->loadMissing(['college', 'executor', 'issues.subjectExamOffering.subject']);
         $systemSetting = SystemSetting::current();
+        $validation = $run->summary_json['validation'] ?? [];
+
+        Log::info('student_distribution.report_export', [
+            'run_id' => $run->id,
+            'view' => $view,
+            'query_source' => $view === 'pdf.student-distribution-run-unassigned'
+                ? 'student_distribution_runs.summary_json.validation.unassigned_students_list'
+                : 'student_distribution_runs.summary_json',
+            'students_expected' => $validation['expected_students'] ?? $run->total_students,
+            'students_assigned' => $validation['assigned_students'] ?? $run->distributed_students,
+            'students_unassigned' => $validation['unassigned_students'] ?? $run->unassigned_students,
+        ]);
 
         $html = view($view, [
             'run' => $run,

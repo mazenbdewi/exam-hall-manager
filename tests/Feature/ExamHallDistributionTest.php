@@ -14,6 +14,7 @@ use App\Models\ExamHall;
 use App\Models\ExamStudent;
 use App\Models\ExamStudentHallAssignment;
 use App\Models\HallAssignment;
+use App\Models\StudentDistributionRun;
 use App\Models\Semester;
 use App\Models\StudyLevel;
 use App\Models\Subject;
@@ -295,6 +296,95 @@ class ExamHallDistributionTest extends TestCase
         $this->assertStringContainsString('قاعة طلاب حملة', $html);
         $this->assertStringContainsString('قاعة طلاب مستجدين', $html);
         $this->assertContains('نوع الطالب', (new StudentDistributionUnassignedExport(new \App\Models\StudentDistributionRun))->headings());
+    }
+
+    #[Test]
+    public function global_distribution_run_keeps_unassigned_snapshot_for_reports_even_if_live_data_changes(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $offering = $this->createOfferingWithStudents($context, 'هياكل', 5);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة أولى',
+            'location' => 'المبنى الأول',
+            'capacity' => 3,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        /** @var StudentDistributionRun $firstRun */
+        $firstRun = StudentDistributionRun::query()->oldest('id')->firstOrFail();
+        $this->assertSame('partial', $firstRun->status);
+        $this->assertSame(2, $firstRun->unassigned_students);
+        $this->assertCount(2, $firstRun->summary_json['validation']['unassigned_students_list'] ?? []);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة ثانية',
+            'location' => 'المبنى الثاني',
+            'capacity' => 5,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+        );
+
+        $this->assertSame(0, ExamStudent::query()->whereDoesntHave('hallAssignment')->count());
+        $this->assertCount(2, app(ExamHallDistributionService::class)->unassignedStudentsForRun($firstRun->fresh('issues')));
+        $this->assertSame(2, count($firstRun->fresh()->summary_json['validation']['unassigned_students_list'] ?? []));
+        $this->assertSame($offering->id, $firstRun->fresh()->summary_json['validation']['unassigned_students_list'][0]['subject_exam_offering_id'] ?? null);
+    }
+
+    #[Test]
+    public function global_distribution_run_stores_final_validation_based_on_real_assignments(): void
+    {
+        $context = $this->createAcademicContext();
+
+        foreach (['تحليل', 'جبر', 'فيزياء', 'برمجة'] as $subjectName) {
+            $this->createOfferingWithStudents($context, $subjectName, 1);
+        }
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة واحدة',
+            'location' => 'المبنى الأول',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $run = StudentDistributionRun::query()->latest('id')->firstOrFail();
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame('partial', $run->status);
+        $this->assertSame(0, $result['capacity_shortage']);
+        $this->assertSame(4, $run->summary_json['validation']['expected_students'] ?? null);
+        $this->assertSame(3, $run->summary_json['validation']['assigned_students'] ?? null);
+        $this->assertSame(1, $run->summary_json['validation']['unassigned_students'] ?? null);
+        $this->assertSame(4, $run->summary_json['validation']['used_hall_capacity'] ?? null);
+        $this->assertSame(1, $run->summary_json['validation']['remaining_capacity'] ?? null);
     }
 
     protected function createAcademicContext(): array

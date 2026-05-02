@@ -17,6 +17,7 @@
 <body>
     @php
         $runPeriod = __('exam.fields.period').': '.($run->from_date?->format('Y-m-d') ?? '—').' - '.($run->to_date?->format('Y-m-d') ?? '—');
+        $validation = $run->summary_json['validation'] ?? [];
     @endphp
 
     @include('pdf.partials.report-header', [
@@ -30,7 +31,7 @@
 
     <div class="warning">
         {{ __('exam.global_hall_distribution.problem_message') }}
-        {{ __('exam.global_hall_distribution.summary.unassigned_students_count') }}: {{ count($unassignedStudents ?? []) }}
+        {{ __('exam.global_hall_distribution.summary.unassigned_students_count') }}: {{ $validation['unassigned_students'] ?? count($unassignedStudents ?? []) }}
     </div>
 
     <table>

@@ -478,6 +478,7 @@ return [
         'carry_regular_mixed_issue' => 'تم خلط بعض طلاب الحملة مع المستجدين بسبب عدم كفاية القاعات أو السعة المتاحة.',
         'problem_title' => 'تنبيه: يوجد طلاب غير موزعين',
         'problem_message' => 'لم يتم توزيع جميع الطلاب على القاعات. يجب معالجة هذه المشكلة قبل توزيع المراقبين.',
+        'unassigned_report_not_needed' => 'لا يوجد طلاب غير موزعين، لذلك لا حاجة لهذا التقرير.',
         'suggested_actions' => [
             'إضافة قاعات جديدة',
             'زيادة سعة القاعات',
@@ -486,6 +487,7 @@ return [
             'إعادة تنفيذ التوزيع بعد المعالجة',
         ],
         'slot_summary_title' => 'ملخص المواعيد الامتحانية',
+        'validation_summary_title' => 'التحقق النهائي من نتيجة التوزيع',
         'slot_all_distributed' => 'تم توزيع جميع الطلاب بنجاح.',
         'by_slot' => 'المشاكل حسب الموعد الامتحاني',
         'by_subject' => 'المشاكل حسب المادة',
@@ -521,6 +523,7 @@ return [
             'used_halls_count' => 'عدد القاعات المستخدمة',
             'total_capacity' => 'السعة الإجمالية',
             'capacity_shortage' => 'العجز إن وجد',
+            'remaining_capacity' => 'السعة المتبقية في القاعات المستخدمة',
             'distributed_slots_count' => 'عدد المواعيد التي تم توزيعها',
             'skipped_slots_count' => 'عدد المواعيد التي تم تخطيها',
             'issue_slots_count' => 'عدد المواعيد التي فيها مشكلة',
@@ -530,6 +533,14 @@ return [
             'carry_halls_count' => 'قاعات الحملة',
             'regular_halls_count' => 'قاعات المستجدين',
             'mixing_cases_count' => 'حالات الخلط بسبب نقص السعة',
+        ],
+        'validation' => [
+            'expected_students' => 'إجمالي الطلاب المتوقع توزيعهم',
+            'assigned_students' => 'إجمالي الطلاب الموزعين فعليًا',
+            'unassigned_students' => 'إجمالي الطلاب غير الموزعين فعليًا',
+            'used_hall_capacity' => 'إجمالي سعة القاعات المستخدمة',
+            'remaining_capacity' => 'السعة المتبقية داخل القاعات المستخدمة',
+            'data_source' => 'مصدر التحقق النهائي',
         ],
     ],
 

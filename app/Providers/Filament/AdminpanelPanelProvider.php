@@ -7,6 +7,7 @@ use App\Filament\Auth\Pages\Profile;
 use App\Filament\Auth\Pages\SecurityPinChallenge;
 use App\Filament\Backup\Pages\Backups;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Http\Controllers\Help\UserGuideDownloadController;
 use App\Http\Middleware\AuditRequestMiddleware;
 use App\Http\Middleware\EnsureSecurityPinVerified;
 use App\Support\ExamCollegeScope;
@@ -70,6 +71,7 @@ class AdminpanelPanelProvider extends PanelProvider
                 NavigationGroup::make(__('exam.navigation.academic_setup')),
                 NavigationGroup::make(__('exam.navigation.users_permissions')),
                 NavigationGroup::make(__('exam.navigation.system_management')),
+                NavigationGroup::make(__('help.page.navigation_group')),
             ])
             ->navigationItems([
                 NavigationItem::make('توزيع شامل للطلاب على القاعات')
@@ -100,6 +102,9 @@ class AdminpanelPanelProvider extends PanelProvider
             ->authenticatedRoutes(function (): void {
                 Route::get('/security-pin', SecurityPinChallenge::class)
                     ->name('auth.security-pin.challenge');
+
+                Route::get('/help/user-guide/download', UserGuideDownloadController::class)
+                    ->name('help.user-guide.download');
             })
             ->middleware([
                 EncryptCookies::class,

@@ -60,6 +60,10 @@ class GlobalDistributionResults extends Page
             return $this->missingRunNotification();
         }
 
+        if (! $this->canExportUnassignedReports()) {
+            return $this->unassignedReportNotNeededNotification();
+        }
+
         return app(StudentDistributionRunReportService::class)->downloadUnassignedPdf($this->run);
     }
 
@@ -69,7 +73,34 @@ class GlobalDistributionResults extends Page
             return $this->missingRunNotification();
         }
 
+        if (! $this->canExportUnassignedReports()) {
+            return $this->unassignedReportNotNeededNotification();
+        }
+
         return app(StudentDistributionRunReportService::class)->downloadUnassignedExcel($this->run);
+    }
+
+    public function savedUnassignedStudentsCount(): int
+    {
+        if (! $this->run) {
+            return 0;
+        }
+
+        return (int) data_get(
+            $this->run->summary_json,
+            'validation.unassigned_students',
+            $this->run->unassigned_students,
+        );
+    }
+
+    public function canExportUnassignedReports(): bool
+    {
+        return $this->savedUnassignedStudentsCount() > 0;
+    }
+
+    public function unassignedReportDisabledMessage(): string
+    {
+        return __('exam.global_hall_distribution.unassigned_report_not_needed');
     }
 
     protected function missingRunNotification(): null
@@ -77,6 +108,17 @@ class GlobalDistributionResults extends Page
         Notification::make()
             ->warning()
             ->title(__('exam.global_hall_distribution.no_previous_run'))
+            ->send();
+
+        return null;
+    }
+
+    protected function unassignedReportNotNeededNotification(): null
+    {
+        Notification::make()
+            ->success()
+            ->title(__('exam.global_hall_distribution.no_unassigned_students'))
+            ->body($this->unassignedReportDisabledMessage())
             ->send();
 
         return null;
