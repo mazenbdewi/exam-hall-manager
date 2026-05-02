@@ -78,6 +78,13 @@ class ExamHallDistributionTest extends TestCase
         $this->assertTrue($hallAssignments->every(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->count() <= 3));
         $this->assertTrue($hallAssignments->every(fn (HallAssignment $assignment): bool => $assignment->assigned_students_count <= $assignment->total_capacity));
         $this->assertSame(140, ExamStudentHallAssignment::query()->count());
+        $hallAssignments->each(function (HallAssignment $assignment): void {
+            $seatNumbers = $assignment->studentAssignments->pluck('seat_number');
+
+            $this->assertFalse($seatNumbers->contains(null));
+            $this->assertSame($seatNumbers->count(), $seatNumbers->unique()->count());
+            $this->assertSame(range(1, $seatNumbers->count()), $seatNumbers->sort()->values()->all());
+        });
         $this->assertSame(0, $otherSlotOffering->studentHallAssignments()->count());
 
         $slotOfferings->each(function (SubjectExamOffering $offering): void {

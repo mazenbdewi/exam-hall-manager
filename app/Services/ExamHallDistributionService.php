@@ -331,7 +331,7 @@ class ExamHallDistributionService
                         $studentAssignmentRows[] = [
                             'exam_student_id' => $student->getKey(),
                             'subject_exam_offering_id' => $offeringId,
-                            'seat_number' => null,
+                            'seat_number' => count($studentAssignmentRows) + 1,
                         ];
                     }
                 }
@@ -618,7 +618,7 @@ class ExamHallDistributionService
                 $plan['student_assignment_rows'][] = [
                     'exam_student_id' => $student->getKey(),
                     'subject_exam_offering_id' => $offeringId,
-                    'seat_number' => null,
+                    'seat_number' => count($plan['student_assignment_rows']) + 1,
                     'student_type' => $studentType,
                 ];
             }
@@ -1560,21 +1560,6 @@ class ExamHallDistributionService
 
         $run->update(['summary_json' => $summary]);
 
-        Log::info('student_distribution.global_run_persisted', [
-            'run_id' => $run->id,
-            'college_id' => $run->college_id,
-            'from_date' => $run->from_date?->format('Y-m-d'),
-            'to_date' => $run->to_date?->format('Y-m-d'),
-            'status' => $run->status,
-            'query_source' => 'student_distribution_runs.summary_json + hall assignments validation',
-            'students_expected' => $summary['validation']['expected_students'] ?? $summary['total_students'],
-            'students_assigned' => $summary['validation']['assigned_students'] ?? $summary['distributed_students'],
-            'students_unassigned' => $summary['validation']['unassigned_students'] ?? $summary['unassigned_students'],
-            'used_hall_capacity' => $summary['validation']['used_hall_capacity'] ?? null,
-            'remaining_capacity' => $summary['validation']['remaining_capacity'] ?? null,
-            'problem_offering_ids' => collect($summary['unassigned_by_subject'] ?? [])->pluck('subject_exam_offering_id')->filter()->values()->all(),
-        ]);
-
         return $summary;
     }
 
@@ -1607,28 +1592,12 @@ class ExamHallDistributionService
         $snapshot = $run->summary_json['validation']['unassigned_students_list'] ?? null;
 
         if (is_array($snapshot)) {
-            Log::info('student_distribution.unassigned_report_source', [
-                'run_id' => $run->id,
-                'source' => 'summary_json.validation.unassigned_students_list',
-                'students_unassigned' => count($snapshot),
-            ]);
-
             return $snapshot;
         }
 
         if ((int) $run->unassigned_students === 0) {
-            Log::info('student_distribution.unassigned_report_legacy_zero_short_circuit', [
-                'run_id' => $run->id,
-                'source' => 'student_distribution_runs.unassigned_students',
-            ]);
-
             return [];
         }
-
-        Log::warning('student_distribution.unassigned_report_live_fallback', [
-            'run_id' => $run->id,
-            'source' => 'live_exam_students_query',
-        ]);
 
         $issuesByOffering = $run->issues
             ->filter(fn (StudentDistributionRunIssue $issue): bool => filled($issue->subject_exam_offering_id))

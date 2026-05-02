@@ -22,7 +22,6 @@ use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Log;
 
 class ListSubjectExamOfferings extends ListRecords
 {
@@ -103,8 +102,6 @@ class ListSubjectExamOfferings extends ListRecords
                         ->live(),
                 ])
                 ->action(function (array $data): void {
-                    Log::info('Global student distribution action data', $data);
-
                     if (
                         (ExamCollegeScope::isSuperAdmin() && empty($data['college_id']))
                         || empty($data['from_date'])
