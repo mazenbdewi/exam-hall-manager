@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
@@ -59,6 +60,11 @@ class SubjectExamOffering extends Model
     public function examScheduleDraft(): BelongsTo
     {
         return $this->belongsTo(ExamScheduleDraft::class);
+    }
+
+    public function examScheduleDraftItem(): HasOne
+    {
+        return $this->hasOne(ExamScheduleDraftItem::class);
     }
 
     public function examStudents(): HasMany

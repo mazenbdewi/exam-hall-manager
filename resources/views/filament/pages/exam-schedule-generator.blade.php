@@ -7,6 +7,7 @@
         $unscheduledItems = $this->unscheduledDraftItems();
         $coreWarnings = $this->coreSubjectsOutsidePreferredPeriod();
         $sharedSummary = $this->sharedSubjectScheduleSummary();
+        $fixedProgram = $this->currentFixedProgram();
         $statusLabel = fn (?string $status): string => match ($status) {
             'scheduled' => 'مجدولة',
             'conflict' => 'تحتاج مراجعة',
@@ -704,7 +705,13 @@
             @if ($draft?->status === 'approved')
                 <div class="rounded-lg border border-success-200 bg-success-50 p-4 text-success-900 shadow-sm dark:border-success-500/20 dark:bg-success-500/10 dark:text-success-100">
                     <h2 class="text-base font-semibold">الخطوات التالية</h2>
-                    <div class="mt-3 grid gap-2 md:grid-cols-4">
+                    <div class="mt-3 grid gap-2 md:grid-cols-6">
+                        @if ($fixedProgram)
+                            <a href="{{ $this->printFixedProgramUrl() }}" target="_blank" rel="noopener" class="rounded-md bg-white/70 px-3 py-2 text-sm font-medium dark:bg-black/10">طباعة البرنامج المثبت</a>
+                        @else
+                            <span class="rounded-md bg-white/70 px-3 py-2 text-sm font-medium dark:bg-black/10">لا يوجد برنامج مثبت بعد - يرجى تثبيت البرنامج أولاً قبل الطباعة</span>
+                        @endif
+                        <a href="{{ $this->fixedProgramsUrl() }}" class="rounded-md bg-white/70 px-3 py-2 text-sm font-medium dark:bg-black/10">عرض البرامج المثبتة</a>
                         <a href="{{ $this->officialOfferingsUrl() }}" class="rounded-md bg-white/70 px-3 py-2 text-sm font-medium dark:bg-black/10">الانتقال إلى البرامج الامتحانية</a>
                         <a href="{{ $this->studentReviewUrl() }}" class="rounded-md bg-white/70 px-3 py-2 text-sm font-medium dark:bg-black/10">رفع/مراجعة الطلاب</a>
                         <a href="{{ $this->globalDistributionUrl() }}" class="rounded-md bg-white/70 px-3 py-2 text-sm font-medium dark:bg-black/10">تنفيذ التوزيع الشامل للطلاب</a>

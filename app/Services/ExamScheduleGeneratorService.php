@@ -352,11 +352,15 @@ class ExamScheduleGeneratorService
         $draft->loadMissing('items.subject', 'items.sourceRoster.rosterStudents');
 
         if ($draft->status === 'approved') {
+            $fixedProgram = app(FixedExamProgramSnapshotService::class)->createFromDraft($draft);
+
             return [
                 'status' => 'success',
                 'created_count' => 0,
                 'updated_count' => 0,
-                'message' => 'المسودة معتمدة مسبقاً.',
+                'fixed_program_id' => $fixedProgram->id,
+                'fixed_program_ids' => [$fixedProgram->id],
+                'message' => 'تم تثبيت برنامج الامتحان وحفظه بنجاح',
             ];
         }
 
@@ -428,13 +432,17 @@ class ExamScheduleGeneratorService
                 'summary_json' => $validation['summary'],
             ]);
 
+            $fixedProgram = app(FixedExamProgramSnapshotService::class)->createFromDraft($draft);
+
             return [
                 'status' => 'success',
                 'created_count' => $created,
                 'updated_count' => $updated,
                 'skipped_existing_count' => $skippedExisting,
                 'warnings_count' => $validation['warnings_count'] ?? 0,
-                'message' => 'تم اعتماد البرنامج الامتحاني بنجاح ونقل الطلاب إلى البرامج الامتحانية. يمكنك الآن تنفيذ التوزيع الشامل للطلاب على القاعات.',
+                'fixed_program_id' => $fixedProgram->id,
+                'fixed_program_ids' => [$fixedProgram->id],
+                'message' => 'تم تثبيت برنامج الامتحان وحفظه بنجاح',
             ];
         });
     }

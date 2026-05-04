@@ -7,6 +7,8 @@ use App\Filament\Auth\Pages\Profile;
 use App\Filament\Auth\Pages\SecurityPinChallenge;
 use App\Filament\Backup\Pages\Backups;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Http\Controllers\Admin\ExamSchedulePrintController;
+use App\Http\Controllers\Admin\FixedExamProgramPrintController;
 use App\Http\Controllers\Help\UserGuideDownloadController;
 use App\Http\Middleware\AuditRequestMiddleware;
 use App\Http\Middleware\EnsureSecurityPinVerified;
@@ -105,6 +107,12 @@ class AdminpanelPanelProvider extends PanelProvider
 
                 Route::get('/help/user-guide/download', UserGuideDownloadController::class)
                     ->name('help.user-guide.download');
+
+                Route::get('/exam-schedules/print', ExamSchedulePrintController::class)
+                    ->name('exam-schedules.print');
+
+                Route::get('/fixed-exam-programs/{fixedExamProgram}/print', FixedExamProgramPrintController::class)
+                    ->name('fixed-exam-programs.print');
             })
             ->middleware([
                 EncryptCookies::class,

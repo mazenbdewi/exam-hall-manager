@@ -65,4 +65,9 @@ class ExamScheduleDraft extends Model
     {
         return $this->hasMany(ExamScheduleDraftItem::class);
     }
+
+    public function fixedExamPrograms(): HasMany
+    {
+        return $this->hasMany(FixedExamProgram::class);
+    }
 }

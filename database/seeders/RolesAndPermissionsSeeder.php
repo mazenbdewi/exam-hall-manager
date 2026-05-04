@@ -56,6 +56,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'Subject',
             'SubjectExamRoster',
             'SubjectExamOffering',
+            'FixedExamProgram',
             'User',
             'Invigilator',
             'InvigilatorDistributionSetting',

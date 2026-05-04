@@ -7,6 +7,7 @@ use App\Models\ExamScheduleDraft;
 use App\Models\ExamScheduleDraftItem;
 use App\Models\ExamStudent;
 use App\Models\ExamStudentHallAssignment;
+use App\Models\FixedExamProgram;
 use App\Models\Invigilator;
 use App\Models\InvigilatorAssignment;
 use App\Models\InvigilatorDistributionSetting;
@@ -92,6 +93,7 @@ class AppServiceProvider extends ServiceProvider
             SubjectExamOffering::class,
             ExamScheduleDraft::class,
             ExamScheduleDraftItem::class,
+            FixedExamProgram::class,
             ExamHall::class,
             ExamStudent::class,
             ExamStudentHallAssignment::class,

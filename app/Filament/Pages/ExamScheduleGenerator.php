@@ -2,12 +2,14 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\AcademicYear;
 use App\Models\College;
 use App\Models\Department;
 use App\Models\ExamScheduleDraft;
 use App\Models\ExamScheduleDraftItem;
+use App\Models\FixedExamProgram;
 use App\Models\Semester;
 use App\Models\StudyLevel;
 use App\Models\SubjectExamRoster;
@@ -93,6 +95,8 @@ class ExamScheduleGenerator extends Page
 
     protected ?ExamScheduleDraft $cachedDraft = null;
 
+    protected ?FixedExamProgram $cachedFixedProgram = null;
+
     protected ?array $cachedValidation = null;
 
     public function mount(): void
@@ -109,6 +113,8 @@ class ExamScheduleGenerator extends Page
         if (! ExamCollegeScope::isSuperAdmin()) {
             $this->college_id = ExamCollegeScope::currentCollegeId();
         }
+
+        $this->restoreLatestDraftState();
     }
 
     public static function getNavigationGroup(): ?string
@@ -146,10 +152,16 @@ class ExamScheduleGenerator extends Page
     public function updated(string $property): void
     {
         $this->cachedDraft = null;
+        $this->cachedFixedProgram = null;
         $this->cachedValidation = null;
 
         if ($property === 'college_id' && ! ExamCollegeScope::isSuperAdmin()) {
             $this->college_id = ExamCollegeScope::currentCollegeId();
+        }
+
+        if (in_array($property, ['college_id', 'academic_year_id', 'semester_id', 'department_id'], true)) {
+            $this->draft_id = null;
+            $this->restoreLatestDraftState();
         }
 
         if (in_array($property, ['start_date', 'end_date'], true)) {
@@ -325,8 +337,8 @@ class ExamScheduleGenerator extends Page
             );
 
             Notification::make()
-                ->title('تم اعتماد البرنامج الامتحاني بنجاح ونقل الطلاب إلى البرامج الامتحانية.')
-                ->body('تم إنشاء '.($result['created_count'] ?? 0).' من البرامج الامتحانية، وتجاوز '.($result['skipped_existing_count'] ?? 0).' برنامج موجود مسبقاً.')
+                ->title($result['message'] ?? 'تم تثبيت برنامج الامتحان وحفظه بنجاح')
+                ->body('تم إنشاء '.($result['created_count'] ?? 0).' من البرامج الامتحانية الرسمية، وتجاوز '.($result['skipped_existing_count'] ?? 0).' برنامج موجود مسبقاً. تم حفظ نسخة ثابتة قابلة للطباعة لاحقاً.')
                 ->success()
                 ->send();
         } catch (ValidationException $exception) {
@@ -403,11 +415,15 @@ class ExamScheduleGenerator extends Page
     public function currentDraft(): ?ExamScheduleDraft
     {
         if (! $this->draft_id) {
+            $this->restoreLatestDraftState();
+        }
+
+        if (! $this->draft_id) {
             return null;
         }
 
         return $this->cachedDraft ??= ExamScheduleDraft::query()
-            ->with(['college', 'academicYear', 'semester', 'items.subject.department', 'items.subject.studyLevel'])
+            ->with(['college', 'academicYear', 'semester', 'items.department', 'items.subject.department', 'items.subject.studyLevel'])
             ->whereKey($this->draft_id)
             ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('faculty_id', ExamCollegeScope::currentCollegeId()))
             ->first();
@@ -590,6 +606,33 @@ class ExamScheduleGenerator extends Page
         return SubjectExamOfferingResource::getUrl('index');
     }
 
+    public function printScheduleUrl(): string
+    {
+        $draft = $this->currentDraft();
+        $settings = $draft?->settings_json ?? [];
+
+        return route('filament.adminpanel.exam-schedules.print', collect([
+            'college_id' => $draft?->faculty_id ?: $this->college_id,
+            'department_id' => $this->department_id ?: ($settings['department_id'] ?? $this->filter_department_id),
+            'academic_year_id' => $draft?->academic_year_id ?: $this->academic_year_id,
+            'semester_id' => $draft?->semester_id ?: $this->semester_id,
+        ])->filter(fn (mixed $value): bool => filled($value))->all());
+    }
+
+    public function printFixedProgramUrl(): string
+    {
+        $fixedProgram = $this->currentFixedProgram();
+
+        return $fixedProgram
+            ? route('filament.adminpanel.fixed-exam-programs.print', ['fixedExamProgram' => $fixedProgram])
+            : $this->fixedProgramsUrl();
+    }
+
+    public function fixedProgramsUrl(): string
+    {
+        return FixedExamProgramResource::getUrl('index');
+    }
+
     public function globalDistributionUrl(): string
     {
         return SubjectExamOfferingResource::getUrl('index');
@@ -642,6 +685,66 @@ class ExamScheduleGenerator extends Page
             ->when($this->department_id, fn (Builder $query) => $query->where('department_id', $this->department_id))
             ->when($this->study_level_id, fn (Builder $query) => $query->where('study_level_id', $this->study_level_id))
             ->get();
+    }
+
+    public function currentFixedProgram(): ?FixedExamProgram
+    {
+        return $this->cachedFixedProgram ??= $this->latestFixedProgram();
+    }
+
+    protected function latestFixedProgram(): ?FixedExamProgram
+    {
+        $draft = $this->currentDraft();
+
+        return $this->fixedProgramsBaseQuery()
+            ->when($draft, fn (Builder $query): Builder => $query->where('exam_schedule_draft_id', $draft->id))
+            ->latest('fixed_at')
+            ->latest('id')
+            ->first();
+    }
+
+    protected function restoreLatestDraftState(): void
+    {
+        if ($this->draft_id || ! $this->college_id || ! $this->academic_year_id || ! $this->semester_id) {
+            return;
+        }
+
+        $draft = ExamScheduleDraft::query()
+            ->where('faculty_id', $this->college_id)
+            ->where('academic_year_id', $this->academic_year_id)
+            ->where('semester_id', $this->semester_id)
+            ->when($this->department_id, fn (Builder $query): Builder => $query->where('settings_json->department_id', $this->department_id))
+            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query): Builder => $query->where('faculty_id', ExamCollegeScope::currentCollegeId()))
+            ->latest('approved_at')
+            ->latest('id')
+            ->first();
+
+        if (! $draft) {
+            return;
+        }
+
+        $this->draft_id = $draft->id;
+        $this->active_week_start = $draft->start_date?->startOfWeek(Carbon::SUNDAY)->toDateString() ?: $this->active_week_start;
+        $this->itemEdits = $draft->items()
+            ->get()
+            ->mapWithKeys(fn (ExamScheduleDraftItem $item): array => [
+                $item->id => [
+                    'exam_date' => $item->exam_date?->toDateString(),
+                    'period_key' => $this->periodKeyForTime($this->timeString($item->start_time)),
+                ],
+            ])
+            ->all();
+    }
+
+    protected function fixedProgramsBaseQuery(): Builder
+    {
+        return FixedExamProgram::query()
+            ->where('status', 'fixed')
+            ->when($this->college_id, fn (Builder $query): Builder => $query->where('college_id', $this->college_id))
+            ->when($this->academic_year_id, fn (Builder $query): Builder => $query->where('academic_year_id', $this->academic_year_id))
+            ->when($this->semester_id, fn (Builder $query): Builder => $query->where('semester_id', $this->semester_id))
+            ->when($this->department_id, fn (Builder $query): Builder => $query->where('department_id', $this->department_id))
+            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query): Builder => $query->where('college_id', ExamCollegeScope::currentCollegeId()));
     }
 
     protected function parsedHolidays(): array
@@ -824,6 +927,7 @@ class ExamScheduleGenerator extends Page
     protected function refreshDraftState(): void
     {
         $this->cachedDraft = null;
+        $this->cachedFixedProgram = null;
         $this->cachedValidation = null;
         $draft = $this->currentDraft();
 
