@@ -65,6 +65,15 @@ class SubjectExamOfferingResource extends Resource
         return 11;
     }
 
+    public static function getNavigationItemActiveRoutePattern(): string|array
+    {
+        return [
+            'filament.adminpanel.resources.subject-exam-offerings.index',
+            'filament.adminpanel.resources.subject-exam-offerings.create',
+            'filament.adminpanel.resources.subject-exam-offerings.edit',
+        ];
+    }
+
     public static function getModelLabel(): string
     {
         return __('exam.resources.subject_exam_offering.singular');

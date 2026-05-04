@@ -1,0 +1,315 @@
+<?php
+
+namespace App\Filament\Pages;
+
+use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Models\College;
+use App\Models\StudentDistributionRun;
+use App\Services\AuditLogService;
+use App\Services\ExamHallDistributionService;
+use App\Support\ExamCollegeScope;
+use BackedEnum;
+use Filament\Actions\Action;
+use Filament\Forms\Components\Checkbox;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
+use Filament\Notifications\Notification;
+use Filament\Pages\Page;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Contracts\Support\Htmlable;
+use Illuminate\Database\Eloquent\Builder;
+
+class ComprehensiveStudentDistribution extends Page
+{
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSparkles;
+
+    protected static ?string $slug = 'comprehensive-student-distribution';
+
+    protected string $view = 'filament.pages.comprehensive-student-distribution';
+
+    public static function getNavigationGroup(): ?string
+    {
+        return __('exam.navigation.core_operations');
+    }
+
+    public static function getNavigationSort(): ?int
+    {
+        return 12;
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return 'توزيع شامل للطلاب على القاعات';
+    }
+
+    public static function getNavigationItemActiveRoutePattern(): string|array
+    {
+        return static::getRouteName();
+    }
+
+    public function getTitle(): string|Htmlable
+    {
+        return 'توزيع شامل للطلاب على القاعات';
+    }
+
+    public function getHeading(): string
+    {
+        return 'توزيع شامل للطلاب على القاعات';
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canAccess();
+    }
+
+    public static function canAccess(): bool
+    {
+        return SubjectExamOfferingResource::canViewAny();
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('globalStudentHallDistribution')
+                ->label(__('exam.actions.global_hall_distribution_by_college'))
+                ->icon('heroicon-o-sparkles')
+                ->color('primary')
+                ->modalHeading(__('exam.global_hall_distribution.modal_title'))
+                ->modalDescription(__('exam.global_hall_distribution.modal_description'))
+                ->modalSubmitAction(fn (Action $action): Action => $action
+                    ->label(__('exam.actions.run_global_hall_distribution')))
+                ->modalWidth('2xl')
+                ->closeModalByClickingAway(false)
+                ->form([
+                    Select::make('college_id')
+                        ->label(__('exam.fields.college'))
+                        ->options(fn (): array => College::query()
+                            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->whereKey(ExamCollegeScope::currentCollegeId()))
+                            ->orderBy('name')
+                            ->pluck('name', 'id')
+                            ->all())
+                        ->default(fn (): ?int => ExamCollegeScope::currentCollegeId())
+                        ->required()
+                        ->searchable()
+                        ->preload()
+                        ->live()
+                        ->hidden(fn (): bool => ! ExamCollegeScope::isSuperAdmin()),
+                    DatePicker::make('from_date')
+                        ->label(__('exam.fields.from_date'))
+                        ->required()
+                        ->native(false)
+                        ->displayFormat('d/m/Y')
+                        ->format('Y-m-d')
+                        ->live(),
+                    DatePicker::make('to_date')
+                        ->label(__('exam.fields.to_date'))
+                        ->required()
+                        ->native(false)
+                        ->displayFormat('d/m/Y')
+                        ->format('Y-m-d')
+                        ->live()
+                        ->afterOrEqual('from_date'),
+                    Checkbox::make('redistribute')
+                        ->label(__('exam.global_hall_distribution.redistribute_label'))
+                        ->helperText(__('exam.global_hall_distribution.redistribute_helper'))
+                        ->live(),
+                    Checkbox::make('separate_carry_students')
+                        ->label(__('exam.global_hall_distribution.separate_carry_students_label'))
+                        ->helperText(__('exam.global_hall_distribution.separate_carry_students_helper'))
+                        ->default(false)
+                        ->live(),
+                    Checkbox::make('confirmed')
+                        ->label(__('exam.global_hall_distribution.confirmation_label'))
+                        ->accepted()
+                        ->required()
+                        ->live(),
+                ])
+                ->action(fn (array $data): null => $this->runGlobalDistribution($data)),
+        ];
+    }
+
+    public function latestDistributionRun(): ?StudentDistributionRun
+    {
+        return StudentDistributionRun::query()
+            ->with(['college', 'executor'])
+            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
+            ->latest('executed_at')
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function latestPrintableSlots(): array
+    {
+        $run = $this->latestDistributionRun();
+
+        if (! $run) {
+            return [];
+        }
+
+        return collect($run->summary_json['slots'] ?? [])
+            ->filter(fn (array $slot): bool => (int) ($slot['used_halls_count'] ?? 0) > 0)
+            ->map(fn (array $slot): array => [
+                'exam_date' => $slot['exam_date'] ?? null,
+                'exam_start_time' => $slot['exam_start_time'] ?? $slot['start_time'] ?? null,
+                'used_halls_count' => (int) ($slot['used_halls_count'] ?? 0),
+                'assigned_students_count' => (int) ($slot['assigned_students_count'] ?? 0),
+                'print_url' => route('filament.adminpanel.hall-assignments.attendance-print.index', [
+                    'college_id' => $run->college_id,
+                    'exam_date' => $slot['exam_date'] ?? null,
+                    'exam_start_time' => $slot['exam_start_time'] ?? $slot['start_time'] ?? null,
+                ]),
+            ])
+            ->values()
+            ->all();
+    }
+
+    public function latestResultUrl(): ?string
+    {
+        $run = $this->latestDistributionRun();
+
+        return $run
+            ? SubjectExamOfferingResource::getUrl('global-distribution-results', ['run' => $run])
+            : null;
+    }
+
+    public function examProgramsUrl(): string
+    {
+        return SubjectExamOfferingResource::getUrl('index');
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function runGlobalDistribution(array $data): null
+    {
+        if (
+            (ExamCollegeScope::isSuperAdmin() && empty($data['college_id']))
+            || empty($data['from_date'])
+            || empty($data['to_date'])
+            || ! (bool) ($data['confirmed'] ?? false)
+        ) {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.notifications.global_hall_distribution_failed'))
+                ->body(__('exam.global_hall_distribution.reasons.missing_required_inputs'))
+                ->send();
+
+            app(AuditLogService::class)->log(
+                action: 'student_distribution.run',
+                module: 'student_distribution',
+                description: 'تنفيذ توزيع الطلاب',
+                metadata: [
+                    'faculty_id' => $data['college_id'] ?? null,
+                    'from_date' => $data['from_date'] ?? null,
+                    'to_date' => $data['to_date'] ?? null,
+                    'status' => 'missing_required_inputs',
+                ],
+                status: 'failed',
+            );
+
+            return null;
+        }
+
+        $collegeId = ExamCollegeScope::enforceCollegeId($data['college_id'] ?? null);
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $collegeId,
+            fromDate: (string) $data['from_date'],
+            toDate: (string) $data['to_date'],
+            redistribute: (bool) ($data['redistribute'] ?? false),
+            separateCarryStudents: (bool) ($data['separate_carry_students'] ?? false),
+        );
+
+        app(AuditLogService::class)->log(
+            action: (bool) ($data['redistribute'] ?? false)
+                ? 'student_distribution.rerun'
+                : 'student_distribution.run',
+            module: 'student_distribution',
+            description: (bool) ($data['redistribute'] ?? false)
+                ? 'إعادة توزيع الطلاب'
+                : 'تنفيذ توزيع الطلاب',
+            metadata: [
+                'faculty_id' => $collegeId,
+                'from_date' => (string) $data['from_date'],
+                'to_date' => (string) $data['to_date'],
+                'total_students' => $result['total_students'] ?? null,
+                'distributed_students' => $result['distributed_students'] ?? null,
+                'unassigned_students' => $result['unassigned_students'] ?? null,
+                'used_halls' => $result['used_halls'] ?? null,
+                'status' => $result['status'] ?? null,
+                'run_id' => $result['run_id'] ?? null,
+                'separate_carry_students' => (bool) ($data['separate_carry_students'] ?? false),
+            ],
+            status: match ($result['status'] ?? 'failed') {
+                'success' => 'success',
+                'partial' => 'warning',
+                default => 'failed',
+            },
+        );
+
+        if (($result['status'] ?? 'failed') === 'failed') {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.notifications.global_hall_distribution_failed'))
+                ->body(collect([
+                    $result['reason'] ?? $result['message'],
+                    __('exam.global_hall_distribution.review_failure_reason'),
+                ])->filter()->implode(' '))
+                ->persistent()
+                ->send();
+
+            $this->redirect($result['result_url']);
+
+            return null;
+        }
+
+        $notification = Notification::make()
+            ->title(match ($result['status']) {
+                'success' => __('exam.notifications.global_hall_distribution_completed'),
+                'partial' => __('exam.notifications.global_hall_distribution_completed_with_issues'),
+                default => __('exam.notifications.global_hall_distribution_failed'),
+            })
+            ->body($this->globalDistributionSummaryBody($result));
+
+        (match ($result['status']) {
+            'success' => $notification->success(),
+            'partial' => $notification->warning()->persistent(),
+            default => $notification->danger()->persistent(),
+        })->send();
+
+        $this->redirect($result['result_url']);
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function globalDistributionSummaryBody(array $result): string
+    {
+        $intro = match ($result['status'] ?? 'failed') {
+            'success' => __('exam.global_hall_distribution.success_notification_body'),
+            'partial' => __('exam.global_hall_distribution.partial_notification_body').' '.__('exam.global_hall_distribution.summary.unassigned_students_count').': '.($result['unassigned_students'] ?? 0).'. '.__('exam.global_hall_distribution.shortage_report_hint'),
+            default => __('exam.global_hall_distribution.failed_notification_body'),
+        };
+
+        return collect([
+            $intro,
+            __('exam.global_hall_distribution.summary.offerings_count').': '.($result['total_offerings'] ?? 0),
+            __('exam.global_hall_distribution.summary.slots_count').': '.($result['total_slots'] ?? 0),
+            __('exam.global_hall_distribution.summary.students_count').': '.($result['total_students'] ?? 0),
+            __('exam.global_hall_distribution.summary.assigned_students_count').': '.($result['distributed_students'] ?? 0),
+            __('exam.global_hall_distribution.summary.unassigned_students_count').': '.($result['unassigned_students'] ?? 0),
+            __('exam.global_hall_distribution.summary.used_halls_count').': '.($result['used_halls'] ?? 0),
+            __('exam.global_hall_distribution.summary.total_capacity').': '.($result['total_capacity'] ?? 0),
+            __('exam.global_hall_distribution.summary.capacity_shortage').': '.($result['capacity_shortage'] ?? 0),
+            __('exam.global_hall_distribution.summary.distributed_slots_count').': '.($result['distributed_slots_count'] ?? 0),
+            __('exam.global_hall_distribution.summary.skipped_slots_count').': '.($result['skipped_slots_count'] ?? 0),
+            __('exam.global_hall_distribution.summary.issue_slots_count').': '.($result['issue_slots_count'] ?? 0),
+            __('exam.global_hall_distribution.summary.separate_carry_students').': '.((bool) ($result['separate_carry_students'] ?? false) ? 'نعم' : 'لا'),
+            (bool) ($result['separate_carry_students'] ?? false) ? ($result['separation_status_message'] ?? null) : null,
+        ])->implode(' | ');
+    }
+}

@@ -9,6 +9,7 @@ use App\Enums\ExamStudentType;
 use App\Enums\InvigilationRole;
 use App\Enums\StaffCategory;
 use App\Exports\SubjectExamRosterStudentsTemplateExport;
+use App\Filament\Pages\ComprehensiveStudentDistribution;
 use App\Filament\Pages\ExamScheduleGenerator;
 use App\Filament\Resources\Subjects\Pages\EditSubject;
 use App\Filament\Resources\Subjects\SubjectResource;
@@ -204,6 +205,19 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         $this->assertSame(9, SubjectExamRosterResource::getNavigationSort());
         $this->assertSame(10, ExamScheduleGenerator::getNavigationSort());
         $this->assertSame(11, SubjectExamOfferingResource::getNavigationSort());
+        $this->assertSame(12, ComprehensiveStudentDistribution::getNavigationSort());
+        $this->assertSame('/adminpanel/subject-exam-offerings', parse_url(SubjectExamOfferingResource::getUrl('index'), PHP_URL_PATH));
+        $this->assertSame('/adminpanel/comprehensive-student-distribution', parse_url(ComprehensiveStudentDistribution::getUrl(), PHP_URL_PATH));
+        $this->assertNotSame(SubjectExamOfferingResource::getUrl('index'), ComprehensiveStudentDistribution::getUrl());
+        $this->assertSame([
+            'filament.adminpanel.resources.subject-exam-offerings.index',
+            'filament.adminpanel.resources.subject-exam-offerings.create',
+            'filament.adminpanel.resources.subject-exam-offerings.edit',
+        ], SubjectExamOfferingResource::getNavigationItemActiveRoutePattern());
+        $this->assertSame(
+            'filament.adminpanel.pages.comprehensive-student-distribution',
+            ComprehensiveStudentDistribution::getNavigationItemActiveRoutePattern(),
+        );
         $this->assertTrue(SubjectExamRosterResource::canViewAny());
         $this->assertSame([
             'الرقم الامتحاني',
@@ -266,6 +280,7 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         $user = User::factory()->create(['college_id' => $context['college']->id]);
         $user->givePermissionTo([
             Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamRoster'), 'web'),
+            Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'),
             Permission::findOrCreate('view_exam_schedule_generator', 'web'),
         ]);
 
@@ -282,6 +297,12 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
             ->assertSee('جاهزية قوائم طلاب المواد')
             ->assertSee('يجب استيراد الطلاب وتحديد القوائم كجاهزة قبل توليد البرنامج.')
             ->assertSee('لم يتم توليد مسودة بعد.');
+
+        Livewire::actingAs($user)
+            ->test(ComprehensiveStudentDistribution::class)
+            ->assertSee('توزيع شامل للطلاب على القاعات')
+            ->assertSee('آخر عملية توزيع محفوظة في قاعدة البيانات')
+            ->assertSee(__('exam.global_hall_distribution.no_previous_run'));
     }
 
     #[Test]

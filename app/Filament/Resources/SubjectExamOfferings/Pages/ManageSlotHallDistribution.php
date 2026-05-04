@@ -192,6 +192,24 @@ class ManageSlotHallDistribution extends Page
         return SubjectExamOfferingResource::getUrl('index');
     }
 
+    public function getHallAttendancePrintUrl(int|string $hallAssignmentId): string
+    {
+        return route('filament.adminpanel.hall-assignments.attendance-print.show', [
+            'hallAssignment' => $hallAssignmentId,
+        ]);
+    }
+
+    public function getAllHallAttendancePrintUrl(): string
+    {
+        $summary = $this->getSummaryData();
+
+        return route('filament.adminpanel.hall-assignments.attendance-print.index', [
+            'college_id' => $summary['college_id'] ?? $this->getRecord()->subject?->college_id,
+            'exam_date' => $summary['exam_date'] ?? $this->getRecord()->exam_date?->format('Y-m-d'),
+            'exam_start_time' => $summary['exam_start_time'] ?? $this->getRecord()->exam_start_time,
+        ]);
+    }
+
     public function canExportExcel(): bool
     {
         return false;

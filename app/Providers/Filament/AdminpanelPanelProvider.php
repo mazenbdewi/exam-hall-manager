@@ -9,6 +9,7 @@ use App\Filament\Backup\Pages\Backups;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Http\Controllers\Admin\ExamSchedulePrintController;
 use App\Http\Controllers\Admin\FixedExamProgramPrintController;
+use App\Http\Controllers\Admin\HallAttendancePrintController;
 use App\Http\Controllers\Help\UserGuideDownloadController;
 use App\Http\Middleware\AuditRequestMiddleware;
 use App\Http\Middleware\EnsureSecurityPinVerified;
@@ -76,12 +77,6 @@ class AdminpanelPanelProvider extends PanelProvider
                 NavigationGroup::make(__('help.page.navigation_group')),
             ])
             ->navigationItems([
-                NavigationItem::make('توزيع شامل للطلاب على القاعات')
-                    ->group(__('exam.navigation.core_operations'))
-                    ->icon(Heroicon::OutlinedSparkles)
-                    ->sort(12)
-                    ->visible(fn (): bool => SubjectExamOfferingResource::canViewAny())
-                    ->url(fn (): string => SubjectExamOfferingResource::getUrl('index')),
                 NavigationItem::make('سجل نتائج توزيع الطلاب')
                     ->group(__('exam.navigation.core_operations'))
                     ->icon(Heroicon::OutlinedDocumentChartBar)
@@ -113,6 +108,12 @@ class AdminpanelPanelProvider extends PanelProvider
 
                 Route::get('/fixed-exam-programs/{fixedExamProgram}/print', FixedExamProgramPrintController::class)
                     ->name('fixed-exam-programs.print');
+
+                Route::get('/hall-assignments/attendance-print', [HallAttendancePrintController::class, 'index'])
+                    ->name('hall-assignments.attendance-print.index');
+
+                Route::get('/hall-assignments/{hallAssignment}/attendance-print', [HallAttendancePrintController::class, 'show'])
+                    ->name('hall-assignments.attendance-print.show');
             })
             ->middleware([
                 EncryptCookies::class,

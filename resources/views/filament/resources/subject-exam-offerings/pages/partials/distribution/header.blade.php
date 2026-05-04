@@ -47,6 +47,12 @@
                 {{ __('exam.actions.export_hall_distribution_pdf') }}
             </x-filament::button>
 
+            @if ($hasDistribution)
+                <x-filament::button tag="a" :href="$this->getAllHallAttendancePrintUrl()" target="_blank" rel="noopener" color="success" icon="heroicon-o-printer">
+                    طباعة تفقد كل القاعات
+                </x-filament::button>
+            @endif
+
             @if ($createHallUrl)
                 <x-filament::button tag="a" :href="$createHallUrl" color="gray" icon="heroicon-o-plus">
                     {{ __('exam.actions.add_exam_hall') }}

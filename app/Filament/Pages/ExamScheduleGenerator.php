@@ -635,7 +635,7 @@ class ExamScheduleGenerator extends Page
 
     public function globalDistributionUrl(): string
     {
-        return SubjectExamOfferingResource::getUrl('index');
+        return ComprehensiveStudentDistribution::getUrl();
     }
 
     public function invigilatorDistributionUrl(): string
