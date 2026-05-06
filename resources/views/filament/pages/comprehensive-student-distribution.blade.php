@@ -111,7 +111,7 @@
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h3 class="text-lg font-bold text-gray-950 dark:text-white">{{ __('exam.global_hall_distribution.latest_title') }}</h3>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">آخر عملية توزيع محفوظة في قاعدة البيانات، مع روابط النتائج والطباعة العملية للقاعات.</p>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">آخر عملية توزيع محفوظة في قاعدة البيانات، مع رابط مراجعة النتائج والانتقال إلى التقارير عند الجاهزية.</p>
                 </div>
 
                 @if ($resultUrl)
@@ -180,96 +180,38 @@
 
         @if ($run)
             <section class="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-gray-900">
-                <div class="mb-4">
-                    <h3 class="text-lg font-bold text-gray-950 dark:text-white">طباعة تفقد القاعات</h3>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        @if ($studentsDistributed && ! $supervisorsDistributed)
-                            تم توزيع الطلاب على القاعات بنجاح، لكن لم يتم توزيع المراقبين بعد. يرجى توزيع المراقبين قبل طباعة التفقد النهائي.
-                        @elseif ($printReady)
-                            التفقد النهائي جاهز للطباعة لأن الطلاب والمراقبين موزعون على القاعات.
-                        @else
-                            روابط الطباعة تظهر بعد تنفيذ توزيع الطلاب على القاعات.
-                        @endif
-                    </p>
+                <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-950 dark:text-white">الخطوة التالية</h3>
+                        <p class="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">
+                            @if ($studentsDistributed && ! $supervisorsDistributed)
+                                تم توزيع الطلاب على القاعات بنجاح، لكن لم يتم توزيع المراقبين بعد. يرجى توزيع المراقبين قبل طباعة التفقد النهائي.
+                            @elseif ($printReady)
+                                التوزيع جاهز. انتقل إلى مركز التقارير والطباعة لاختيار التقرير أو كشف التفقد المطلوب.
+                            @else
+                                نفذ توزيع الطلاب أولًا، ثم تابع توزيع المراقبين قبل الطباعة النهائية.
+                            @endif
+                        </p>
+                    </div>
+
+                    @if ($studentsDistributed && ! $supervisorsDistributed)
+                        <x-filament::button tag="a" :href="$this->invigilatorDistributionUrl()" color="warning" icon="heroicon-o-user-group">
+                            توزيع المراقبين الآن
+                        </x-filament::button>
+                    @elseif ($printReady)
+                        <x-filament::button tag="a" :href="$this->reportsDashboardUrl()" color="success" icon="heroicon-o-printer">
+                            عرض التقارير والطباعة
+                        </x-filament::button>
+                    @else
+                        <x-filament::button tag="a" :href="$this->reportsDashboardUrl()" color="gray" icon="heroicon-o-printer">
+                            عرض التقارير والطباعة
+                        </x-filament::button>
+                    @endif
                 </div>
 
-                @if ($printableSlots !== [])
-                    @if (! $supervisorsDistributed)
-                        <div class="mb-4 rounded-2xl border border-danger-200 bg-danger-50 p-4 text-danger-900 dark:border-danger-500/20 dark:bg-danger-500/10 dark:text-danger-200">
-                            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                <div class="flex gap-3">
-                                    <x-filament::icon icon="heroicon-o-exclamation-triangle" class="mt-0.5 h-6 w-6 shrink-0" />
-                                    <div>
-                                        <div class="font-bold">لا يمكن طباعة التفقد النهائي قبل توزيع المراقبين</div>
-                                        <p class="mt-1 text-sm leading-6">
-                                            لا يمكن طباعة تفقد القاعات النهائي قبل توزيع المراقبين، لأن أسماء رئيس القاعة وأمين السر والمراقبين لن تظهر في التقرير.
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <x-filament::button tag="a" :href="$this->invigilatorDistributionUrl()" color="warning" icon="heroicon-o-user-group">
-                                    توزيع المراقبين الآن
-                                </x-filament::button>
-                            </div>
-                        </div>
-                    @endif
-
-                    <div class="grid gap-3 lg:grid-cols-2">
-                        @foreach ($printableSlots as $slot)
-                            @php
-                                $slotReady = (bool) ($slot['supervisors_distributed'] ?? false);
-                            @endphp
-                            <div class="rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-white/10 dark:bg-white/5">
-                                <div class="flex flex-wrap items-start justify-between gap-3">
-                                    <div>
-                                        <div class="flex flex-wrap items-center gap-2">
-                                            <div class="font-bold text-gray-950 dark:text-white">
-                                                {{ $slot['exam_date'] }} · {{ substr((string) $slot['exam_start_time'], 0, 5) }}
-                                            </div>
-                                            <span class="rounded-full px-2.5 py-1 text-xs font-semibold {{ $slotReady ? $workflowBadgeClasses['ready'] : $workflowBadgeClasses['not-ready'] }}">
-                                                {{ $slotReady ? 'جاهز للطباعة' : 'غير جاهز للطباعة' }}
-                                            </span>
-                                        </div>
-                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                                            {{ __('exam.global_hall_distribution.summary.used_halls_count') }}: {{ $slot['used_halls_count'] }}
-                                            · {{ __('exam.global_hall_distribution.summary.assigned_students_count') }}: {{ $slot['assigned_students_count'] }}
-                                        </div>
-                                        @if (! $slotReady)
-                                            <div class="mt-2 text-sm font-semibold text-danger-700 dark:text-danger-300">
-                                                توزيع المراقبين غير مكتمل لهذا الموعد.
-                                            </div>
-                                        @endif
-                                    </div>
-
-                                    <div class="flex flex-wrap gap-2">
-                                        @if ($slotReady)
-                                            <x-filament::button tag="a" :href="$slot['print_url']" target="_blank" rel="noopener" color="success" icon="heroicon-o-printer">
-                                                طباعة تفقد كل القاعات
-                                            </x-filament::button>
-                                        @else
-                                            <x-filament::button color="gray" icon="heroicon-o-printer" disabled>
-                                                طباعة تفقد كل القاعات
-                                            </x-filament::button>
-                                            <x-filament::button
-                                                tag="a"
-                                                :href="$slot['emergency_print_url']"
-                                                target="_blank"
-                                                rel="noopener"
-                                                color="gray"
-                                                icon="heroicon-o-document-text"
-                                                onclick="return confirm('هذا التقرير لا يحتوي أسماء المراقبين. هل تريد المتابعة؟')"
-                                            >
-                                                طباعة بدون مراقبين
-                                            </x-filament::button>
-                                        @endif
-                                    </div>
-                                </div>
-                            </div>
-                        @endforeach
-                    </div>
-                @else
-                    <div class="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-600 dark:border-white/10 dark:bg-white/5 dark:text-gray-300">
-                        لا توجد قاعات موزعة في آخر تشغيل محفوظ يمكن طباعتها الآن.
+                @if ($studentsDistributed && ! $supervisorsDistributed)
+                    <div class="mt-4 rounded-2xl border border-danger-200 bg-danger-50 p-4 text-sm leading-6 text-danger-900 dark:border-danger-500/20 dark:bg-danger-500/10 dark:text-danger-200">
+                        لا يمكن طباعة تفقد القاعات النهائي قبل توزيع المراقبين، لأن أسماء رئيس القاعة وأمين السر والمراقبين لن تظهر في التقرير.
                     </div>
                 @endif
             </section>

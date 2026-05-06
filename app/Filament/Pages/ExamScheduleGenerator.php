@@ -18,6 +18,7 @@ use App\Services\ExamScheduleGeneratorService;
 use App\Support\ExamCollegeScope;
 use BackedEnum;
 use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
@@ -368,8 +369,8 @@ class ExamScheduleGenerator extends Page
             File::makeDirectory($tempDir, 0755, true);
         }
 
-        $defaultConfig = (new ConfigVariables())->getDefaults();
-        $defaultFontConfig = (new FontVariables())->getDefaults();
+        $defaultConfig = (new ConfigVariables)->getDefaults();
+        $defaultFontConfig = (new FontVariables)->getDefaults();
 
         $pdf = new Mpdf([
             'mode' => 'utf-8',
@@ -396,7 +397,7 @@ class ExamScheduleGenerator extends Page
         ])->render());
 
         return response()->streamDownload(
-            fn () => print($pdf->Output('', Destination::STRING_RETURN)),
+            fn () => print ($pdf->Output('', Destination::STRING_RETURN)),
             'exam-schedule-conflicts-'.$draft->id.'.pdf',
             ['Content-Type' => 'application/pdf'],
         );
@@ -643,6 +644,11 @@ class ExamScheduleGenerator extends Page
         return url('/adminpanel/invigilator-distribution');
     }
 
+    public function reportsDashboardUrl(): string
+    {
+        return ReportsDashboard::getUrl();
+    }
+
     public function studentReviewUrl(): string
     {
         return SubjectExamOfferingResource::getUrl('index');
@@ -791,7 +797,7 @@ class ExamScheduleGenerator extends Page
 
         $dates = [];
 
-        foreach (\Carbon\CarbonPeriod::create($start, $end) as $date) {
+        foreach (CarbonPeriod::create($start, $end) as $date) {
             if (in_array((int) $date->dayOfWeek, array_map('intval', $this->excluded_weekdays), true)) {
                 $dates[$date->toDateString()] = [
                     'date' => $date->toDateString(),

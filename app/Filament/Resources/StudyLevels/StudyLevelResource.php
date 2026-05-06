@@ -48,12 +48,12 @@ class StudyLevelResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.academic_setup');
+        return __('exam.navigation.master_data');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 51;
+        return 38;
     }
 
     public static function getModelLabel(): string

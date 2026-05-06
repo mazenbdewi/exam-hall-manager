@@ -45,12 +45,12 @@ class InvigilatorPublicLookupSettingResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.public_lookup');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 22;
+        return 86;
     }
 
     public static function getModelLabel(): string

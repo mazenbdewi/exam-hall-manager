@@ -46,12 +46,12 @@ class InvigilatorDistributionSettingResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.invigilators');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 42;
+        return 83;
     }
 
     public static function getModelLabel(): string

@@ -43,13 +43,9 @@
                 {{ $primaryActionLabel }}
             </x-filament::button>
 
-            <x-filament::button color="gray" icon="heroicon-o-arrow-down-tray" wire:click="exportPdf" :disabled="! $hasDistribution">
-                {{ __('exam.actions.export_hall_distribution_pdf') }}
-            </x-filament::button>
-
             @if ($hasDistribution)
-                <x-filament::button tag="a" :href="$this->getAllHallAttendancePrintUrl()" target="_blank" rel="noopener" color="success" icon="heroicon-o-printer">
-                    طباعة تفقد كل القاعات
+                <x-filament::button tag="a" :href="$this->reportsDashboardUrl()" color="gray" icon="heroicon-o-printer">
+                    عرض التقارير والطباعة
                 </x-filament::button>
             @endif
 

@@ -46,12 +46,12 @@ class InvigilatorHallRequirementResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.invigilators');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 43;
+        return 84;
     }
 
     public static function getModelLabel(): string

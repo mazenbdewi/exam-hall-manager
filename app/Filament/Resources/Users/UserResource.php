@@ -50,12 +50,12 @@ class UserResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.users_permissions');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 61;
+        return 90;
     }
 
     public static function getModelLabel(): string

@@ -80,17 +80,22 @@ class FixedExamProgramResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.core_operations');
+        return __('exam.navigation.reports_printing');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 13;
+        return 21;
     }
 
     public static function getNavigationLabel(): string
     {
         return 'البرامج الامتحانية المثبتة';
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return false;
     }
 
     public static function getModelLabel(): string

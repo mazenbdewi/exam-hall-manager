@@ -6,10 +6,10 @@ use App\Filament\Auth\Pages\Login;
 use App\Filament\Auth\Pages\Profile;
 use App\Filament\Auth\Pages\SecurityPinChallenge;
 use App\Filament\Backup\Pages\Backups;
-use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Http\Controllers\Admin\ExamSchedulePrintController;
 use App\Http\Controllers\Admin\FixedExamProgramPrintController;
 use App\Http\Controllers\Admin\HallAttendancePrintController;
+use App\Http\Controllers\Admin\StudentHallAssignmentReportController;
 use App\Http\Controllers\Help\UserGuideDownloadController;
 use App\Http\Middleware\AuditRequestMiddleware;
 use App\Http\Middleware\EnsureSecurityPinVerified;
@@ -68,32 +68,34 @@ class AdminpanelPanelProvider extends PanelProvider
             ])
             ->navigationGroups([
                 NavigationGroup::make(__('exam.navigation.core_operations'))->collapsed(false),
+                NavigationGroup::make(__('exam.navigation.reports_printing'))->collapsed(false),
                 NavigationGroup::make(__('exam.navigation.public_lookup')),
                 NavigationGroup::make(__('exam.navigation.master_data')),
-                NavigationGroup::make(__('exam.navigation.invigilators')),
-                NavigationGroup::make(__('exam.navigation.academic_setup')),
-                NavigationGroup::make(__('exam.navigation.users_permissions')),
-                NavigationGroup::make(__('exam.navigation.system_management')),
+                NavigationGroup::make(__('exam.navigation.settings')),
                 NavigationGroup::make(__('help.page.navigation_group')),
             ])
             ->navigationItems([
-                NavigationItem::make('سجل نتائج توزيع الطلاب')
-                    ->group(__('exam.navigation.core_operations'))
-                    ->icon(Heroicon::OutlinedDocumentChartBar)
-                    ->sort(14)
-                    ->visible(fn (): bool => SubjectExamOfferingResource::canViewAny())
-                    ->url(fn (): string => route('filament.adminpanel.resources.subject-exam-offerings.global-distribution-results')),
+                NavigationItem::make('استعلام الطلاب')
+                    ->group(__('exam.navigation.public_lookup'))
+                    ->icon(Heroicon::OutlinedAcademicCap)
+                    ->sort(31)
+                    ->url(fn (): string => route('students.lookup'), true),
+                NavigationItem::make('استعلام المراقبين')
+                    ->group(__('exam.navigation.public_lookup'))
+                    ->icon(Heroicon::OutlinedUser)
+                    ->sort(32)
+                    ->url(fn (): string => route('invigilators.lookup'), true),
             ])
             ->plugin(FilamentShieldPlugin::make()
-                ->navigationGroup(__('exam.navigation.users_permissions'))
+                ->navigationGroup(__('exam.navigation.settings'))
                 ->navigationLabel('الأدوار')
-                ->navigationSort(62))
+                ->navigationSort(91))
             ->plugin(FilamentSpatieLaravelBackupPlugin::make()
                 ->usingPage(Backups::class)
                 ->navigationIcon('heroicon-o-archive-box-arrow-down')
                 ->navigationLabel('النسخ الاحتياطي')
-                ->navigationGroup(__('exam.navigation.system_management'))
-                ->navigationSort(74)
+                ->navigationGroup(__('exam.navigation.settings'))
+                ->navigationSort(99)
                 ->authorize(fn (): bool => ExamCollegeScope::isSuperAdmin())
                 ->noTimeout())
             ->authenticatedRoutes(function (): void {
@@ -114,6 +116,9 @@ class AdminpanelPanelProvider extends PanelProvider
 
                 Route::get('/hall-assignments/{hallAssignment}/attendance-print', [HallAttendancePrintController::class, 'show'])
                     ->name('hall-assignments.attendance-print.show');
+
+                Route::get('/reports/student-hall-assignments/print', StudentHallAssignmentReportController::class)
+                    ->name('reports.student-hall-assignments.print');
             })
             ->middleware([
                 EncryptCookies::class,

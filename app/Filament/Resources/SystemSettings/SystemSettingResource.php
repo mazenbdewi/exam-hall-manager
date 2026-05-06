@@ -43,12 +43,12 @@ class SystemSettingResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.system_management');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 71;
+        return 81;
     }
 
     public static function getModelLabel(): string

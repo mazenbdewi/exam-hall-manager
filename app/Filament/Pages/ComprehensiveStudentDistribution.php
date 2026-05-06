@@ -213,6 +213,11 @@ class ComprehensiveStudentDistribution extends Page
         ]);
     }
 
+    public function reportsDashboardUrl(): string
+    {
+        return ReportsDashboard::getUrl();
+    }
+
     /**
      * @return array{is_complete: bool, missing_halls_count: int}
      */

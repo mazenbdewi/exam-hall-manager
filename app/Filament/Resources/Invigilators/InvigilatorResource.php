@@ -50,12 +50,12 @@ class InvigilatorResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.invigilators');
+        return __('exam.navigation.master_data');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 41;
+        return 35;
     }
 
     public static function getModelLabel(): string

@@ -50,12 +50,12 @@ class HallSettingResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.master_data');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 35;
+        return 82;
     }
 
     public static function getModelLabel(): string

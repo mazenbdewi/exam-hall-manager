@@ -159,20 +159,9 @@
                 </x-filament::button>
             @endif
 
-            @if (($summary['has_assignments'] ?? false) || ($summary['shortage_count'] ?? 0) > 0)
-                <x-filament::button color="gray" icon="heroicon-o-user" wire:click="exportPdfByInvigilator">
-                    {{ __('exam.actions.export_invigilator_pdf_by_invigilator') }}
-                </x-filament::button>
-                <x-filament::button color="gray" icon="heroicon-o-building-office-2" wire:click="exportPdfByHall">
-                    {{ __('exam.actions.export_invigilator_pdf_by_hall') }}
-                </x-filament::button>
-                <x-filament::button color="gray" icon="heroicon-o-calendar-days" wire:click="exportPdfByDay">
-                    {{ __('exam.actions.export_invigilator_pdf_by_day') }}
-                </x-filament::button>
-                <x-filament::button color="warning" icon="heroicon-o-exclamation-triangle" wire:click="exportShortagePdf">
-                    {{ __('exam.actions.export_invigilator_shortage_pdf') }}
-                </x-filament::button>
-            @endif
+            <x-filament::button tag="a" :href="$this->reportsDashboardUrl()" color="gray" icon="heroicon-o-printer">
+                عرض التقارير والطباعة
+            </x-filament::button>
         </div>
 
         @if (! empty($disabledReasons) && ! $this->canRunDistribution())

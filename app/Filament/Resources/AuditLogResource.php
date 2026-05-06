@@ -161,12 +161,12 @@ class AuditLogResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.system_management');
+        return __('exam.navigation.settings');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 72;
+        return 92;
     }
 
     public static function getNavigationLabel(): string

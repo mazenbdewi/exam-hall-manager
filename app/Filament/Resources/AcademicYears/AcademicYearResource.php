@@ -48,12 +48,12 @@ class AcademicYearResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return __('exam.navigation.academic_setup');
+        return __('exam.navigation.master_data');
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 52;
+        return 36;
     }
 
     public static function getModelLabel(): string

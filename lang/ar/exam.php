@@ -5,11 +5,13 @@ return [
 
     'navigation' => [
         'core_operations' => 'العمليات الأساسية',
-        'public_lookup' => 'الاستعلام في الصفحة الرئيسية',
+        'reports_printing' => 'التقارير والطباعة',
+        'public_lookup' => 'الاستعلام',
         'master_data' => 'البيانات الأساسية',
-        'users_permissions' => 'إدارة المستخدمين والصلاحيات',
-        'system_management' => 'إدارة النظام',
-        'academic_setup' => 'الإعدادات الأكاديمية',
+        'settings' => 'الإعدادات',
+        'users_permissions' => 'الإعدادات',
+        'system_management' => 'الإعدادات',
+        'academic_setup' => 'البيانات الأساسية',
         'invigilators' => 'المراقبون',
     ],
 

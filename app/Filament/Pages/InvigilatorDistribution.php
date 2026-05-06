@@ -505,6 +505,11 @@ class InvigilatorDistribution extends Page
             : __('exam.actions.run_invigilator_distribution');
     }
 
+    public function reportsDashboardUrl(): string
+    {
+        return ReportsDashboard::getUrl();
+    }
+
     protected function exportFilters(): array
     {
         return [null, null, $this->from_date, $this->to_date];

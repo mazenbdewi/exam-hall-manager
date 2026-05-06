@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\SubjectExamOfferings\Pages;
 
+use App\Filament\Pages\ReportsDashboard;
 use App\Filament\Resources\ExamHalls\ExamHallResource;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Services\AuditLogService;
@@ -208,6 +209,11 @@ class ManageSlotHallDistribution extends Page
             'exam_date' => $summary['exam_date'] ?? $this->getRecord()->exam_date?->format('Y-m-d'),
             'exam_start_time' => $summary['exam_start_time'] ?? $this->getRecord()->exam_start_time,
         ]);
+    }
+
+    public function reportsDashboardUrl(): string
+    {
+        return ReportsDashboard::getUrl();
     }
 
     public function canExportExcel(): bool
