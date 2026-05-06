@@ -25,6 +25,7 @@ class HallAttendancePrintController extends Controller
             'college_id' => ['required', 'integer'],
             'exam_date' => ['required', 'date'],
             'exam_start_time' => ['required', 'string'],
+            'allow_without_supervisors' => ['sometimes', 'boolean'],
         ]);
 
         $collegeId = (int) $filters['college_id'];
@@ -44,16 +45,22 @@ class HallAttendancePrintController extends Controller
 
         abort_if($hallAssignments->isEmpty(), 404);
 
-        return response()->view('admin.hall-attendance.print', $this->viewData($hallAssignments));
+        return response()->view('admin.hall-attendance.print', $this->viewData(
+            hallAssignments: $hallAssignments,
+            allowWithoutSupervisors: (bool) ($filters['allow_without_supervisors'] ?? false),
+        ));
     }
 
-    public function show(HallAssignment $hallAssignment): Response
+    public function show(Request $request, HallAssignment $hallAssignment): Response
     {
         $this->authorizeCollegeAccess((int) $hallAssignment->college_id);
 
         $hallAssignment->loadMissing($this->hallAssignmentRelations());
 
-        return response()->view('admin.hall-attendance.print', $this->viewData(collect([$hallAssignment])));
+        return response()->view('admin.hall-attendance.print', $this->viewData(
+            hallAssignments: collect([$hallAssignment]),
+            allowWithoutSupervisors: $request->boolean('allow_without_supervisors'),
+        ));
     }
 
     /**
@@ -82,11 +89,12 @@ class HallAttendancePrintController extends Controller
      * @param  Collection<int, HallAssignment>  $hallAssignments
      * @return array<string, mixed>
      */
-    protected function viewData(Collection $hallAssignments): array
+    protected function viewData(Collection $hallAssignments, bool $allowWithoutSupervisors = false): array
     {
         $firstAssignment = $hallAssignments->first();
         $invigilatorAssignments = $this->invigilatorAssignmentsFor($hallAssignments);
         $systemSetting = SystemSetting::current();
+        $hasMissingSupervisorDistribution = $this->hasMissingSupervisorDistribution($hallAssignments, $invigilatorAssignments);
 
         return [
             'systemSetting' => $systemSetting,
@@ -99,12 +107,43 @@ class HallAttendancePrintController extends Controller
                 ->values()
                 ->all(),
             'printTitle' => $hallAssignments->count() > 1 ? 'طباعة تفقد كل القاعات' : 'طباعة تفقد القاعة',
+            'supervisorWarning' => $allowWithoutSupervisors && $hasMissingSupervisorDistribution
+                ? 'تنبيه: لم يتم توزيع المراقبين بعد، لذلك لا يحتوي هذا الكشف على أسماء رئيس القاعة وأمين السر والمراقبين.'
+                : null,
             'regularFontDataUri' => $this->fontDataUri('NotoSansArabic-Regular.ttf'),
             'boldFontDataUri' => $this->fontDataUri('NotoSansArabic-Bold.ttf'),
             'slotLabel' => $firstAssignment
                 ? $this->dayDateLabel($firstAssignment->exam_date).' - '.$this->displayTime($firstAssignment->exam_start_time)
                 : null,
         ];
+    }
+
+    /**
+     * @param  Collection<int, HallAssignment>  $hallAssignments
+     * @param  Collection<int, Collection<int, InvigilatorAssignment>>  $invigilatorAssignments
+     */
+    protected function hasMissingSupervisorDistribution(Collection $hallAssignments, Collection $invigilatorAssignments): bool
+    {
+        $requiredRoles = collect([
+            InvigilationRole::HallHead->value,
+            InvigilationRole::Secretary->value,
+            InvigilationRole::Regular->value,
+        ]);
+
+        return $hallAssignments
+            ->pluck('exam_hall_id')
+            ->filter()
+            ->unique()
+            ->contains(function ($hallId) use ($invigilatorAssignments, $requiredRoles): bool {
+                $assignedRoles = $invigilatorAssignments
+                    ->get($hallId, collect())
+                    ->filter(fn (InvigilatorAssignment $assignment): bool => filled($assignment->invigilator_id))
+                    ->map(fn (InvigilatorAssignment $assignment): string => $this->roleValue($assignment))
+                    ->unique()
+                    ->values();
+
+                return $requiredRoles->diff($assignedRoles)->isNotEmpty();
+            });
     }
 
     /**

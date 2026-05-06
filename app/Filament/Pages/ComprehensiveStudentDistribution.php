@@ -2,8 +2,12 @@
 
 namespace App\Filament\Pages;
 
+use App\Enums\InvigilationRole;
+use App\Enums\InvigilatorAssignmentStatus;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\College;
+use App\Models\HallAssignment;
+use App\Models\InvigilatorAssignment;
 use App\Models\StudentDistributionRun;
 use App\Services\AuditLogService;
 use App\Services\ExamHallDistributionService;
@@ -151,17 +155,35 @@ class ComprehensiveStudentDistribution extends Page
 
         return collect($run->summary_json['slots'] ?? [])
             ->filter(fn (array $slot): bool => (int) ($slot['used_halls_count'] ?? 0) > 0)
-            ->map(fn (array $slot): array => [
-                'exam_date' => $slot['exam_date'] ?? null,
-                'exam_start_time' => $slot['exam_start_time'] ?? $slot['start_time'] ?? null,
-                'used_halls_count' => (int) ($slot['used_halls_count'] ?? 0),
-                'assigned_students_count' => (int) ($slot['assigned_students_count'] ?? 0),
-                'print_url' => route('filament.adminpanel.hall-assignments.attendance-print.index', [
+            ->map(function (array $slot) use ($run): array {
+                $examDate = $slot['exam_date'] ?? null;
+                $examStartTime = $slot['exam_start_time'] ?? $slot['start_time'] ?? null;
+                $printParameters = [
                     'college_id' => $run->college_id,
-                    'exam_date' => $slot['exam_date'] ?? null,
-                    'exam_start_time' => $slot['exam_start_time'] ?? $slot['start_time'] ?? null,
-                ]),
-            ])
+                    'exam_date' => $examDate,
+                    'exam_start_time' => $examStartTime,
+                ];
+                $printUrl = route('filament.adminpanel.hall-assignments.attendance-print.index', $printParameters);
+                $supervisorStatus = $this->supervisorDistributionStatus(
+                    collegeId: (int) $run->college_id,
+                    examDate: $examDate,
+                    examStartTime: $examStartTime,
+                );
+
+                return [
+                    'exam_date' => $examDate,
+                    'exam_start_time' => $examStartTime,
+                    'used_halls_count' => (int) ($slot['used_halls_count'] ?? 0),
+                    'assigned_students_count' => (int) ($slot['assigned_students_count'] ?? 0),
+                    'supervisors_distributed' => $supervisorStatus['is_complete'],
+                    'missing_supervisor_halls_count' => $supervisorStatus['missing_halls_count'],
+                    'print_url' => $printUrl,
+                    'emergency_print_url' => route('filament.adminpanel.hall-assignments.attendance-print.index', [
+                        ...$printParameters,
+                        'allow_without_supervisors' => 1,
+                    ]),
+                ];
+            })
             ->values()
             ->all();
     }
@@ -178,6 +200,90 @@ class ComprehensiveStudentDistribution extends Page
     public function examProgramsUrl(): string
     {
         return SubjectExamOfferingResource::getUrl('index');
+    }
+
+    public function invigilatorDistributionUrl(): string
+    {
+        $run = $this->latestDistributionRun();
+
+        return InvigilatorDistribution::getUrl([
+            'college_id' => $run?->college_id ?? ExamCollegeScope::currentCollegeId(),
+            'from_date' => $run?->from_date?->toDateString(),
+            'to_date' => $run?->to_date?->toDateString(),
+        ]);
+    }
+
+    /**
+     * @return array{is_complete: bool, missing_halls_count: int}
+     */
+    protected function supervisorDistributionStatus(int $collegeId, mixed $examDate, mixed $examStartTime): array
+    {
+        if (blank($examDate) || blank($examStartTime)) {
+            return [
+                'is_complete' => false,
+                'missing_halls_count' => 0,
+            ];
+        }
+
+        $hallIds = HallAssignment::query()
+            ->where('college_id', $collegeId)
+            ->whereDate('exam_date', (string) $examDate)
+            ->whereTime('exam_start_time', $this->normalizeSlotTime($examStartTime))
+            ->pluck('exam_hall_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($hallIds->isEmpty()) {
+            return [
+                'is_complete' => false,
+                'missing_halls_count' => 0,
+            ];
+        }
+
+        $requiredRoles = collect([
+            InvigilationRole::HallHead->value,
+            InvigilationRole::Secretary->value,
+            InvigilationRole::Regular->value,
+        ]);
+
+        $rolesByHall = InvigilatorAssignment::query()
+            ->where('college_id', $collegeId)
+            ->whereDate('exam_date', (string) $examDate)
+            ->whereTime('start_time', $this->normalizeSlotTime($examStartTime))
+            ->whereIn('exam_hall_id', $hallIds)
+            ->whereIn('invigilation_role', $requiredRoles)
+            ->where('assignment_status', '<>', InvigilatorAssignmentStatus::Cancelled->value)
+            ->whereNotNull('invigilator_id')
+            ->get(['exam_hall_id', 'invigilation_role'])
+            ->groupBy('exam_hall_id')
+            ->map(fn ($assignments) => $assignments
+                ->pluck('invigilation_role')
+                ->map(fn ($role): string => $role instanceof InvigilationRole ? $role->value : (string) $role)
+                ->unique()
+                ->values());
+
+        $missingHallsCount = $hallIds
+            ->filter(fn ($hallId): bool => $requiredRoles
+                ->diff($rolesByHall->get($hallId, collect()))
+                ->isNotEmpty())
+            ->count();
+
+        return [
+            'is_complete' => $missingHallsCount === 0,
+            'missing_halls_count' => $missingHallsCount,
+        ];
+    }
+
+    protected function normalizeSlotTime(mixed $time): string
+    {
+        $time = trim((string) $time);
+
+        if (preg_match('/^\d{2}:\d{2}$/', $time) === 1) {
+            return $time.':00';
+        }
+
+        return $time;
     }
 
     /**

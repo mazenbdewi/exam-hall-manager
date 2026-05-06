@@ -147,6 +147,17 @@
             table-layout: fixed;
         }
 
+        .report-warning {
+            background: #fff3cd;
+            border: 1px solid #8a6d3b;
+            color: #4a3412;
+            font-size: 12px;
+            font-weight: 700;
+            margin-top: 4mm;
+            padding: 6px 8px;
+            text-align: center;
+        }
+
         .info-table th,
         .info-table td {
             border: 1px solid #222222;
@@ -342,6 +353,10 @@
                     <div class="department-name">{{ $sheet['department_name'] }}</div>
                     <div class="document-title">كشف تفقد القاعة الامتحانية</div>
                 </header>
+
+                @if (filled($supervisorWarning ?? null))
+                    <div class="report-warning">{{ $supervisorWarning }}</div>
+                @endif
 
                 <table class="info-table">
                     <tr>
