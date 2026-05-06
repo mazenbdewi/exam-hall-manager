@@ -8,7 +8,6 @@ use BackedEnum;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
-use Filament\Infolists\Components\CodeEntry;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
@@ -215,17 +214,49 @@ class AuditLogResource extends Resource
                 ]),
             Section::make('القيم السابقة')
                 ->schema([
-                    CodeEntry::make('old_values')->label('القيم السابقة')->placeholder('-'),
+                    self::jsonTextEntry('old_values', 'القيم السابقة'),
                 ]),
             Section::make('القيم الجديدة')
                 ->schema([
-                    CodeEntry::make('new_values')->label('القيم الجديدة')->placeholder('-'),
+                    self::jsonTextEntry('new_values', 'القيم الجديدة'),
                 ]),
             Section::make('بيانات إضافية')
                 ->schema([
-                    CodeEntry::make('metadata')->label('بيانات إضافية')->placeholder('-'),
+                    self::jsonTextEntry('metadata', 'بيانات إضافية'),
                 ]),
         ];
+    }
+
+    protected static function jsonTextEntry(string $name, string $label): TextEntry
+    {
+        return TextEntry::make($name)
+            ->label($label)
+            ->state(fn (AuditLog $record): ?string => self::formatJsonState($record->getAttribute($name)))
+            ->placeholder('-')
+            ->copyable()
+            ->extraAttributes([
+                'class' => 'font-mono text-xs',
+                'dir' => 'ltr',
+                'style' => 'white-space: pre-wrap; word-break: break-word;',
+            ]);
+    }
+
+    protected static function formatJsonState(mixed $state): ?string
+    {
+        if (blank($state)) {
+            return null;
+        }
+
+        if (is_string($state)) {
+            $decoded = json_decode($state, true);
+            $state = json_last_error() === JSON_ERROR_NONE ? $decoded : $state;
+        }
+
+        if (! is_array($state)) {
+            return (string) $state;
+        }
+
+        return json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: null;
     }
 
     protected static function statusLabel(?string $status): string
