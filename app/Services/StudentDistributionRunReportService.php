@@ -4,9 +4,8 @@ namespace App\Services;
 
 use App\Exports\StudentDistributionUnassignedExport;
 use App\Models\StudentDistributionRun;
-use App\Models\SystemSetting;
+use App\Support\InstitutionSettings;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
 use Maatwebsite\Excel\Facades\Excel;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
@@ -73,13 +72,14 @@ class StudentDistributionRunReportService
     protected function downloadPdf(string $view, string $filenamePrefix, StudentDistributionRun $run, array $data = []): StreamedResponse
     {
         $run->loadMissing(['college', 'executor', 'issues.subjectExamOffering.subject']);
-        $systemSetting = SystemSetting::current();
+        $institution = InstitutionSettings::make();
+        $systemSetting = $institution->reportContext($run->college?->name);
 
         $html = view($view, [
             'run' => $run,
             'summary' => $run->summary_json ?? [],
             'systemSetting' => $systemSetting,
-            'logoDataUri' => $this->getLogoDataUri($systemSetting->university_logo),
+            'logoDataUri' => $institution->logoDataUri(),
             ...$data,
         ])->render();
 
@@ -137,15 +137,4 @@ class StudentDistributionRunReportService
         return $pdf;
     }
 
-    protected function getLogoDataUri(?string $path): ?string
-    {
-        if (! $path || ! Storage::disk('public')->exists($path)) {
-            return null;
-        }
-
-        $contents = Storage::disk('public')->get($path);
-        $mimeType = Storage::disk('public')->mimeType($path) ?: 'image/png';
-
-        return 'data:'.$mimeType.';base64,'.base64_encode($contents);
-    }
 }

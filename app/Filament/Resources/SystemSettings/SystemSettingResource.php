@@ -14,6 +14,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class SystemSettingResource extends Resource
@@ -77,7 +78,25 @@ class SystemSettingResource extends Resource
             $data,
             [
                 'university_name' => ['required', 'string', 'max:255'],
-                'university_logo' => ['nullable', 'string', 'max:255'],
+                'university_logo' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                    function (string $attribute, mixed $value, \Closure $fail): void {
+                        if (! filled($value) || ! Storage::disk('public')->exists((string) $value)) {
+                            return;
+                        }
+
+                        $mimeType = Storage::disk('public')->mimeType((string) $value);
+
+                        if (! in_array($mimeType, ['image/png', 'image/jpeg', 'image/webp'], true)) {
+                            $fail(__('validation.mimes', [
+                                'attribute' => __('exam.fields.university_logo'),
+                                'values' => 'png, jpg, jpeg, webp',
+                            ]));
+                        }
+                    },
+                ],
             ],
             attributes: [
                 'university_name' => __('exam.fields.university_name'),

@@ -22,16 +22,6 @@
     height: 70px;
     object-fit: contain;
 }
-.report-logo-placeholder {
-    width: 70px;
-    height: 54px;
-    padding-top: 16px;
-    border: 1px solid #94a3b8;
-    color: #64748b;
-    background: #ffffff;
-    font-size: 9px;
-    text-align: center;
-}
 .report-title-cell {
     padding-right: 12px;
 }

@@ -16,6 +16,7 @@ use App\Models\SubjectExamRoster;
 use App\Services\AuditLogService;
 use App\Services\ExamScheduleGeneratorService;
 use App\Support\ExamCollegeScope;
+use App\Support\InstitutionSettings;
 use BackedEnum;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
@@ -390,10 +391,13 @@ class ExamScheduleGenerator extends Page
         $pdf->autoScriptToLang = true;
         $pdf->autoLangToFont = true;
         $pdf->SetDirectionality('rtl');
+        $institution = InstitutionSettings::make();
         $pdf->WriteHTML(view('pdf.exam-schedule-conflicts', [
             'draft' => $draft,
             'conflicts' => $validation['conflicts'] ?? [],
             'summary' => $validation['summary'] ?? [],
+            'systemSetting' => $institution->reportContext($draft->college?->name),
+            'logoDataUri' => $institution->logoDataUri(),
         ])->render());
 
         return response()->streamDownload(

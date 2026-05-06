@@ -9,8 +9,8 @@ use App\Models\Department;
 use App\Models\HallAssignment;
 use App\Models\Semester;
 use App\Models\StudentDistributionRun;
-use App\Models\SystemSetting;
 use App\Support\ExamCollegeScope;
+use App\Support\InstitutionSettings;
 use BackedEnum;
 use Carbon\Carbon;
 use Filament\Pages\Page;
@@ -328,10 +328,11 @@ class HallDistributionByPeriodReport extends Page
 
     protected function reportMeta(): array
     {
-        $systemSetting = SystemSetting::current();
+        $institution = InstitutionSettings::make();
 
         return [
-            'university_name' => $systemSetting->university_name,
+            'university_name' => $institution->universityName(),
+            'logo_data_uri' => $institution->logoDataUri(),
             'college_name' => $this->college_id
                 ? (College::query()->find($this->college_id)?->name ?? '')
                 : 'كل الكليات',

@@ -19,7 +19,17 @@
         }
 
         .report-document-header {
+            position: relative;
             text-align: center;
+        }
+
+        .report-logo {
+            height: 72px;
+            object-fit: contain;
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 72px;
         }
 
         .report-document-header .line {
@@ -278,6 +288,9 @@
 
         <section class="report-print-area rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
             <div class="report-document-header">
+                @if (! empty($meta['logo_data_uri'] ?? null))
+                    <img src="{{ $meta['logo_data_uri'] }}" alt="{{ $meta['university_name'] ?? '' }}" class="report-logo">
+                @endif
                 <div class="line">{{ $meta['university_name'] ?? '' }}</div>
                 <div class="line">{{ $meta['college_name'] ?? '' }}</div>
                 <div class="line">{{ $meta['department_name'] ?? '' }}</div>

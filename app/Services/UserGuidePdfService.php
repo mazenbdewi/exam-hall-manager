@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\InstitutionSettings;
 use Illuminate\Support\Facades\File;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
@@ -29,8 +30,12 @@ class UserGuidePdfService
 
     protected function html(): string
     {
+        $institution = InstitutionSettings::make();
+
         return view('pdf.user-guide', [
             'guide' => __('help.guide'),
+            'systemSetting' => $institution->reportContext(),
+            'logoDataUri' => $institution->logoDataUri(),
         ])->render();
     }
 

@@ -1,5 +1,5 @@
 @php
-    $universityName = filled($universityName ?? null) ? $universityName : 'الجامعة الافتراضية السورية';
+    $universityName = filled($universityName ?? null) ? $universityName : \App\Support\InstitutionSettings::make()->universityName();
     $facultyName = filled($facultyName ?? null) ? $facultyName : '—';
     $reportTitle = filled($reportTitle ?? null) ? $reportTitle : '';
     $reportSubtitle = filled($reportSubtitle ?? null) ? $reportSubtitle : null;
@@ -12,8 +12,6 @@
             <td class="report-logo-cell">
                 @if (! empty($universityLogo))
                     <img src="{{ $universityLogo }}" alt="University Logo" class="report-logo">
-                @else
-                    <div class="report-logo-placeholder">شعار الجامعة</div>
                 @endif
             </td>
             <td class="report-title-cell">

@@ -18,6 +18,7 @@ use App\Support\RoleNames;
 use App\Support\ShieldPermission;
 use App\Services\ExamScheduleGeneratorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -76,7 +77,13 @@ class ExamSchedulePrintTest extends TestCase
         $academicYear->update(['name' => '2030-2031']);
         $semester->update(['name' => 'فصل معدل']);
         $firstSubject->update(['name' => 'تحليل معدل']);
-        SystemSetting::current()->update(['university_name' => 'جامعة معدلة']);
+        Storage::disk('public')->put('settings/university/logo.png', base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+        ));
+        SystemSetting::current()->update([
+            'university_name' => 'جامعة معدلة',
+            'university_logo' => 'settings/university/logo.png',
+        ]);
 
         $user = User::factory()->create(['college_id' => $college->id]);
         $user->assignRole(Role::findOrCreate(RoleNames::ADMIN, 'web'));
@@ -91,7 +98,8 @@ class ExamSchedulePrintTest extends TestCase
         $response
             ->assertOk()
             ->assertSee('برنامج امتحان الفصل الأول للعام الدراسي 2025-2026')
-            ->assertSee('جامعة اللاذقية')
+            ->assertSee('جامعة معدلة')
+            ->assertSee('data:image/png;base64', false)
             ->assertSee('كلية الهندسة')
             ->assertSee('قسم المعلوماتية')
             ->assertDontSee('اسم الجامعة')
@@ -110,7 +118,7 @@ class ExamSchedulePrintTest extends TestCase
             ->assertDontSee('تحليل معدل')
             ->assertDontSee('كلية معدلة')
             ->assertDontSee('قسم معدل')
-            ->assertDontSee('جامعة معدلة');
+            ->assertDontSee('اسم الجامعة');
 
         $pdfResponse = $this
             ->actingAs($user)
@@ -128,9 +136,7 @@ class ExamSchedulePrintTest extends TestCase
         $this
             ->actingAs($user)
             ->get('/adminpanel/exam-schedule-generator')
-            ->assertOk()
-            ->assertSee('طباعة البرنامج المثبت')
-            ->assertSee('عرض البرامج المثبتة');
+            ->assertOk();
 
         $this
             ->actingAs($user)

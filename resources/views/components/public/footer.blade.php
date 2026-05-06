@@ -9,7 +9,7 @@
 
     $universityName = filled($settings?->university_name)
         ? $settings->university_name
-        : 'جامعة اللاذقية';
+        : \App\Support\InstitutionSettings::make()->universityName();
 @endphp
 
 <footer class="relative z-10 border-t border-slate-200 bg-white/85 backdrop-blur print:hidden">

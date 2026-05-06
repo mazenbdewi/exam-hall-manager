@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <style>
         body { font-family: dejavusans, sans-serif; direction: rtl; text-align: right; font-size: 12px; }
+        @include('pdf.partials.report-styles')
         h1, h2 { margin: 0 0 10px; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; }
         th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
@@ -12,7 +13,14 @@
     </style>
 </head>
 <body>
-    <h1>تقرير تعارضات البرنامج الامتحاني</h1>
+    @include('pdf.partials.report-header', [
+        'universityName' => $systemSetting->university_name,
+        'universityLogo' => $logoDataUri,
+        'facultyName' => $draft->college?->name ?? '—',
+        'reportTitle' => 'تقرير تعارضات البرنامج الامتحاني',
+        'dateRange' => ($draft->start_date?->format('Y-m-d') ?? '—').' - '.($draft->end_date?->format('Y-m-d') ?? '—'),
+    ])
+
     <div class="summary">
         الكلية: {{ $draft->college?->name }} |
         المسودة: {{ $draft->id }} |

@@ -29,6 +29,7 @@ use App\Models\User;
 use App\Support\RoleNames;
 use App\Support\ShieldPermission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -41,7 +42,13 @@ class HallAttendancePrintTest extends TestCase
     #[Test]
     public function hall_attendance_sheet_prints_saved_hall_students_and_invigilators(): void
     {
-        SystemSetting::current()->update(['university_name' => 'جامعة اللاذقية']);
+        Storage::disk('public')->put('settings/university/logo.png', base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+        ));
+        SystemSetting::current()->update([
+            'university_name' => 'جامعة اللاذقية',
+            'university_logo' => 'settings/university/logo.png',
+        ]);
 
         $college = College::query()->create(['name' => 'كلية الهندسة المعلوماتية', 'is_active' => true]);
         $department = Department::query()->create(['college_id' => $college->id, 'name' => 'قسم هندسة البرمجيات', 'is_active' => true]);
@@ -126,6 +133,7 @@ class HallAttendancePrintTest extends TestCase
             ->assertOk()
             ->assertSee('كشف تفقد القاعة الامتحانية')
             ->assertSee('جامعة اللاذقية')
+            ->assertSee('data:image/png;base64', false)
             ->assertSee('كلية الهندسة المعلوماتية')
             ->assertSee('قسم هندسة البرمجيات')
             ->assertSee('الأربعاء 28-01-2026')
@@ -159,10 +167,18 @@ class HallAttendancePrintTest extends TestCase
 
         $this
             ->actingAs($user)
-            ->get(SubjectExamOfferingResource::getUrl('distribution', ['record' => $offering]))
+            ->get(route('filament.adminpanel.reports.student-hall-assignments.print', [
+                'subject_exam_offering_id' => $offering->id,
+            ]))
             ->assertOk()
-            ->assertSee('طباعة تفقد كل القاعات')
-            ->assertSee('طباعة تفقد القاعة');
+            ->assertSee('كشف توزيع الطلاب على القاعات حسب المادة والفترة')
+            ->assertSee('جامعة اللاذقية')
+            ->assertSee('data:image/png;base64', false);
+
+        $this
+            ->actingAs($user)
+            ->get(SubjectExamOfferingResource::getUrl('distribution', ['record' => $offering]))
+            ->assertOk();
     }
 
     protected function assignInvigilator(

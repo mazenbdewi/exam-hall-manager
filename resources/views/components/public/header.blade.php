@@ -1,5 +1,5 @@
 @php
-    $fallbackUniversityName = 'جامعة اللاذقية';
+    $fallbackUniversityName = \App\Support\InstitutionSettings::make()->universityName();
     $settings = null;
 
     try {

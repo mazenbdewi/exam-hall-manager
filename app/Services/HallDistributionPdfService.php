@@ -3,9 +3,8 @@
 namespace App\Services;
 
 use App\Models\SubjectExamOffering;
-use App\Models\SystemSetting;
+use App\Support\InstitutionSettings;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
 use Mpdf\Mpdf;
@@ -21,11 +20,11 @@ class HallDistributionPdfService
     public function downloadForOffering(SubjectExamOffering $offering): StreamedResponse
     {
         $summary = $this->distributionService->getSlotSummary($offering);
-        $systemSetting = SystemSetting::current();
+        $institution = InstitutionSettings::make();
         $html = view('pdf.hall-distribution-slot', [
             'summary' => $summary,
-            'systemSetting' => $systemSetting,
-            'logoDataUri' => $this->getLogoDataUri($systemSetting->university_logo),
+            'systemSetting' => $institution->reportContext(),
+            'logoDataUri' => $institution->logoDataUri(),
         ])->render();
 
         $pdf = $this->makePdf();
@@ -47,11 +46,11 @@ class HallDistributionPdfService
     public function downloadUnassignedForOffering(SubjectExamOffering $offering, ?array $summary = null): StreamedResponse
     {
         $summary ??= $this->distributionService->getSlotSummary($offering);
-        $systemSetting = SystemSetting::current();
+        $institution = InstitutionSettings::make();
         $html = view('pdf.unassigned-students-slot', [
             'summary' => $summary,
-            'systemSetting' => $systemSetting,
-            'logoDataUri' => $this->getLogoDataUri($systemSetting->university_logo),
+            'systemSetting' => $institution->reportContext(),
+            'logoDataUri' => $institution->logoDataUri(),
         ])->render();
 
         $pdf = $this->makePdf();
@@ -117,15 +116,4 @@ class HallDistributionPdfService
         return $pdf;
     }
 
-    protected function getLogoDataUri(?string $path): ?string
-    {
-        if (! $path || ! Storage::disk('public')->exists($path)) {
-            return null;
-        }
-
-        $contents = Storage::disk('public')->get($path);
-        $mimeType = Storage::disk('public')->mimeType($path) ?: 'image/png';
-
-        return 'data:' . $mimeType . ';base64,' . base64_encode($contents);
-    }
 }

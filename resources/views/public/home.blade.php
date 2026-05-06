@@ -12,7 +12,7 @@
 
         $universityName = filled($settings?->university_name)
             ? $settings->university_name
-            : 'جامعة اللاذقية';
+            : \App\Support\InstitutionSettings::make()->universityName();
 
         $universityLogoUrl = filled($settings?->university_logo)
             ? \Illuminate\Support\Facades\Storage::disk('public')->url($settings->university_logo)

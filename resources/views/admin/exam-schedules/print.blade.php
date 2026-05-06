@@ -2,7 +2,8 @@
     $isPdfDownload = (bool) ($isPdfDownload ?? false);
     $fixedProgram = $fixedProgram ?? null;
     $snapshot = $snapshot ?? [];
-    $universityName = filled($systemSetting?->university_name ?? null) ? $systemSetting->university_name : 'الجامعة الافتراضية السورية';
+    $universityName = filled($systemSetting?->university_name ?? null) ? $systemSetting->university_name : \App\Support\InstitutionSettings::make()->universityName();
+    $universityLogo = $logoDataUri ?? $systemSetting?->logo_data_uri ?? null;
     $collegeName = $college?->name ?? '—';
     $departmentName = $department?->name ?? 'كل الأقسام';
     $semesterName = $semester?->name ?? '—';
@@ -177,7 +178,17 @@
             border-bottom: 1px solid #777777;
             margin-bottom: 6mm;
             padding-bottom: 3mm;
+            position: relative;
             text-align: center;
+        }
+
+        .print-logo {
+            height: 20mm;
+            object-fit: contain;
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 20mm;
         }
 
         .print-header .university-name {
@@ -502,6 +513,9 @@
         <section class="official-frame">
             <div class="content">
                 <header class="print-header">
+                    @if ($universityLogo)
+                        <img src="{{ $universityLogo }}" alt="{{ $universityName }}" class="print-logo">
+                    @endif
                     <div class="university-name">{{ $universityName }}</div>
                     <div class="college-name">{{ $collegeName }}</div>
                     <div class="department-name">{{ $departmentName }}</div>

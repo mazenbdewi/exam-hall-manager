@@ -25,6 +25,7 @@ class SystemSettingForm
                             ->disk('public')
                             ->directory('settings/university')
                             ->image()
+                            ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp'])
                             ->imageEditor()
                             ->maxSize(5120),
                     ]),

@@ -92,7 +92,17 @@
             border-bottom: 2px solid #111111;
             margin-bottom: 5mm;
             padding-bottom: 3mm;
+            position: relative;
             text-align: center;
+        }
+
+        .print-logo {
+            height: 18mm;
+            object-fit: contain;
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 18mm;
         }
 
         .university-name,
@@ -272,6 +282,9 @@
     @if (filled($emptyMessage))
         <main class="sheet">
             <header class="print-header">
+                @if (! empty($logoDataUri))
+                    <img src="{{ $logoDataUri }}" alt="{{ $systemSetting->university_name }}" class="print-logo">
+                @endif
                 <div class="university-name">{{ $systemSetting->university_name }}</div>
                 <div class="college-name">{{ $subject?->college?->name }}</div>
                 <div class="report-title">كشف توزيع الطلاب على القاعات حسب المادة والفترة</div>
@@ -288,6 +301,9 @@
         @foreach ($pages as $pageIndex => $page)
             <main class="sheet {{ $pageIndex > 0 ? 'page-break' : '' }}">
                 <header class="print-header">
+                    @if (! empty($logoDataUri))
+                        <img src="{{ $logoDataUri }}" alt="{{ $systemSetting->university_name }}" class="print-logo">
+                    @endif
                     <div class="university-name">{{ $systemSetting->university_name }}</div>
                     <div class="college-name">{{ $subject?->college?->name }}</div>
                     <div class="report-title">كشف توزيع الطلاب على القاعات حسب المادة والفترة</div>

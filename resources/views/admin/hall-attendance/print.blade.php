@@ -107,7 +107,17 @@
         .print-header {
             border-bottom: 2px solid #111111;
             padding-bottom: 4mm;
+            position: relative;
             text-align: center;
+        }
+
+        .print-logo {
+            height: 18mm;
+            object-fit: contain;
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 18mm;
         }
 
         .university-name {
@@ -348,6 +358,9 @@
 
             <main class="sheet {{ $printedPages > 0 ? 'page-break' : '' }}">
                 <header class="print-header">
+                    @if (! empty($logoDataUri))
+                        <img src="{{ $logoDataUri }}" alt="{{ $sheet['university_name'] }}" class="print-logo">
+                    @endif
                     <div class="university-name">{{ $sheet['university_name'] }}</div>
                     <div class="college-name">{{ $sheet['college_name'] }}</div>
                     <div class="department-name">{{ $sheet['department_name'] }}</div>

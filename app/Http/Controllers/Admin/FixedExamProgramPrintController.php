@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Http\Controllers\Controller;
 use App\Models\FixedExamProgram;
+use App\Support\InstitutionSettings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Gate;
@@ -38,6 +39,7 @@ class FixedExamProgramPrintController extends Controller
     {
         $snapshot = $fixedExamProgram->snapshot_data ?? [];
         $meta = data_get($snapshot, 'meta', []);
+        $institution = InstitutionSettings::make();
 
         return [
             'fixedProgram' => $fixedExamProgram,
@@ -50,10 +52,12 @@ class FixedExamProgramPrintController extends Controller
             'levels' => $this->objects(data_get($snapshot, 'levels', [])),
             'rows' => collect(data_get($snapshot, 'rows', [])),
             'offerings' => collect(data_get($snapshot, 'entries', [])),
-            'systemSetting' => (object) [
-                'university_name' => data_get($meta, 'university_name', 'الجامعة الافتراضية السورية'),
-            ],
-            'logoDataUri' => null,
+            'systemSetting' => $institution->reportContext(
+                collegeName: data_get($meta, 'college_name', $fixedExamProgram->college_name),
+                departmentName: data_get($meta, 'department_name', $fixedExamProgram->department_name),
+                academicYear: data_get($meta, 'academic_year', $fixedExamProgram->academic_year),
+            ),
+            'logoDataUri' => $institution->logoDataUri(),
             'regularFontDataUri' => $this->fontDataUri('NotoSansArabic-Regular.ttf'),
             'boldFontDataUri' => $this->fontDataUri('NotoSansArabic-Bold.ttf'),
             'filterOptions' => [],

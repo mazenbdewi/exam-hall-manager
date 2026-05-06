@@ -8,8 +8,8 @@ use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Http\Controllers\Controller;
 use App\Models\HallAssignment;
 use App\Models\InvigilatorAssignment;
-use App\Models\SystemSetting;
 use App\Support\ExamCollegeScope;
+use App\Support\InstitutionSettings;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Http\Request;
@@ -93,11 +93,13 @@ class HallAttendancePrintController extends Controller
     {
         $firstAssignment = $hallAssignments->first();
         $invigilatorAssignments = $this->invigilatorAssignmentsFor($hallAssignments);
-        $systemSetting = SystemSetting::current();
+        $institution = InstitutionSettings::make();
+        $systemSetting = $institution->reportContext($firstAssignment?->college?->name);
         $hasMissingSupervisorDistribution = $this->hasMissingSupervisorDistribution($hallAssignments, $invigilatorAssignments);
 
         return [
             'systemSetting' => $systemSetting,
+            'logoDataUri' => $institution->logoDataUri(),
             'sheets' => $hallAssignments
                 ->map(fn (HallAssignment $assignment): array => $this->sheetData(
                     assignment: $assignment,

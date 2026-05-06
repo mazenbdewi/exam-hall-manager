@@ -6,8 +6,8 @@ use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Http\Controllers\Controller;
 use App\Models\ExamStudentHallAssignment;
 use App\Models\SubjectExamOffering;
-use App\Models\SystemSetting;
 use App\Support\ExamCollegeScope;
+use App\Support\InstitutionSettings;
 use Collator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -57,8 +57,14 @@ class StudentHallAssignmentReportController extends Controller
             $emptyMessage = 'توجد سجلات توزيع بدون قاعات مرتبطة. يرجى مراجعة توزيع القاعات قبل الطباعة.';
         }
 
+        $institution = InstitutionSettings::make();
         $data = [
-            'systemSetting' => SystemSetting::current(),
+            'systemSetting' => $institution->reportContext(
+                collegeName: $offering->subject?->college?->name,
+                departmentName: $offering->subject?->department?->name,
+                academicYear: $offering->academicYear?->name,
+            ),
+            'logoDataUri' => $institution->logoDataUri(),
             'offering' => $offering,
             'rows' => $rows->all(),
             'pages' => $this->pages($rows),

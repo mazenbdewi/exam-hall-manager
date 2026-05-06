@@ -3,9 +3,8 @@
 namespace App\Services;
 
 use App\Models\College;
-use App\Models\SystemSetting;
+use App\Support\InstitutionSettings;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
 use Mpdf\Mpdf;
@@ -112,26 +111,14 @@ class InvigilatorDistributionPdfService
         return $pdf;
     }
 
-    protected function getLogoDataUri(?string $path): ?string
-    {
-        if (! $path || ! Storage::disk('public')->exists($path)) {
-            return null;
-        }
-
-        $contents = Storage::disk('public')->get($path);
-        $mimeType = Storage::disk('public')->mimeType($path) ?: 'image/png';
-
-        return 'data:'.$mimeType.';base64,'.base64_encode($contents);
-    }
-
     protected function download(string $view, string $filenamePrefix, College $college, ?string $examDate, ?string $startTime, ?string $fromDate, ?string $toDate): StreamedResponse
     {
         $summary = $this->distributionService->getSummary($college, $examDate, $startTime, $fromDate, $toDate);
-        $systemSetting = SystemSetting::current();
+        $institution = InstitutionSettings::make();
         $html = view($view, [
             'summary' => $summary,
-            'systemSetting' => $systemSetting,
-            'logoDataUri' => $this->getLogoDataUri($systemSetting->university_logo),
+            'systemSetting' => $institution->reportContext($college->name),
+            'logoDataUri' => $institution->logoDataUri(),
             'reportDateRange' => $this->reportDateRange($summary),
         ])->render();
 

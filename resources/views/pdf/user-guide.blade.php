@@ -11,6 +11,75 @@
             line-height: 1.75;
         }
 
+        .cover {
+            page-break-after: always;
+            padding: 12mm 10mm;
+            border-radius: 18px;
+            background: #ffffff;
+            border: 1px solid #dbeafe;
+        }
+
+        .guide-brand {
+            margin-bottom: 8mm;
+            text-align: center;
+        }
+
+        .guide-logo {
+            display: block;
+            height: 22mm;
+            margin: 0 auto 3mm;
+            object-fit: contain;
+            width: 22mm;
+        }
+
+        .guide-university {
+            color: #0f172a;
+            font-size: 15px;
+            font-weight: bold;
+        }
+
+        .cover-badge {
+            display: inline-block;
+            margin-bottom: 6mm;
+            padding: 2mm 5mm;
+            border-radius: 999px;
+            background: #e0f2fe;
+            color: #075985;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .cover h1 {
+            margin: 0 0 4mm;
+            color: #0f172a;
+            font-size: 25px;
+            line-height: 1.5;
+        }
+
+        .cover-subtitle {
+            margin-bottom: 8mm;
+            color: #475569;
+            font-size: 13px;
+        }
+
+        .cover-grid {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 7mm;
+        }
+
+        .cover-grid td {
+            width: 50%;
+            border: 1px solid #dbeafe;
+            padding: 5mm;
+            vertical-align: top;
+            background: #f8fafc;
+        }
+
+        .cover-grid h3 {
+            margin-top: 0;
+        }
+
         .toc {
             page-break-after: always;
             padding: 9mm;
@@ -110,6 +179,44 @@
     </style>
 </head>
 <body>
+    <section class="cover">
+        @if (! empty($logoDataUri))
+            <div class="guide-brand">
+                <img src="{{ $logoDataUri }}" alt="{{ $systemSetting->university_name }}" class="guide-logo">
+                <div class="guide-university">{{ $systemSetting->university_name }}</div>
+            </div>
+        @else
+            <div class="guide-brand">
+                <div class="guide-university">{{ $systemSetting->university_name }}</div>
+            </div>
+        @endif
+
+        <span class="cover-badge">{{ $guide['cover_badge'] ?? '' }}</span>
+        <h1>{{ $guide['title'] }}</h1>
+        <p class="cover-subtitle">{{ $guide['subtitle'] }}</p>
+
+        <table class="cover-grid">
+            <tr>
+                <td>
+                    <h3>ماذا يغطي الدليل؟</h3>
+                    <ul>
+                        @foreach (($guide['cover_points'] ?? []) as $point)
+                            <li>{{ $point }}</li>
+                        @endforeach
+                    </ul>
+                </td>
+                <td>
+                    <h3>ترتيب العمل المختصر</h3>
+                    <ol>
+                        @foreach (($guide['cover_flow'] ?? []) as $step)
+                            <li>{{ $step }}</li>
+                        @endforeach
+                    </ol>
+                </td>
+            </tr>
+        </table>
+    </section>
+
     <section class="toc">
         <h2>{{ $guide['toc_title'] }}</h2>
         @foreach ($guide['sections'] as $index => $section)
