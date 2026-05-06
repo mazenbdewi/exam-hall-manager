@@ -6,13 +6,13 @@ use App\Enums\ExamHallPriority;
 use App\Enums\ExamHallType;
 use App\Support\ExamCollegeScope;
 use App\Support\HallClassification;
-use Filament\Support\Icons\Heroicon;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Builder;
 
 class ExamHallForm
@@ -79,7 +79,7 @@ class ExamHallForm
                             ->label(__('exam.fields.status'))
                             ->default(true)
                             ->inline(false),
-                    ]),
+                    ])->columnSpanFull(),
             ]);
     }
 }

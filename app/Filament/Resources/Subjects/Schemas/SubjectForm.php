@@ -123,7 +123,7 @@ class SubjectForm
                             ])
                             ->default('preference')
                             ->required(),
-                    ]),
+                    ])->columnSpanFull(),
             ]);
     }
 }

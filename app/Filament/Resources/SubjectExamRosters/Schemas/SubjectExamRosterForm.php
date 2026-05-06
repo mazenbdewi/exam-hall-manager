@@ -21,7 +21,7 @@ class SubjectExamRosterForm
         return $schema->components([
             Section::make('بيانات قائمة طلاب المادة')
                 ->description('هذه القوائم هي مصدر الطلاب قبل توليد البرنامج الامتحاني. يجب رفع الطلاب المستجدين والحملة وتحديد القوائم كجاهزة قبل توليد المسودة.')
-                ->columns(2)
+                ->columns(3)
                 ->schema([
                     Select::make('college_id')
                         ->label('الكلية')
@@ -119,7 +119,7 @@ class SubjectExamRosterForm
                         ->label('ملاحظات')
                         ->rows(4)
                         ->columnSpanFull(),
-                ]),
+                ])->columnSpanFull(),
         ]);
     }
 }
