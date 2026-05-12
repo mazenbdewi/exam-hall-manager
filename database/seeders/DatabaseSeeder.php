@@ -10,19 +10,19 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             RolesAndPermissionsSeeder::class,
-            CollegeSeeder::class,
-            DepartmentSeeder::class,
+            // CollegeSeeder::class,
+            // DepartmentSeeder::class,
             StudyLevelSeeder::class,
             SemesterSeeder::class,
             AcademicYearSeeder::class,
-            HallSettingSeeder::class,
+            // HallSettingSeeder::class,
             SystemSettingsSeeder::class,
             RolesAndUsersSeeder::class,
-            SubjectSeeder::class,
-            SubjectExamOfferingSeeder::class,
-            ExamStudentSeeder::class,
-            ExamHallSeeder::class,
-            InvigilatorSeeder::class,
+            // SubjectSeeder::class,
+            // SubjectExamOfferingSeeder::class,
+            // ExamStudentSeeder::class,
+            // ExamHallSeeder::class,
+            // InvigilatorSeeder::class,
         ]);
     }
 }
