@@ -4,6 +4,8 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\AuditLogResource\Pages\ListAuditLogs;
 use App\Models\AuditLog;
+use App\Models\College;
+use App\Models\User;
 use BackedEnum;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
@@ -42,6 +44,9 @@ class AuditLogResource extends Resource
                     ->label('المستخدم')
                     ->placeholder('-')
                     ->searchable(['user_name', 'user_email']),
+                TextColumn::make('user.college.name')
+                    ->label('الكلية')
+                    ->placeholder('-'),
                 TextColumn::make('action')
                     ->label('العملية')
                     ->badge()
@@ -81,9 +86,21 @@ class AuditLogResource extends Resource
                     ->toggleable(),
             ])
             ->filters([
+                SelectFilter::make('user_college_id')
+                    ->label('الكلية')
+                    ->options(fn (): array => College::query()
+                        ->orderBy('name')
+                        ->pluck('name', 'id')
+                        ->all())
+                    ->query(fn (Builder $query, array $data): Builder => $query
+                        ->when($data['value'] ?? null, fn (Builder $query, string $collegeId): Builder => $query
+                            ->whereHas('user', fn (Builder $userQuery): Builder => $userQuery->where('college_id', $collegeId))))
+                    ->searchable()
+                    ->preload(),
                 SelectFilter::make('user_id')
                     ->label('المستخدم')
-                    ->relationship('user', 'name')
+                    ->options(fn ($livewire): array => self::userFilterOptions($livewire))
+                    ->getSearchResultsUsing(fn (string $search, $livewire): array => self::userFilterOptions($livewire, $search))
                     ->searchable()
                     ->preload(),
                 SelectFilter::make('action')
@@ -149,6 +166,11 @@ class AuditLogResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([]);
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->with('user.college');
     }
 
     public static function getPages(): array
@@ -239,6 +261,22 @@ class AuditLogResource extends Resource
                 'dir' => 'ltr',
                 'style' => 'white-space: pre-wrap; word-break: break-word;',
             ]);
+    }
+
+    protected static function userFilterOptions($livewire, ?string $search = null): array
+    {
+        $collegeId = $livewire->getTableFilterFormState('user_college_id')['value'] ?? null;
+
+        return User::query()
+            ->when($collegeId, fn (Builder $query, string $collegeId): Builder => $query->where('college_id', $collegeId))
+            ->when($search, fn (Builder $query, string $search): Builder => $query
+                ->where(fn (Builder $query): Builder => $query
+                    ->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")))
+            ->orderBy('name')
+            ->limit(50)
+            ->pluck('name', 'id')
+            ->all();
     }
 
     protected static function formatJsonState(mixed $state): ?string
