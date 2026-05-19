@@ -34,6 +34,7 @@ class ExamHallSeeder extends Seeder
                     'location' => $hallData['location'],
                     'capacity' => $hallData['capacity'],
                     'hall_type' => HallClassification::expectedTypeForCapacity($hallData['capacity'])?->value,
+                    'is_drawing_studio' => $hallData['is_drawing_studio'] ?? false,
                     'priority' => $hallData['priority'],
                     'is_active' => $hallData['is_active'],
                 ],

@@ -75,6 +75,10 @@ class ExamHallForm
                             ->label(__('exam.fields.priority'))
                             ->options(ExamHallPriority::options())
                             ->required(),
+                        Toggle::make('is_drawing_studio')
+                            ->label(__('exam.fields.is_drawing_studio'))
+                            ->default(false)
+                            ->inline(false),
                         Toggle::make('is_active')
                             ->label(__('exam.fields.status'))
                             ->default(true)

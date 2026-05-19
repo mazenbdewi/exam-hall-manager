@@ -21,6 +21,7 @@ class ExamHall extends Model
         'location',
         'capacity',
         'hall_type',
+        'is_drawing_studio',
         'priority',
         'is_active',
     ];
@@ -30,6 +31,7 @@ class ExamHall extends Model
         return [
             'capacity' => 'integer',
             'hall_type' => ExamHallTypeCast::class,
+            'is_drawing_studio' => 'boolean',
             'priority' => ExamHallPriority::class,
             'is_active' => 'boolean',
         ];

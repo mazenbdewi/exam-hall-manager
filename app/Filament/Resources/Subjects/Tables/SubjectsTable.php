@@ -46,6 +46,11 @@ class SubjectsTable
                     ->label(__('exam.fields.is_active'))
                     ->boolean()
                     ->sortable(),
+                IconColumn::make('is_drawing_subject')
+                    ->label(__('exam.fields.is_drawing_subject'))
+                    ->boolean()
+                    ->sortable()
+                    ->toggleable(),
                 IconColumn::make('is_shared_subject')
                     ->label('مادة مشتركة')
                     ->boolean()
@@ -92,6 +97,8 @@ class SubjectsTable
                     ->label(__('exam.fields.study_level'))
                     ->relationship('studyLevel', 'name'),
                 TernaryFilter::make('is_active'),
+                TernaryFilter::make('is_drawing_subject')
+                    ->label(__('exam.fields.is_drawing_subject')),
                 TernaryFilter::make('is_shared_subject')
                     ->label('المواد المشتركة'),
                 TernaryFilter::make('is_core_subject')

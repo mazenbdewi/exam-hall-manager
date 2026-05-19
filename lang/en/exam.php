@@ -14,6 +14,8 @@ return array_replace_recursive($arabic, [
         'college' => 'College',
         'period' => 'Period',
         'unassigned_students' => 'Unassigned students',
+        'is_drawing_studio' => 'Drawing studio',
+        'is_drawing_subject' => 'Drawing subject',
     ],
     'global_hall_distribution' => [
         'results_title' => 'Global Student Distribution Result',

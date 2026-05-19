@@ -77,6 +77,10 @@ class SubjectForm
                             ->label(__('exam.fields.is_active'))
                             ->default(true)
                             ->inline(false),
+                        Toggle::make('is_drawing_subject')
+                            ->label(__('exam.fields.is_drawing_subject'))
+                            ->default(false)
+                            ->inline(false),
                         Toggle::make('is_shared_subject')
                             ->label('مادة مشتركة بين عدة أقسام')
                             ->helperText('فعّل هذا الخيار إذا كانت المادة مشتركة بين أكثر من قسم أو يدرسها طلاب من عدة أقسام.')

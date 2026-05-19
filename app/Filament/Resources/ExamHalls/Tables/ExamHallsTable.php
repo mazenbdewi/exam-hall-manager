@@ -63,6 +63,10 @@ class ExamHallsTable
                         default => 'gray',
                     })
                     ->sortable(),
+                IconColumn::make('is_drawing_studio')
+                    ->label(__('exam.fields.is_drawing_studio'))
+                    ->boolean()
+                    ->sortable(),
                 IconColumn::make('is_active')
                     ->label(__('exam.fields.status'))
                     ->boolean()
@@ -84,6 +88,8 @@ class ExamHallsTable
                 SelectFilter::make('hall_type')
                     ->label(__('exam.fields.hall_type'))
                     ->options(ExamHallType::options()),
+                TernaryFilter::make('is_drawing_studio')
+                    ->label(__('exam.fields.is_drawing_studio')),
                 TernaryFilter::make('is_active')
                     ->label(__('exam.fields.status')),
                 TrashedFilter::make(),

@@ -20,6 +20,7 @@ class Subject extends Model
         'name',
         'code',
         'is_active',
+        'is_drawing_subject',
         'is_shared_subject',
         'shared_subject_scheduling_mode',
         'is_core_subject',
@@ -31,6 +32,7 @@ class Subject extends Model
     {
         return [
             'is_active' => 'boolean',
+            'is_drawing_subject' => 'boolean',
             'is_shared_subject' => 'boolean',
             'is_core_subject' => 'boolean',
         ];

@@ -17,7 +17,7 @@ class SubjectSeeder extends Seeder
     public function run(): void
     {
         $colleges = College::query()->get()->keyBy('code');
-        $departments = Department::query()->get()->keyBy(fn (Department $department): string => $department->college_id . ':' . $department->code);
+        $departments = Department::query()->get()->keyBy(fn (Department $department): string => $department->college_id.':'.$department->code);
         $studyLevels = StudyLevel::query()->get()->keyBy('sort_order');
 
         foreach (DemoSeedData::subjects() as $subjectData) {
@@ -27,7 +27,7 @@ class SubjectSeeder extends Seeder
                 continue;
             }
 
-            $department = $departments->get($college->id . ':' . $subjectData['department_code']);
+            $department = $departments->get($college->id.':'.$subjectData['department_code']);
             $studyLevel = $studyLevels->get($subjectData['study_level']);
 
             if (! $department || ! $studyLevel) {
@@ -43,6 +43,7 @@ class SubjectSeeder extends Seeder
                     'study_level_id' => $studyLevel->id,
                     'name' => $subjectData['name'],
                     'is_active' => true,
+                    'is_drawing_subject' => $subjectData['is_drawing_subject'] ?? false,
                 ],
             );
         }
