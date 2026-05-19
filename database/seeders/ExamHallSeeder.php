@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\College;
 use App\Models\ExamHall;
+use App\Models\HallSetting;
 use App\Support\HallClassification;
 use Database\Seeders\Concerns\UpsertsDemoRecords;
 use Database\Seeders\Support\DemoSeedData;
@@ -24,6 +25,8 @@ class ExamHallSeeder extends Seeder
                 continue;
             }
 
+            $hallSettings = HallSetting::current($college->id);
+
             $this->upsertRecord(
                 ExamHall::class,
                 [
@@ -33,7 +36,7 @@ class ExamHallSeeder extends Seeder
                 [
                     'location' => $hallData['location'],
                     'capacity' => $hallData['capacity'],
-                    'hall_type' => HallClassification::expectedTypeForCapacity($hallData['capacity'])?->value,
+                    'hall_type' => HallClassification::expectedTypeForCapacity($hallData['capacity'], $hallSettings)?->value,
                     'is_drawing_studio' => $hallData['is_drawing_studio'] ?? false,
                     'priority' => $hallData['priority'],
                     'is_active' => $hallData['is_active'],

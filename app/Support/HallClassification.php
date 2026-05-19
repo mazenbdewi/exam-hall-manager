@@ -8,9 +8,9 @@ use Illuminate\Support\HtmlString;
 
 class HallClassification
 {
-    public static function settings(): HallSetting
+    public static function settings(?int $collegeId = null): HallSetting
     {
-        return HallSetting::current();
+        return HallSetting::current($collegeId);
     }
 
     public static function expectedTypeForCapacity(int|string|null $capacity, ?HallSetting $settings = null): ?ExamHallType

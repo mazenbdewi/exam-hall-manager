@@ -19,6 +19,6 @@ class EditHallSetting extends EditRecord
 
     protected function mutateFormDataBeforeSave(array $data): array
     {
-        return HallSettingResource::validateAndNormalizeData($data);
+        return HallSettingResource::validateAndNormalizeData($data, $this->getRecord());
     }
 }

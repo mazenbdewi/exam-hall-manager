@@ -7,8 +7,10 @@ use App\Filament\Resources\HallSettings\Pages\EditHallSetting;
 use App\Filament\Resources\HallSettings\Pages\ListHallSettings;
 use App\Filament\Resources\HallSettings\Schemas\HallSettingForm;
 use App\Filament\Resources\HallSettings\Tables\HallSettingsTable;
+use App\Models\College;
 use App\Models\ExamHall;
 use App\Models\HallSetting;
+use App\Support\ExamCollegeScope;
 use App\Support\HallClassification;
 use BackedEnum;
 use Filament\Resources\Resource;
@@ -17,6 +19,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class HallSettingResource extends Resource
 {
@@ -70,23 +73,56 @@ class HallSettingResource extends Resource
 
     public static function canCreate(): bool
     {
-        return parent::canCreate() && ! static::getModel()::query()->exists();
+        if (! parent::canCreate()) {
+            return false;
+        }
+
+        if (ExamCollegeScope::isSuperAdmin()) {
+            return College::query()
+                ->whereNotIn(
+                    'id',
+                    HallSetting::query()
+                        ->whereNotNull('college_id')
+                        ->select('college_id'),
+                )
+                ->exists();
+        }
+
+        $collegeId = ExamCollegeScope::currentCollegeId();
+
+        return filled($collegeId)
+            && ! HallSetting::query()
+                ->where('college_id', $collegeId)
+                ->exists();
     }
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery();
+        return ExamCollegeScope::applyCollegeScope(
+            parent::getEloquentQuery()
+                ->with('college')
+                ->whereNotNull('college_id'),
+        );
     }
 
-    public static function validateAndNormalizeData(array $data): array
+    public static function validateAndNormalizeData(array $data, ?HallSetting $record = null): array
     {
+        $data['college_id'] = ExamCollegeScope::enforceCollegeId($data['college_id'] ?? null);
+
         $validator = Validator::make(
             $data,
             [
+                'college_id' => [
+                    'required',
+                    'integer',
+                    'exists:colleges,id',
+                    Rule::unique('hall_settings', 'college_id')->ignore($record?->getKey()),
+                ],
                 'large_hall_min_capacity' => ['required', 'integer', 'min:1'],
                 'amphitheater_min_capacity' => ['required', 'integer', 'gt:large_hall_min_capacity'],
             ],
             attributes: [
+                'college_id' => __('exam.fields.college'),
                 'large_hall_min_capacity' => __('exam.fields.large_hall_min_capacity'),
                 'amphitheater_min_capacity' => __('exam.fields.amphitheater_min_capacity'),
             ],
@@ -98,11 +134,13 @@ class HallSettingResource extends Resource
             }
 
             $temporarySettings = new HallSetting([
+                'college_id' => (int) $data['college_id'],
                 'large_hall_min_capacity' => (int) $data['large_hall_min_capacity'],
                 'amphitheater_min_capacity' => (int) $data['amphitheater_min_capacity'],
             ]);
 
             $conflictingHalls = ExamHall::query()
+                ->where('college_id', $data['college_id'])
                 ->get(['id', 'name', 'capacity', 'hall_type'])
                 ->filter(function (ExamHall $hall) use ($temporarySettings): bool {
                     $expected = HallClassification::expectedTypeForCapacity($hall->capacity, $temporarySettings);

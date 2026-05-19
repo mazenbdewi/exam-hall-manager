@@ -4,6 +4,7 @@ namespace App\Filament\Resources\ExamHalls\Schemas;
 
 use App\Enums\ExamHallPriority;
 use App\Enums\ExamHallType;
+use App\Models\HallSetting;
 use App\Support\ExamCollegeScope;
 use App\Support\HallClassification;
 use Filament\Forms\Components\Select;
@@ -35,6 +36,7 @@ class ExamHallForm
                             ->preload()
                             ->required()
                             ->default(fn (): ?int => ExamCollegeScope::currentCollegeId())
+                            ->live()
                             ->hidden(fn (): bool => ! ExamCollegeScope::isSuperAdmin()),
                         TextInput::make('name')
                             ->label(__('exam.fields.hall_name'))
@@ -56,18 +58,22 @@ class ExamHallForm
                             ->options(ExamHallType::options())
                             ->hint(fn (Get $get): ?string => HallClassification::hasMismatch(
                                 $get('capacity'),
+                                static::settingsForFormCollege($get('college_id')),
                                 selectedType: $get('hall_type'),
                             ) ? __('exam.helpers.live_hall_type_warning_title') : null)
                             ->hintColor(fn (Get $get): ?string => HallClassification::hasMismatch(
                                 $get('capacity'),
+                                static::settingsForFormCollege($get('college_id')),
                                 selectedType: $get('hall_type'),
                             ) ? 'danger' : null)
                             ->hintIcon(fn (Get $get): ?Heroicon => HallClassification::hasMismatch(
                                 $get('capacity'),
+                                static::settingsForFormCollege($get('college_id')),
                                 selectedType: $get('hall_type'),
                             ) ? Heroicon::OutlinedExclamationTriangle : null)
                             ->helperText(fn (Get $get) => HallClassification::expectedTypeHelperHtml(
                                 $get('capacity'),
+                                static::settingsForFormCollege($get('college_id')),
                                 selectedType: $get('hall_type'),
                             ))
                             ->required(),
@@ -85,5 +91,12 @@ class ExamHallForm
                             ->inline(false),
                     ])->columnSpanFull(),
             ]);
+    }
+
+    protected static function settingsForFormCollege(int|string|null $collegeId): HallSetting
+    {
+        return filled($collegeId)
+            ? HallSetting::current((int) $collegeId)
+            : HallSetting::current(ExamCollegeScope::currentCollegeId());
     }
 }

@@ -10,6 +10,7 @@ use App\Filament\Resources\ExamHalls\Pages\ListExamHalls;
 use App\Filament\Resources\ExamHalls\Schemas\ExamHallForm;
 use App\Filament\Resources\ExamHalls\Tables\ExamHallsTable;
 use App\Models\ExamHall;
+use App\Models\HallSetting;
 use App\Support\ExamCollegeScope;
 use App\Support\HallClassification;
 use BackedEnum;
@@ -115,7 +116,10 @@ class ExamHallResource extends Resource
                 return;
             }
 
-            $expectedType = HallClassification::expectedTypeForCapacity($data['capacity'] ?? null);
+            $expectedType = HallClassification::expectedTypeForCapacity(
+                $data['capacity'] ?? null,
+                HallSetting::current((int) $data['college_id']),
+            );
 
             if (! $expectedType || ($data['hall_type'] ?? null) === $expectedType->value) {
                 return;
