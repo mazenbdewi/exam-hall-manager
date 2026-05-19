@@ -28,6 +28,8 @@ return array_replace_recursive($arabic, [
         'problem_message' => 'Not all students were distributed to halls. Resolve this before distributing invigilators.',
         'unassigned_report_not_needed' => 'No unassigned students. Report is not needed.',
         'no_previous_run' => 'There is no saved global distribution result yet.',
+        'allow_multiple_subjects_per_hall_label' => 'Allow multiple subjects in one hall',
+        'allow_multiple_subjects_per_hall_helper' => 'When disabled, each hall receives one subject only. Drawing subjects are always restricted to drawing studios and are never mixed with non-drawing subjects.',
         'distribution_settings_title' => 'Distribution settings',
         'slot_summary_title' => 'Exam slot summary',
         'validation_summary_title' => 'Final distribution validation',
@@ -53,6 +55,7 @@ return array_replace_recursive($arabic, [
             'carry_halls_count' => 'Carry halls',
             'regular_halls_count' => 'Regular halls',
             'mixing_cases_count' => 'Mixing cases due to capacity limits',
+            'allow_multiple_subjects_per_hall' => 'Multiple subjects per hall',
         ],
         'validation' => [
             'expected_students' => 'Expected students',

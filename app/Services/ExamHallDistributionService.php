@@ -25,12 +25,13 @@ class ExamHallDistributionService
         string $toDate,
         bool $redistribute = false,
         bool $separateCarryStudents = false,
-    ): array
-    {
+        bool $allowMultipleSubjectsPerHall = true,
+    ): array {
         $fromDate = substr($fromDate, 0, 10);
         $toDate = substr($toDate, 0, 10);
         $settings = [
             'separate_carry_students' => $separateCarryStudents,
+            'allow_multiple_subjects_per_hall' => $allowMultipleSubjectsPerHall,
         ];
 
         $offerings = SubjectExamOffering::query()
@@ -141,8 +142,9 @@ class ExamHallDistributionService
             $examDate = $firstOffering->exam_date->format('Y-m-d');
             $examStartTime = $this->normalizeExamStartTime($firstOffering->exam_start_time);
             $slotStudentsCount = (int) $slotOfferings->sum('exam_students_count');
-            $slotCapacity = (int) $activeHalls->sum('capacity');
-            $slotCapacityShortage = max(0, $slotStudentsCount - $slotCapacity);
+            $slotCapacityProfile = $this->slotCapacityProfile($slotOfferings, $activeHalls);
+            $slotCapacity = $slotCapacityProfile['usable_capacity'];
+            $slotCapacityShortage = $slotCapacityProfile['capacity_shortage'];
             $summary['total_capacity'] += $slotCapacity;
             $summary['capacity_shortage'] += $slotCapacityShortage;
 
@@ -183,7 +185,11 @@ class ExamHallDistributionService
                 continue;
             }
 
-            $result = $this->distributeForOffering($firstOffering, separateCarryStudents: $separateCarryStudents);
+            $result = $this->distributeForOffering(
+                $firstOffering,
+                separateCarryStudents: $separateCarryStudents,
+                allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
+            );
             $slotStats = $this->slotDistributionStats($slotOfferings, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage, $separateCarryStudents);
             $assignedStudentsCount = $slotStats['distributed_students'];
             $unassignedStudentsCount = $slotStats['unassigned_students'];
@@ -231,8 +237,11 @@ class ExamHallDistributionService
         return $this->persistGlobalDistributionResult($this->withLegacyGlobalDistributionKeys($summary));
     }
 
-    public function distributeForOffering(SubjectExamOffering $offering, bool $separateCarryStudents = false): array
-    {
+    public function distributeForOffering(
+        SubjectExamOffering $offering,
+        bool $separateCarryStudents = false,
+        bool $allowMultipleSubjectsPerHall = true,
+    ): array {
         $slot = $this->getSlotContext($offering);
         $slotOfferings = $slot['offerings'];
         $availableHalls = $slot['halls'];
@@ -258,7 +267,7 @@ class ExamHallDistributionService
             ];
         }
 
-        return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents): array {
+        return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall): array {
             $this->clearSlotDistribution(
                 collegeId: $slot['college_id'],
                 examDate: $slot['exam_date'],
@@ -271,6 +280,7 @@ class ExamHallDistributionService
                     slotOfferings: $slotOfferings,
                     availableHalls: $availableHalls,
                     totalStudents: $totalStudents,
+                    allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
                 );
             }
 
@@ -289,6 +299,8 @@ class ExamHallDistributionService
 
             $assignedStudentsCount = 0;
             $usedHallsCount = 0;
+            $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
+            $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
 
             foreach ($availableHalls as $hall) {
                 if (array_sum($remainingCounts) === 0) {
@@ -299,8 +311,16 @@ class ExamHallDistributionService
                 $subjectCounts = [];
                 $studentAssignmentRows = [];
 
-                while (($remainingCapacity > 0) && (count($subjectCounts) < 3)) {
-                    $nextOffering = $this->nextOfferingToAssign($slotOfferings, $remainingCounts, array_keys($subjectCounts));
+                while (($remainingCapacity > 0) && (count($subjectCounts) < $maxSubjectsPerHall)) {
+                    $nextOffering = $this->nextOfferingToAssign(
+                        slotOfferings: $slotOfferings,
+                        remainingCounts: $remainingCounts,
+                        usedOfferingIds: array_keys($subjectCounts),
+                        hall: $hall,
+                        subjectCounts: $subjectCounts,
+                        maxSubjectsPerHall: $maxSubjectsPerHall,
+                        slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                    );
 
                     if (! $nextOffering) {
                         break;
@@ -404,9 +424,12 @@ class ExamHallDistributionService
         Collection $slotOfferings,
         Collection $availableHalls,
         int $totalStudents,
+        bool $allowMultipleSubjectsPerHall = true,
     ): array {
         [$studentQueues, $remainingCounts] = $this->buildStudentTypeQueues($slotOfferings);
         $plans = [];
+        $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
+        $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
 
         $regularStudentsCount = array_sum($remainingCounts[ExamStudentType::Regular->value]);
         $carryStudentsCount = array_sum($remainingCounts[ExamStudentType::Carry->value]);
@@ -425,6 +448,8 @@ class ExamHallDistributionService
                 slotOfferings: $slotOfferings,
                 studentQueues: $studentQueues,
                 remainingCounts: $remainingCounts,
+                maxSubjectsPerHall: $maxSubjectsPerHall,
+                slotHasDrawingSubjects: $slotHasDrawingSubjects,
             );
         }
 
@@ -447,6 +472,8 @@ class ExamHallDistributionService
                 slotOfferings: $slotOfferings,
                 studentQueues: $studentQueues,
                 remainingCounts: $remainingCounts,
+                maxSubjectsPerHall: $maxSubjectsPerHall,
+                slotHasDrawingSubjects: $slotHasDrawingSubjects,
             );
         }
 
@@ -457,6 +484,8 @@ class ExamHallDistributionService
             slotOfferings: $slotOfferings,
             studentQueues: $studentQueues,
             remainingCounts: $remainingCounts,
+            maxSubjectsPerHall: $maxSubjectsPerHall,
+            slotHasDrawingSubjects: $slotHasDrawingSubjects,
         );
         $fallbackMixedStudents += $this->mixRemainingStudentTypeIntoExistingPlans(
             studentType: ExamStudentType::Carry->value,
@@ -464,6 +493,8 @@ class ExamHallDistributionService
             slotOfferings: $slotOfferings,
             studentQueues: $studentQueues,
             remainingCounts: $remainingCounts,
+            maxSubjectsPerHall: $maxSubjectsPerHall,
+            slotHasDrawingSubjects: $slotHasDrawingSubjects,
         );
 
         [$assignedStudentsCount, $usedHallsCount] = $this->persistHallPlans($plans, $slot);
@@ -572,6 +603,8 @@ class ExamHallDistributionService
         Collection $slotOfferings,
         array &$studentQueues,
         array &$remainingCounts,
+        int $maxSubjectsPerHall,
+        bool $slotHasDrawingSubjects,
     ): int {
         $assignedCount = 0;
         $visitedOfferingIds = [];
@@ -582,6 +615,9 @@ class ExamHallDistributionService
                 remainingCounts: $remainingCounts[$studentType],
                 subjectCounts: $plan['subject_counts'],
                 visitedOfferingIds: $visitedOfferingIds,
+                hall: $plan['hall'],
+                maxSubjectsPerHall: $maxSubjectsPerHall,
+                slotHasDrawingSubjects: $slotHasDrawingSubjects,
             );
 
             if (! $nextOffering) {
@@ -632,9 +668,12 @@ class ExamHallDistributionService
         array $remainingCounts,
         array $subjectCounts,
         array $visitedOfferingIds,
+        ExamHall $hall,
+        int $maxSubjectsPerHall,
+        bool $slotHasDrawingSubjects,
     ): ?SubjectExamOffering {
         return $slotOfferings
-            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $subjectCounts, $visitedOfferingIds): bool {
+            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $subjectCounts, $visitedOfferingIds, $hall, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings): bool {
                 $offeringId = $slotOffering->getKey();
 
                 if (in_array($offeringId, $visitedOfferingIds, true)) {
@@ -645,7 +684,14 @@ class ExamHallDistributionService
                     return false;
                 }
 
-                return isset($subjectCounts[$offeringId]) || count($subjectCounts) < 3;
+                return $this->canAddOfferingToHall(
+                    offering: $slotOffering,
+                    hall: $hall,
+                    subjectCounts: $subjectCounts,
+                    slotOfferings: $slotOfferings,
+                    maxSubjectsPerHall: $maxSubjectsPerHall,
+                    slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                );
             });
     }
 
@@ -655,6 +701,8 @@ class ExamHallDistributionService
         Collection $slotOfferings,
         array &$studentQueues,
         array &$remainingCounts,
+        int $maxSubjectsPerHall,
+        bool $slotHasDrawingSubjects,
     ): int {
         if (array_sum($remainingCounts[$studentType]) === 0) {
             return 0;
@@ -681,6 +729,8 @@ class ExamHallDistributionService
                 slotOfferings: $slotOfferings,
                 studentQueues: $studentQueues,
                 remainingCounts: $remainingCounts,
+                maxSubjectsPerHall: $maxSubjectsPerHall,
+                slotHasDrawingSubjects: $slotHasDrawingSubjects,
             );
 
             if ($hadOppositeStudents) {
@@ -777,10 +827,11 @@ class ExamHallDistributionService
         $unassignedStudentsCount = max(0, $totalStudents - $assignedStudents);
         $availableHallsCount = $availableHalls->count();
         $usedHallsCount = $hallAssignments->count();
-        $totalCapacity = (int) $availableHalls->sum('capacity');
+        $slotCapacityProfile = $this->slotCapacityProfile($slotOfferings, $availableHalls);
+        $totalCapacity = $slotCapacityProfile['usable_capacity'];
         $usedCapacity = (int) $hallAssignments->sum('assigned_students_count');
         $remainingCapacity = max(0, $totalCapacity - $usedCapacity);
-        $capacityShortage = max(0, $totalStudents - $totalCapacity);
+        $capacityShortage = $slotCapacityProfile['capacity_shortage'];
         $distributionPercentage = $totalStudents > 0
             ? (int) round(($assignedStudents / $totalStudents) * 100)
             : 0;
@@ -816,6 +867,7 @@ class ExamHallDistributionService
                 'department_name' => $this->sanitizeString($slotOffering->subject?->department?->name ?? ''),
                 'academic_year_name' => $this->sanitizeString($slotOffering->academicYear?->name ?? ''),
                 'semester_name' => $this->sanitizeString($slotOffering->semester?->name ?? ''),
+                'is_drawing_subject' => (bool) ($slotOffering->subject?->is_drawing_subject ?? false),
                 'students_count' => $totalCount,
                 'assigned_students_count' => $assignedCount,
                 'unassigned_students_count' => $unassignedCount,
@@ -904,6 +956,7 @@ class ExamHallDistributionService
                     'capacity' => (int) $hall->capacity,
                     'priority' => $hall->priority?->value,
                     'priority_label' => $this->sanitizeString($hall->priority?->label() ?? ''),
+                    'is_drawing_studio' => (bool) $hall->is_drawing_studio,
                     'is_active' => (bool) $hall->is_active,
                     'status_label' => $hall->is_active
                         ? __('exam.statuses.active')
@@ -1188,8 +1241,7 @@ class ExamHallDistributionService
         int $slotCapacity,
         int $slotCapacityShortage,
         bool $separateCarryStudents = false,
-    ): array
-    {
+    ): array {
         $assignmentCounts = ExamStudentHallAssignment::query()
             ->whereIn('subject_exam_offering_id', $slotOfferings->pluck('id'))
             ->selectRaw('subject_exam_offering_id, count(*) as assigned_count')
@@ -1741,15 +1793,132 @@ class ExamHallDistributionService
         Collection $slotOfferings,
         array $remainingCounts,
         array $usedOfferingIds,
+        ExamHall $hall,
+        array $subjectCounts,
+        int $maxSubjectsPerHall,
+        bool $slotHasDrawingSubjects,
     ): ?SubjectExamOffering {
         return $slotOfferings
-            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $usedOfferingIds): bool {
+            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $usedOfferingIds, $hall, $subjectCounts, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings): bool {
                 if (in_array($slotOffering->getKey(), $usedOfferingIds, true)) {
                     return false;
                 }
 
-                return ($remainingCounts[$slotOffering->getKey()] ?? 0) > 0;
+                if (($remainingCounts[$slotOffering->getKey()] ?? 0) <= 0) {
+                    return false;
+                }
+
+                return $this->canAddOfferingToHall(
+                    offering: $slotOffering,
+                    hall: $hall,
+                    subjectCounts: $subjectCounts,
+                    slotOfferings: $slotOfferings,
+                    maxSubjectsPerHall: $maxSubjectsPerHall,
+                    slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                );
             });
+    }
+
+    protected function maxSubjectsPerHall(bool $allowMultipleSubjectsPerHall): int
+    {
+        return $allowMultipleSubjectsPerHall ? 3 : 1;
+    }
+
+    protected function slotCapacityProfile(Collection $slotOfferings, Collection $availableHalls): array
+    {
+        $drawingStudents = (int) $slotOfferings
+            ->filter(fn (SubjectExamOffering $offering): bool => $this->isDrawingSubjectOffering($offering))
+            ->sum('exam_students_count');
+        $nonDrawingStudents = (int) $slotOfferings
+            ->reject(fn (SubjectExamOffering $offering): bool => $this->isDrawingSubjectOffering($offering))
+            ->sum('exam_students_count');
+        $drawingStudioCapacity = (int) $availableHalls
+            ->filter(fn (ExamHall $hall): bool => $this->isDrawingStudio($hall))
+            ->sum('capacity');
+        $nonDrawingHallCapacity = (int) $availableHalls
+            ->reject(fn (ExamHall $hall): bool => $this->isDrawingStudio($hall))
+            ->sum('capacity');
+        $allCapacity = (int) $availableHalls->sum('capacity');
+
+        if ($drawingStudents === 0) {
+            return [
+                'usable_capacity' => $allCapacity,
+                'capacity_shortage' => max(0, $nonDrawingStudents - $allCapacity),
+                'drawing_students_count' => 0,
+                'drawing_studio_capacity' => $drawingStudioCapacity,
+                'non_drawing_students_count' => $nonDrawingStudents,
+                'non_drawing_hall_capacity' => $allCapacity,
+            ];
+        }
+
+        $nonDrawingCapacity = $nonDrawingStudents > 0 ? $nonDrawingHallCapacity : 0;
+
+        return [
+            'usable_capacity' => $drawingStudioCapacity + $nonDrawingCapacity,
+            'capacity_shortage' => max(0, $drawingStudents - $drawingStudioCapacity)
+                + max(0, $nonDrawingStudents - $nonDrawingCapacity),
+            'drawing_students_count' => $drawingStudents,
+            'drawing_studio_capacity' => $drawingStudioCapacity,
+            'non_drawing_students_count' => $nonDrawingStudents,
+            'non_drawing_hall_capacity' => $nonDrawingCapacity,
+        ];
+    }
+
+    protected function slotHasDrawingSubjects(Collection $slotOfferings): bool
+    {
+        return $slotOfferings->contains(fn (SubjectExamOffering $offering): bool => $this->isDrawingSubjectOffering($offering));
+    }
+
+    protected function canAddOfferingToHall(
+        SubjectExamOffering $offering,
+        ExamHall $hall,
+        array $subjectCounts,
+        Collection $slotOfferings,
+        int $maxSubjectsPerHall,
+        bool $slotHasDrawingSubjects,
+    ): bool {
+        $offeringId = $offering->getKey();
+
+        if (! isset($subjectCounts[$offeringId]) && count($subjectCounts) >= $maxSubjectsPerHall) {
+            return false;
+        }
+
+        $isDrawingSubject = $this->isDrawingSubjectOffering($offering);
+        $isDrawingStudio = $this->isDrawingStudio($hall);
+
+        if ($isDrawingSubject && ! $isDrawingStudio) {
+            return false;
+        }
+
+        if (! $isDrawingSubject && $slotHasDrawingSubjects && $isDrawingStudio) {
+            return false;
+        }
+
+        $existingOfferings = $slotOfferings
+            ->filter(fn (SubjectExamOffering $slotOffering): bool => array_key_exists($slotOffering->getKey(), $subjectCounts));
+
+        $hasDrawingSubject = $existingOfferings->contains(fn (SubjectExamOffering $slotOffering): bool => $this->isDrawingSubjectOffering($slotOffering));
+        $hasNonDrawingSubject = $existingOfferings->contains(fn (SubjectExamOffering $slotOffering): bool => ! $this->isDrawingSubjectOffering($slotOffering));
+
+        if ($isDrawingSubject && $hasNonDrawingSubject) {
+            return false;
+        }
+
+        if (! $isDrawingSubject && $hasDrawingSubject) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function isDrawingSubjectOffering(SubjectExamOffering $offering): bool
+    {
+        return (bool) ($offering->subject?->is_drawing_subject ?? false);
+    }
+
+    protected function isDrawingStudio(ExamHall $hall): bool
+    {
+        return (bool) ($hall->is_drawing_studio ?? false);
     }
 
     protected function priorityRank(?string $priority): int
@@ -1805,6 +1974,7 @@ class ExamHallDistributionService
             ->map(fn (HallAssignmentSubject $assignmentSubject): array => [
                 'subject_exam_offering_id' => $assignmentSubject->subject_exam_offering_id,
                 'subject_name' => $this->sanitizeString($assignmentSubject->subjectExamOffering?->subject?->name ?? ''),
+                'is_drawing_subject' => (bool) ($assignmentSubject->subjectExamOffering?->subject?->is_drawing_subject ?? false),
                 'assigned_students_count' => (int) $assignmentSubject->assigned_students_count,
             ])
             ->values()
@@ -1832,6 +2002,7 @@ class ExamHallDistributionService
             'hall_location' => $this->sanitizeString($assignment->examHall?->location ?? ''),
             'priority' => $assignment->examHall?->priority?->value,
             'priority_label' => $this->sanitizeString($assignment->examHall?->priority?->label() ?? ''),
+            'is_drawing_studio' => (bool) ($assignment->examHall?->is_drawing_studio ?? false),
             'total_capacity' => (int) $assignment->total_capacity,
             'assigned_students_count' => (int) $assignment->assigned_students_count,
             'remaining_capacity' => (int) $assignment->remaining_capacity,
@@ -2051,6 +2222,7 @@ class ExamHallDistributionService
             'priority_label' => $this->sanitizeString($hall->priority?->label() ?? ''),
             'hall_type' => $hall->hall_type?->value,
             'hall_type_label' => $this->sanitizeString($hall->hall_type?->label() ?? ''),
+            'is_drawing_studio' => (bool) $hall->is_drawing_studio,
             'college_name' => $this->sanitizeString($collegeName),
             'status_key' => $statusKey,
             'status_label' => match ($statusKey) {

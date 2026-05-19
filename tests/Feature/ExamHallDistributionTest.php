@@ -14,8 +14,8 @@ use App\Models\ExamHall;
 use App\Models\ExamStudent;
 use App\Models\ExamStudentHallAssignment;
 use App\Models\HallAssignment;
-use App\Models\StudentDistributionRun;
 use App\Models\Semester;
+use App\Models\StudentDistributionRun;
 use App\Models\StudyLevel;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
@@ -119,6 +119,96 @@ class ExamHallDistributionTest extends TestCase
         $this->assertSame(1, $result['used_halls_count']);
         $this->assertSame(80, ExamStudentHallAssignment::query()->count());
         $this->assertSame(ExamOfferingStatus::Ready, $slotOffering->fresh()->status);
+    }
+
+    #[Test]
+    public function it_can_prevent_multiple_subjects_from_sharing_the_same_hall(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $firstOffering = $this->createOfferingWithStudents($context, 'تحليل', 5);
+        $secondOffering = $this->createOfferingWithStudents($context, 'فيزياء', 5);
+
+        foreach (['القاعة الأولى', 'القاعة الثانية'] as $hallName) {
+            ExamHall::query()->create([
+                'college_id' => $context['college']->id,
+                'name' => $hallName,
+                'location' => 'المبنى الأول',
+                'capacity' => 10,
+                'hall_type' => ExamHallType::Small->value,
+                'priority' => ExamHallPriority::High->value,
+                'is_active' => true,
+            ]);
+        }
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $firstOffering,
+            allowMultipleSubjectsPerHall: false,
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(2, $result['used_halls_count']);
+        $this->assertSame(10, $result['assigned_students_count']);
+        $this->assertSame(0, $result['unassigned_students_count']);
+
+        $hallAssignments = HallAssignment::query()
+            ->with('assignmentSubjects')
+            ->get();
+
+        $this->assertCount(2, $hallAssignments);
+        $this->assertTrue($hallAssignments->every(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->count() === 1));
+        $this->assertSame(5, $secondOffering->studentHallAssignments()->count());
+    }
+
+    #[Test]
+    public function it_restricts_drawing_subjects_to_drawing_studios_without_mixing_with_regular_subjects(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $drawingOffering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'رسم معماري',
+            studentsCount: 6,
+            isDrawingSubject: true,
+        );
+        $regularOffering = $this->createOfferingWithStudents($context, 'تحليل إنشائي', 6);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم 1',
+            'location' => 'مبنى العمارة',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة عادية',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => false,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering($drawingOffering);
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(6, $drawingOffering->studentHallAssignments()->count());
+        $this->assertSame(6, $regularOffering->studentHallAssignments()->count());
+
+        $summary = app(ExamHallDistributionService::class)->getSlotSummary($drawingOffering);
+        $drawingHall = collect($summary['hall_assignments'])->firstWhere('is_drawing_studio', true);
+        $regularHall = collect($summary['hall_assignments'])->firstWhere('is_drawing_studio', false);
+
+        $this->assertNotNull($drawingHall);
+        $this->assertNotNull($regularHall);
+        $this->assertTrue(collect($drawingHall['subjects'])->every(fn (array $subject): bool => (bool) $subject['is_drawing_subject']));
+        $this->assertTrue(collect($regularHall['subjects'])->every(fn (array $subject): bool => ! (bool) $subject['is_drawing_subject']));
     }
 
     #[Test]
@@ -302,7 +392,7 @@ class ExamHallDistributionTest extends TestCase
         $this->assertStringContainsString('نوع الطالب', $html);
         $this->assertStringContainsString('قاعة طلاب حملة', $html);
         $this->assertStringContainsString('قاعة طلاب مستجدين', $html);
-        $this->assertContains('نوع الطالب', (new StudentDistributionUnassignedExport(new \App\Models\StudentDistributionRun))->headings());
+        $this->assertContains('نوع الطالب', (new StudentDistributionUnassignedExport(new StudentDistributionRun))->headings());
     }
 
     #[Test]
@@ -439,6 +529,7 @@ class ExamHallDistributionTest extends TestCase
         string $date = '2026-06-01',
         string $startTime = '09:00:00',
         array|string|ExamStudentType $studentTypes = ExamStudentType::Regular,
+        bool $isDrawingSubject = false,
     ): SubjectExamOffering {
         $subject = Subject::query()->create([
             'college_id' => $context['college']->id,
@@ -446,6 +537,7 @@ class ExamHallDistributionTest extends TestCase
             'study_level_id' => $context['study_level']->id,
             'name' => $subjectName,
             'is_active' => true,
+            'is_drawing_subject' => $isDrawingSubject,
         ]);
 
         $offering = SubjectExamOffering::query()->create([

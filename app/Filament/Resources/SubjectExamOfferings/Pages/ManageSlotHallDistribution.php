@@ -26,6 +26,8 @@ class ManageSlotHallDistribution extends Page
 
     protected string $view = 'filament.resources.subject-exam-offerings.pages.manage-slot-hall-distribution';
 
+    public bool $allow_multiple_subjects_per_hall = true;
+
     protected ?array $cachedSummary = null;
 
     public function mount(int|string $record): void
@@ -59,7 +61,10 @@ class ManageSlotHallDistribution extends Page
     public function runDistribution(): void
     {
         $wasDistributed = $this->hasDistribution();
-        $result = app(ExamHallDistributionService::class)->distributeForOffering($this->getRecord());
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $this->getRecord(),
+            allowMultipleSubjectsPerHall: $this->allow_multiple_subjects_per_hall,
+        );
 
         app(AuditLogService::class)->log(
             action: $wasDistributed ? 'student_distribution.rerun' : 'student_distribution.run',
@@ -75,6 +80,7 @@ class ManageSlotHallDistribution extends Page
                 'unassigned_students' => $result['unassigned_students_count'] ?? ($result['unassigned_students'] ?? null),
                 'used_halls' => $result['used_halls_count'] ?? ($result['used_halls'] ?? null),
                 'status' => $result['status'] ?? null,
+                'allow_multiple_subjects_per_hall' => $this->allow_multiple_subjects_per_hall,
             ],
             status: match ($result['status'] ?? 'failed') {
                 'success' => 'success',

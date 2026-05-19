@@ -39,6 +39,11 @@
         </div>
 
         <div class="flex flex-wrap gap-2 lg:max-w-md lg:justify-end">
+            <label class="flex w-full items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 dark:border-white/10 dark:bg-white/5 dark:text-gray-200">
+                <input type="checkbox" wire:model.live="allow_multiple_subjects_per_hall" class="rounded border-gray-300 text-primary-600 shadow-sm focus:ring-primary-500 dark:border-white/10 dark:bg-gray-900">
+                <span>{{ __('exam.global_hall_distribution.allow_multiple_subjects_per_hall_label') }}</span>
+            </label>
+
             <x-filament::button color="primary" icon="heroicon-o-sparkles" wire:click="runDistribution">
                 {{ $primaryActionLabel }}
             </x-filament::button>
