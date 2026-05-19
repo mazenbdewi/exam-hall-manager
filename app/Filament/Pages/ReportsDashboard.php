@@ -236,6 +236,15 @@ class ReportsDashboard extends Page
         ]);
     }
 
+    public function employeeReportsUrl(): string
+    {
+        return EmployeeReports::getUrl([
+            'college_id' => $this->college_id,
+            'from_date' => $this->from_date,
+            'to_date' => $this->to_date,
+        ]);
+    }
+
     public function publicStudentLookupUrl(): string
     {
         return route('students.lookup');
