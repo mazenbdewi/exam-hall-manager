@@ -43,9 +43,24 @@ class HallClassification
         $settings ??= static::settings();
 
         return __('exam.helpers.hall_type_rules', [
-            'large' => $settings->large_hall_min_capacity,
-            'amphitheater' => $settings->amphitheater_min_capacity,
+            ...static::rangeParameters($settings),
         ]);
+    }
+
+    public static function rangeParameters(HallSetting $settings): array
+    {
+        $largeFrom = (int) $settings->large_hall_min_capacity;
+        $amphitheaterFrom = (int) $settings->amphitheater_min_capacity;
+
+        return [
+            'small_from' => 1,
+            'small_to' => max(1, $largeFrom - 1),
+            'large_from' => $largeFrom,
+            'large_to' => max($largeFrom, $amphitheaterFrom - 1),
+            'amphitheater_from' => $amphitheaterFrom,
+            'large' => $largeFrom,
+            'amphitheater' => $amphitheaterFrom,
+        ];
     }
 
     public static function expectedTypeHelperText(
@@ -69,8 +84,7 @@ class HallClassification
         if (! $selectedType) {
             return __('exam.helpers.expected_hall_type', [
                 'type' => $expectedType->label(),
-                'large' => $settings->large_hall_min_capacity,
-                'amphitheater' => $settings->amphitheater_min_capacity,
+                ...static::rangeParameters($settings),
             ]);
         }
 
@@ -78,15 +92,13 @@ class HallClassification
             return __('exam.helpers.expected_hall_type_mismatch', [
                 'expected' => $expectedType->label(),
                 'selected' => $selectedType->label(),
-                'large' => $settings->large_hall_min_capacity,
-                'amphitheater' => $settings->amphitheater_min_capacity,
+                ...static::rangeParameters($settings),
             ]);
         }
 
         return __('exam.helpers.expected_hall_type', [
             'type' => $expectedType->label(),
-            'large' => $settings->large_hall_min_capacity,
-            'amphitheater' => $settings->amphitheater_min_capacity,
+            ...static::rangeParameters($settings),
         ]);
     }
 

@@ -3,6 +3,9 @@
 namespace App\Filament\Resources\HallSettings\Tables;
 
 use App\Support\ExamCollegeScope;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteAction;
+use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -16,6 +19,7 @@ class HallSettingsTable
             ->columns([
                 TextColumn::make('college.name')
                     ->label(__('exam.fields.college'))
+                    ->placeholder(__('exam.fields.not_linked'))
                     ->searchable()
                     ->sortable()
                     ->visible(fn (): bool => ExamCollegeScope::isSuperAdmin()),
@@ -40,6 +44,12 @@ class HallSettingsTable
             ])
             ->recordActions([
                 EditAction::make(),
+                DeleteAction::make(),
+            ])
+            ->toolbarActions([
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
+                ]),
             ]);
     }
 }

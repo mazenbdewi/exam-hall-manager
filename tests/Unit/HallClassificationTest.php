@@ -42,4 +42,21 @@ class HallClassificationTest extends TestCase
 
         $this->assertSame(ExamHallType::Amphitheater, HallClassification::expectedTypeForCapacity(220, $settings));
     }
+
+    #[Test]
+    public function it_uses_inclusive_ranges_from_dynamic_college_thresholds(): void
+    {
+        $settings = new HallSetting([
+            'large_hall_min_capacity' => 66,
+            'amphitheater_min_capacity' => 101,
+        ]);
+
+        $this->assertSame(ExamHallType::Small, HallClassification::expectedTypeForCapacity(65, $settings));
+        $this->assertSame(ExamHallType::Large, HallClassification::expectedTypeForCapacity(66, $settings));
+        $this->assertSame(ExamHallType::Large, HallClassification::expectedTypeForCapacity(100, $settings));
+        $this->assertSame(ExamHallType::Amphitheater, HallClassification::expectedTypeForCapacity(101, $settings));
+        $this->assertStringContainsString('من 1 إلى 65', HallClassification::rulesDescription($settings));
+        $this->assertStringContainsString('من 66 إلى 100', HallClassification::rulesDescription($settings));
+        $this->assertStringContainsString('من 101 فما فوق', HallClassification::rulesDescription($settings));
+    }
 }

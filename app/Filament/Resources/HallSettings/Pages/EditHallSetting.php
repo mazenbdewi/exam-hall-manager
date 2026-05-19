@@ -4,6 +4,7 @@ namespace App\Filament\Resources\HallSettings\Pages;
 
 use App\Filament\Concerns\NotifiesValidationErrors;
 use App\Filament\Resources\HallSettings\HallSettingResource;
+use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
 
 class EditHallSetting extends EditRecord
@@ -14,7 +15,9 @@ class EditHallSetting extends EditRecord
 
     protected function getHeaderActions(): array
     {
-        return [];
+        return [
+            DeleteAction::make(),
+        ];
     }
 
     protected function mutateFormDataBeforeSave(array $data): array

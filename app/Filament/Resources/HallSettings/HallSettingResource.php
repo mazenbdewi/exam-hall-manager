@@ -98,11 +98,11 @@ class HallSettingResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return ExamCollegeScope::applyCollegeScope(
-            parent::getEloquentQuery()
-                ->with('college')
-                ->whereNotNull('college_id'),
-        );
+        $query = parent::getEloquentQuery()->with('college');
+
+        return ExamCollegeScope::isSuperAdmin()
+            ? $query
+            : ExamCollegeScope::applyCollegeScope($query);
     }
 
     public static function validateAndNormalizeData(array $data, ?HallSetting $record = null): array
@@ -118,7 +118,7 @@ class HallSettingResource extends Resource
                     'exists:colleges,id',
                     Rule::unique('hall_settings', 'college_id')->ignore($record?->getKey()),
                 ],
-                'large_hall_min_capacity' => ['required', 'integer', 'min:1'],
+                'large_hall_min_capacity' => ['required', 'integer', 'min:2'],
                 'amphitheater_min_capacity' => ['required', 'integer', 'gt:large_hall_min_capacity'],
             ],
             attributes: [

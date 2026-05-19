@@ -180,6 +180,34 @@ class HallValidationTest extends TestCase
         $this->assertSame(200, $setting->amphitheater_min_capacity);
     }
 
+    #[Test]
+    public function super_admin_can_see_and_delete_unlinked_hall_settings(): void
+    {
+        $college = College::query()->create([
+            'name' => 'كلية الهندسة',
+            'is_active' => true,
+        ]);
+
+        $linkedSetting = HallSetting::forCollege($college);
+
+        $unlinkedSetting = HallSetting::query()->create([
+            'large_hall_min_capacity' => 110,
+            'amphitheater_min_capacity' => 210,
+        ]);
+
+        $collegeAdmin = $this->actingAsCollegeAdmin($college);
+
+        $this->assertTrue(HallSettingResource::getEloquentQuery()->whereKey($linkedSetting)->exists());
+        $this->assertFalse(HallSettingResource::getEloquentQuery()->whereKey($unlinkedSetting)->exists());
+        $this->assertFalse($collegeAdmin->can('delete', $unlinkedSetting));
+
+        $superAdmin = $this->actingAsSuperAdmin();
+
+        $this->assertTrue(HallSettingResource::getEloquentQuery()->whereKey($linkedSetting)->exists());
+        $this->assertTrue(HallSettingResource::getEloquentQuery()->whereKey($unlinkedSetting)->exists());
+        $this->assertTrue($superAdmin->can('delete', $unlinkedSetting));
+    }
+
     protected function actingAsCollegeAdmin(College $college): User
     {
         Role::findOrCreate(RoleNames::ADMIN, 'web');
