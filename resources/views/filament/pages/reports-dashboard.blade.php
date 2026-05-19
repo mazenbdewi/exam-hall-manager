@@ -229,26 +229,6 @@
                 </div>
             </div>
 
-            @if (\App\Support\ExamCollegeScope::isSuperAdmin())
-                <div class="{{ $cardClasses }}">
-                    <div class="{{ $cardHeaderClasses }}">
-                        <div class="{{ $iconBoxClasses }}">
-                            <x-filament::icon icon="heroicon-o-clipboard-document-list" class="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-950 dark:text-white">تقارير الموظفين</h3>
-                            <p class="{{ $descriptionClasses }}">ترتيب الموظفين حسب عدد المهام، ونسبة إنجاز العمل العامة ضمن الكلية المحددة.</p>
-                        </div>
-                    </div>
-
-                    <div class="mt-4 flex flex-wrap gap-2">
-                        <x-filament::button tag="a" :href="$this->employeeReportsUrl()" icon="heroicon-o-eye">
-                            فتح التقرير
-                        </x-filament::button>
-                    </div>
-                </div>
-            @endif
-
             <div class="{{ $cardClasses }}">
                 <div class="{{ $cardHeaderClasses }}">
                     <div class="{{ $iconBoxClasses }}">
