@@ -647,6 +647,7 @@ return [
         'hall_type_capacity_mismatch' => 'تعذر الحفظ لأن نوع القاعة المحدد (:selected) لا يطابق السعة المدخلة (:capacity). حسب الإعدادات الحالية، النوع الصحيح لهذه السعة هو :expected.',
         'hall_settings_conflict_existing_halls' => 'لا يمكن حفظ الإعدادات لأن :count قاعة حالية ستصبح غير متوافقة، مثل: :halls.',
         'invalid_staff_category' => 'نوع الكادر غير صحيح.',
+        'invalid_college_in_import' => 'الكلية المذكورة في ملف المراقبين غير موجودة أو خارج النطاق المسموح.',
         'invalid_invigilation_role' => 'نوع المراقبة غير صحيح.',
         'invalid_boolean' => 'قيمة الفعالية يجب أن تكون نعم/لا أو yes/no أو 1/0.',
         'invalid_invigilator_day_preference' => 'تفضيل الأيام يجب أن يكون: الأيام الأولى، الأيام الأخيرة، متوازن، أو استخدام الإعداد العام.',

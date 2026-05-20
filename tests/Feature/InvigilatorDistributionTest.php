@@ -141,25 +141,72 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function it_can_import_invigilator_college_from_the_excel_file(): void
+    {
+        $engineering = College::query()->create(['name' => 'كلية الهندسة', 'code' => 'ENG', 'is_active' => true]);
+        $science = College::query()->create(['name' => 'كلية العلوم', 'code' => 'SCI', 'is_active' => true]);
+
+        $path = 'testing/invigilators-with-college.xlsx';
+        Excel::store(new class implements FromArray, WithHeadings
+        {
+            public function headings(): array
+            {
+                return [
+                    'اسم المراقب',
+                    'الكلية',
+                    'رقم الهاتف',
+                    'نوع الكادر',
+                    'نوع المراقبة',
+                ];
+            }
+
+            public function array(): array
+            {
+                return [
+                    ['مراقب علوم', 'كلية العلوم', '0997', 'دكتور', 'مراقب عادي'],
+                    ['مراقب هندسة', 'ENG', '0996', 'موظف إداري', 'أمين سر'],
+                ];
+            }
+        }, $path, 'local');
+
+        $import = new InvigilatorsImport($engineering, allowRowCollege: true);
+        Excel::import($import, Storage::disk('local')->path($path));
+
+        $this->assertSame(2, $import->getImportedCount());
+        $this->assertDatabaseHas('invigilators', [
+            'college_id' => $science->id,
+            'name' => 'مراقب علوم',
+            'phone' => '0997',
+        ]);
+        $this->assertDatabaseHas('invigilators', [
+            'college_id' => $engineering->id,
+            'name' => 'مراقب هندسة',
+            'phone' => '0996',
+        ]);
+    }
+
+    #[Test]
     public function invigilator_template_includes_personal_distribution_columns(): void
     {
         $export = new InvigilatorsTemplateExport;
 
         $this->assertSame([
             'اسم المراقب',
-            'نوع الكادر',
+            'الكلية',
             'رقم الهاتف',
+            'نوع الكادر',
             'نوع المراقبة',
             'الحد الأقصى للمراقبات',
-            'نسبة تخفيض المراقبات',
-            'السماح بأكثر من مراقبة في اليوم',
             'الحد الأقصى في اليوم',
+            'السماح بأكثر من مراقبة في اليوم',
             'تفضيل الأيام',
+            'نسبة تخفيض المراقبات',
             'فعال',
             'ملاحظات',
         ], $export->headings());
 
-        $this->assertSame('لا', $export->collection()->first()[6]);
+        $this->assertSame('كلية الهندسة', $export->collection()->first()[1]);
+        $this->assertSame('لا', $export->collection()->first()[7]);
         $this->assertSame('متوازن', $export->collection()->first()[8]);
     }
 

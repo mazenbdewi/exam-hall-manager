@@ -32,7 +32,10 @@ class ListInvigilators extends ListRecords
             Action::make('downloadTemplate')
                 ->label(__('exam.actions.download_invigilators_template'))
                 ->icon('heroicon-o-arrow-down-tray')
-                ->action(fn () => Excel::download(new InvigilatorsTemplateExport, 'invigilators-template.xlsx')),
+                ->action(fn () => Excel::download(
+                    new InvigilatorsTemplateExport($this->templateCollege()),
+                    'invigilators-template.xlsx',
+                )),
             Action::make('importInvigilators')
                 ->label(__('exam.actions.import_invigilators'))
                 ->icon('heroicon-o-arrow-up-tray')
@@ -70,7 +73,7 @@ class ListInvigilators extends ListRecords
                         ]);
                     }
 
-                    $import = new InvigilatorsImport($college);
+                    $import = new InvigilatorsImport($college, ExamCollegeScope::isSuperAdmin());
 
                     try {
                         Excel::import($import, Storage::disk('local')->path($path));
@@ -142,5 +145,18 @@ class ListInvigilators extends ListRecords
                     }
                 }),
         ];
+    }
+
+    protected function templateCollege(): ?College
+    {
+        $collegeId = ExamCollegeScope::currentCollegeId();
+
+        if ($collegeId) {
+            return College::query()->find($collegeId);
+        }
+
+        return ExamCollegeScope::isSuperAdmin()
+            ? College::query()->orderBy('name')->first()
+            : null;
     }
 }

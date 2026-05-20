@@ -18,8 +18,14 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
 {
     protected int $importedCount = 0;
 
+    /**
+     * @var array<string, College|null>
+     */
+    protected array $collegeCache = [];
+
     public function __construct(
         protected College $college,
+        protected bool $allowRowCollege = false,
     ) {}
 
     public function collection(Collection $rows): void
@@ -40,9 +46,10 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
         DB::transaction(function () use ($preparedRows): void {
             foreach ($preparedRows as $row) {
                 $this->validateRow($row);
+                $college = $this->resolveCollegeForRow($row) ?? $this->college;
 
                 $attributes = [
-                    'college_id' => $this->college->getKey(),
+                    'college_id' => $college->getKey(),
                     'name' => $row['name'],
                     'phone' => trim((string) $row['phone']),
                     'staff_category' => StaffCategory::fromImportValue($row['staff_category'])->value,
@@ -59,7 +66,7 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                 ];
 
                 $query = Invigilator::withTrashed()
-                    ->where('college_id', $this->college->getKey());
+                    ->where('college_id', $college->getKey());
 
                 $query->where('phone', $attributes['phone']);
 
@@ -88,6 +95,11 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
             'اسم المراقب' => 'name',
             'asm_almrakb' => 'name',
             'name' => 'name',
+            'الكلية' => 'college',
+            'alkly' => 'college',
+            'alklyh' => 'college',
+            'college' => 'college',
+            'college_name' => 'college',
             'نوع الكادر' => 'staff_category',
             'noaa_alkadr' => 'staff_category',
             'staff_category' => 'staff_category',
@@ -153,6 +165,7 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
             $row,
             [
                 'name' => ['required', 'string', 'max:255'],
+                'college' => ['nullable', 'string', 'max:255'],
                 'staff_category' => ['required'],
                 'invigilation_role' => ['required'],
                 'phone' => ['required', 'string', 'max:30'],
@@ -168,6 +181,7 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
             ],
             attributes: [
                 'name' => __('exam.fields.invigilator_name'),
+                'college' => __('exam.fields.college'),
                 'staff_category' => __('exam.fields.staff_category'),
                 'invigilation_role' => __('exam.fields.invigilation_role'),
                 'phone' => __('exam.fields.phone'),
@@ -184,6 +198,10 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
         $validator->after(function ($validator) use ($row): void {
             if (filled($row['staff_category'] ?? null) && ! StaffCategory::fromImportValue($row['staff_category'])) {
                 $validator->errors()->add('staff_category', __('exam.validation.invalid_staff_category'));
+            }
+
+            if (array_key_exists('college', $row) && filled($row['college']) && ! $this->resolveCollegeForRow($row)) {
+                $validator->errors()->add('college', __('exam.validation.invalid_college_in_import'));
             }
 
             if (filled($row['invigilation_role'] ?? null) && ! InvigilationRole::fromImportValue($row['invigilation_role'])) {
@@ -219,6 +237,43 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                 ]),
             ]);
         }
+    }
+
+    protected function resolveCollegeForRow(array $row): ?College
+    {
+        $value = trim((string) ($row['college'] ?? ''));
+
+        if ($value === '') {
+            return $this->college;
+        }
+
+        $key = mb_strtolower($value);
+
+        if (array_key_exists($key, $this->collegeCache)) {
+            return $this->collegeCache[$key];
+        }
+
+        if (! $this->allowRowCollege) {
+            $matchesCurrentCollege = in_array($key, array_filter([
+                mb_strtolower((string) $this->college->name),
+                mb_strtolower((string) $this->college->code),
+                (string) $this->college->getKey(),
+            ]), true);
+
+            return $this->collegeCache[$key] = $matchesCurrentCollege ? $this->college : null;
+        }
+
+        return $this->collegeCache[$key] = College::query()
+            ->where(function ($query) use ($value): void {
+                $query
+                    ->where('name', $value)
+                    ->orWhere('code', $value);
+
+                if (ctype_digit($value)) {
+                    $query->orWhereKey((int) $value);
+                }
+            })
+            ->first();
     }
 
     protected function normalizeBoolean(mixed $value): ?bool
