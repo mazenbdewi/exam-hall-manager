@@ -78,6 +78,7 @@ class InvigilatorDistributionTest extends TestCase
                     'نوع الكادر',
                     'رقم الهاتف',
                     'نوع المراقبة',
+                    'الأدوار الممكنة',
                     'الحد الأقصى للمراقبات',
                     'نسبة تخفيض المراقبات',
                     'السماح بأكثر من مراقبة في اليوم',
@@ -91,8 +92,8 @@ class InvigilatorDistributionTest extends TestCase
             public function array(): array
             {
                 return [
-                    ['د. أحمد', 'دكتور', '0999', 'رئيس قاعة', 4, '25%', 'نعم', null, 'الأيام الأولى', 'نعم', 'محدث'],
-                    ['سارة', 'موظف إداري', '0998', 'مراقب عادي', null, null, null, null, 'استخدام الإعداد العام', 'yes', null],
+                    ['د. أحمد', 'دكتور', '0999', 'رئيس قاعة', 'رئيس قاعة', 4, '25%', 'نعم', null, 'الأيام الأولى', 'نعم', 'محدث'],
+                    ['سارة', 'موظف إداري', '0998', 'مراقب عادي', 'أمين سر، مراقب عادي', null, null, null, null, 'استخدام الإعداد العام', 'yes', null],
                 ];
             }
         }, $path, 'local');
@@ -107,6 +108,7 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame('د. أحمد', $updated->name);
         $this->assertSame(StaffCategory::Doctor, $updated->staff_category);
         $this->assertSame(InvigilationRole::HallHead, $updated->invigilation_role);
+        $this->assertSame([InvigilationRole::HallHead->value], $updated->eligible_roles);
         $this->assertSame(25, $updated->workload_reduction_percentage);
         $this->assertTrue($updated->allow_multiple_assignments_per_day);
         $this->assertSame(2, $updated->max_assignments_per_day);
@@ -157,14 +159,15 @@ class InvigilatorDistributionTest extends TestCase
                     'رقم الهاتف',
                     'نوع الكادر',
                     'نوع المراقبة',
+                    'الأدوار الممكنة',
                 ];
             }
 
             public function array(): array
             {
                 return [
-                    ['مراقب علوم', 'كلية العلوم', '0997', 'دكتور', 'مراقب عادي'],
-                    ['مراقب هندسة', 'ENG', '0996', 'موظف إداري', 'أمين سر'],
+                    ['مراقب علوم', 'كلية العلوم', '0997', 'دكتور', 'مراقب عادي', 'أمين سر، مراقب عادي'],
+                    ['مراقب هندسة', 'ENG', '0996', 'موظف إداري', 'أمين سر', 'أمين سر'],
                 ];
             }
         }, $path, 'local');
@@ -178,6 +181,10 @@ class InvigilatorDistributionTest extends TestCase
             'name' => 'مراقب علوم',
             'phone' => '0997',
         ]);
+        $this->assertSame(
+            [InvigilationRole::Regular->value, InvigilationRole::Secretary->value],
+            Invigilator::query()->where('phone', '0997')->firstOrFail()->eligible_roles,
+        );
         $this->assertDatabaseHas('invigilators', [
             'college_id' => $engineering->id,
             'name' => 'مراقب هندسة',
@@ -196,6 +203,7 @@ class InvigilatorDistributionTest extends TestCase
             'رقم الهاتف',
             'نوع الكادر',
             'نوع المراقبة',
+            'الأدوار الممكنة',
             'الحد الأقصى للمراقبات',
             'الحد الأقصى في اليوم',
             'السماح بأكثر من مراقبة في اليوم',
@@ -206,8 +214,9 @@ class InvigilatorDistributionTest extends TestCase
         ], $export->headings());
 
         $this->assertSame('كلية الهندسة', $export->collection()->first()[1]);
-        $this->assertSame('لا', $export->collection()->first()[7]);
-        $this->assertSame('متوازن', $export->collection()->first()[8]);
+        $this->assertSame('رئيس قاعة', $export->collection()->first()[5]);
+        $this->assertSame('لا', $export->collection()->first()[8]);
+        $this->assertSame('متوازن', $export->collection()->first()[9]);
     }
 
     #[Test]
@@ -288,6 +297,86 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertCount(0, $hallSummary['assignments_by_role']['secretary']);
         $this->assertSame(1, $hallSummary['shortages_by_role']['secretary']['shortage_count']);
         $this->assertSame('لا يوجد أمين سر فعال لهذه الكلية.', $hallSummary['shortages_by_role']['secretary']['reason']);
+    }
+
+    #[Test]
+    public function eligible_roles_allow_secretary_to_serve_as_regular_without_general_fallback(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة تحتاج مراقب مرن', ExamHallType::Small);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => false,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $this->createRequirement($context['college'], ExamHallType::Small, 0, 0, 1, 0);
+        $secretary = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'أمين سر مرن',
+            'phone' => '0997000001',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Secretary->value,
+            'eligible_roles' => [InvigilationRole::Secretary->value, InvigilationRole::Regular->value],
+            'is_active' => true,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $assignment = InvigilatorAssignment::query()->first();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame($hall->id, $assignment?->exam_hall_id);
+        $this->assertSame($secretary->id, $assignment?->invigilator_id);
+        $this->assertSame(InvigilationRole::Regular, $assignment?->invigilation_role);
+        $this->assertSame(0, InvigilatorUnassignedRequirement::query()->count());
+    }
+
+    #[Test]
+    public function distribution_prefers_primary_role_before_secondary_eligible_roles(): void
+    {
+        $context = $this->createSlotContext();
+        $this->createUsedHall($context['college'], 'قاعة تفضيل الدور الأساسي', ExamHallType::Small);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => false,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $this->createRequirement($context['college'], ExamHallType::Small, 0, 0, 1, 0);
+        $secretary = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'أمين سر مرن',
+            'phone' => '0997000002',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Secretary->value,
+            'eligible_roles' => [InvigilationRole::Secretary->value, InvigilationRole::Regular->value],
+            'is_active' => true,
+        ]);
+        $regular = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مراقب أساسي',
+            'phone' => '0997000003',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'eligible_roles' => [InvigilationRole::Regular->value],
+            'is_active' => true,
+        ]);
+
+        app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+        $assignment = InvigilatorAssignment::query()->first();
+
+        $this->assertSame($regular->id, $assignment?->invigilator_id);
+        $this->assertNotSame($secretary->id, $assignment?->invigilator_id);
     }
 
     #[Test]

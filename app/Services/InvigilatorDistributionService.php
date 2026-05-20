@@ -622,9 +622,14 @@ class InvigilatorDistributionService
             ];
         }
 
+        $primaryEligible = $eligible
+            ->filter(fn (Invigilator $invigilator): bool => $invigilator->hasPrimaryRole($role))
+            ->values();
+        $selectionPool = $primaryEligible->isNotEmpty() ? $primaryEligible : $eligible;
+
         $invigilator = (($setting->distribution_pattern?->value ?? $setting->distribution_pattern) === InvigilatorDistributionPattern::Random->value)
-            ? $eligible->shuffle()->first()
-            : $eligible->sortBy(fn (Invigilator $invigilator): array => $this->score($invigilator, $examDate, $setting))->first();
+            ? $selectionPool->shuffle()->first()
+            : $selectionPool->sortBy(fn (Invigilator $invigilator): array => $this->score($invigilator, $examDate, $setting))->first();
 
         return [
             'invigilator' => $invigilator,
@@ -641,11 +646,13 @@ class InvigilatorDistributionService
         array $slotAssignedIds,
     ): array {
         $all = Invigilator::query()->get();
-        $candidates = Invigilator::query()
+        $activeInvigilators = Invigilator::query()
             ->where('college_id', $college->getKey())
             ->where('is_active', true)
-            ->where('invigilation_role', $role->value)
             ->get();
+        $candidates = $activeInvigilators
+            ->filter(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
+            ->values();
         $rejections = [];
         $rejectedIds = [];
 
@@ -672,17 +679,16 @@ class InvigilatorDistributionService
             'role_label' => $role->label(),
             'inactive_count' => Invigilator::query()
                 ->where('college_id', $college->getKey())
-                ->where('invigilation_role', $role->value)
                 ->where('is_active', false)
+                ->get()
+                ->filter(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
                 ->count(),
             'wrong_faculty_count' => $all
-                ->filter(fn (Invigilator $invigilator): bool => ($invigilator->invigilation_role?->value ?? (string) $invigilator->invigilation_role) === $role->value)
+                ->filter(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
                 ->where('college_id', '!=', $college->getKey())
                 ->count(),
-            'wrong_role_count' => Invigilator::query()
-                ->where('college_id', $college->getKey())
-                ->where('is_active', true)
-                ->where('invigilation_role', '!=', $role->value)
+            'wrong_role_count' => $activeInvigilators
+                ->reject(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
                 ->count(),
             'candidates_found' => $candidates->count(),
             'eligible_count' => $eligible->count(),

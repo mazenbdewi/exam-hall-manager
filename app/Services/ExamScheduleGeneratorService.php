@@ -621,7 +621,7 @@ class ExamScheduleGeneratorService
         }
 
         $previousDraft = ExamScheduleDraft::query()
-            ->with(['items.subject.department', 'items.subject.studyLevel'])
+            ->with(['items.sourceRoster', 'items.subject.department', 'items.subject.studyLevel'])
             ->whereKey($settings['previous_draft_id'])
             ->where('faculty_id', $settings['faculty_id'])
             ->where('academic_year_id', $settings['academic_year_id'])
@@ -636,6 +636,10 @@ class ExamScheduleGeneratorService
 
         foreach ($previousDraft->items as $item) {
             if (! (bool) (($item->metadata ?? [])['pinned'] ?? false)) {
+                continue;
+            }
+
+            if (! $item->sourceRoster) {
                 continue;
             }
 

@@ -22,6 +22,7 @@ class Invigilator extends Model
         'phone',
         'staff_category',
         'invigilation_role',
+        'eligible_roles',
         'max_assignments',
         'max_assignments_per_day',
         'allow_multiple_assignments_per_day',
@@ -36,6 +37,7 @@ class Invigilator extends Model
         return [
             'staff_category' => StaffCategory::class,
             'invigilation_role' => InvigilationRole::class,
+            'eligible_roles' => 'array',
             'max_assignments' => 'integer',
             'max_assignments_per_day' => 'integer',
             'allow_multiple_assignments_per_day' => 'boolean',
@@ -65,5 +67,40 @@ class Invigilator extends Model
         }
 
         return (int) floor($baseMax * ((100 - $reduction) / 100));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function eligibleRoleValues(): array
+    {
+        $roles = collect($this->eligible_roles ?? [])
+            ->filter()
+            ->map(fn (mixed $role): string => $role instanceof InvigilationRole ? $role->value : (string) $role)
+            ->filter(fn (string $role): bool => in_array($role, InvigilationRole::values(), true));
+
+        $primaryRole = $this->invigilation_role instanceof InvigilationRole
+            ? $this->invigilation_role->value
+            : (string) $this->invigilation_role;
+
+        if (filled($primaryRole)) {
+            $roles->prepend($primaryRole);
+        }
+
+        return $roles->unique()->values()->all();
+    }
+
+    public function canServeAs(InvigilationRole $role): bool
+    {
+        return in_array($role->value, $this->eligibleRoleValues(), true);
+    }
+
+    public function hasPrimaryRole(InvigilationRole $role): bool
+    {
+        $primaryRole = $this->invigilation_role instanceof InvigilationRole
+            ? $this->invigilation_role->value
+            : (string) $this->invigilation_role;
+
+        return $primaryRole === $role->value;
     }
 }

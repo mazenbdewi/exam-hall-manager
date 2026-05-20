@@ -76,6 +76,10 @@ class InvigilatorResource extends Resource
     public static function validateAndNormalizeData(array $data, ?Invigilator $record = null): array
     {
         $data['college_id'] = ExamCollegeScope::enforceCollegeId($data['college_id'] ?? null);
+        $data['eligible_roles'] = static::normalizeEligibleRoles(
+            $data['eligible_roles'] ?? [],
+            $data['invigilation_role'] ?? null,
+        );
 
         $validator = Validator::make(
             $data,
@@ -92,6 +96,8 @@ class InvigilatorResource extends Resource
                 ],
                 'staff_category' => ['required', Rule::in(StaffCategory::values())],
                 'invigilation_role' => ['required', Rule::in(InvigilationRole::values())],
+                'eligible_roles' => ['required', 'array', 'min:1'],
+                'eligible_roles.*' => ['required', Rule::in(InvigilationRole::values())],
                 'max_assignments' => ['nullable', 'integer', 'min:0'],
                 'max_assignments_per_day' => ['nullable', 'integer', 'min:1'],
                 'allow_multiple_assignments_per_day' => ['nullable', 'boolean'],
@@ -109,6 +115,7 @@ class InvigilatorResource extends Resource
                 'phone' => __('exam.fields.phone'),
                 'staff_category' => __('exam.fields.staff_category'),
                 'invigilation_role' => __('exam.fields.invigilation_role'),
+                'eligible_roles' => __('exam.fields.eligible_invigilation_roles'),
                 'max_assignments' => __('exam.fields.max_assignments'),
                 'max_assignments_per_day' => __('exam.fields.max_assignments_per_day'),
                 'allow_multiple_assignments_per_day' => __('exam.fields.allow_multiple_assignments_per_day'),
@@ -123,5 +130,23 @@ class InvigilatorResource extends Resource
         $validated['phone'] = trim((string) $validated['phone']);
 
         return $validated;
+    }
+
+    protected static function normalizeEligibleRoles(mixed $roles, mixed $primaryRole): array
+    {
+        $roles = is_array($roles) ? $roles : [];
+        $primaryRole = $primaryRole instanceof InvigilationRole ? $primaryRole->value : (string) $primaryRole;
+
+        if (filled($primaryRole)) {
+            $roles[] = $primaryRole;
+        }
+
+        return collect($roles)
+            ->filter()
+            ->map(fn (mixed $role): string => $role instanceof InvigilationRole ? $role->value : (string) $role)
+            ->filter(fn (string $role): bool => in_array($role, InvigilationRole::values(), true))
+            ->unique()
+            ->values()
+            ->all();
     }
 }

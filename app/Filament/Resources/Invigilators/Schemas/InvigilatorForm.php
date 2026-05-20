@@ -12,6 +12,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -53,7 +54,21 @@ class InvigilatorForm
                         Select::make('invigilation_role')
                             ->label(__('exam.fields.invigilation_role'))
                             ->options(InvigilationRole::options())
+                            ->live()
+                            ->afterStateUpdated(function (Set $set, mixed $state): void {
+                                if (filled($state)) {
+                                    $set('eligible_roles', [$state]);
+                                }
+                            })
                             ->required(),
+                        Select::make('eligible_roles')
+                            ->label(__('exam.fields.eligible_invigilation_roles'))
+                            ->options(InvigilationRole::options())
+                            ->multiple()
+                            ->searchable()
+                            ->preload()
+                            ->required()
+                            ->helperText(__('exam.helpers.eligible_invigilation_roles')),
                         Toggle::make('is_active')
                             ->label(__('exam.fields.is_active'))
                             ->default(true)

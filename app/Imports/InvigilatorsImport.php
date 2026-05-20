@@ -54,6 +54,7 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                     'phone' => trim((string) $row['phone']),
                     'staff_category' => StaffCategory::fromImportValue($row['staff_category'])->value,
                     'invigilation_role' => InvigilationRole::fromImportValue($row['invigilation_role'])->value,
+                    'eligible_roles' => $this->normalizeEligibleRoles($row['eligible_roles'] ?? null, $row['invigilation_role']),
                     'max_assignments' => filled($row['max_assignments'] ?? null) ? (int) $row['max_assignments'] : null,
                     'allow_multiple_assignments_per_day' => $this->normalizeNullableBoolean($row['allow_multiple_assignments_per_day'] ?? null),
                     'max_assignments_per_day' => filled($row['max_assignments_per_day'] ?? null)
@@ -109,6 +110,11 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
             'نوع المراقبة' => 'invigilation_role',
             'noaa_almrakb' => 'invigilation_role',
             'invigilation_role' => 'invigilation_role',
+            'الأدوار الممكنة' => 'eligible_roles',
+            'الادوار الممكنة' => 'eligible_roles',
+            'aladoar_almmkn' => 'eligible_roles',
+            'eligible_roles' => 'eligible_roles',
+            'allowed_invigilation_roles' => 'eligible_roles',
             'الحد الأقصى للمراقبات' => 'max_assignments',
             'الحد الاقصى للمراقبات' => 'max_assignments',
             'alhd_alaks_llmrakbat' => 'max_assignments',
@@ -168,6 +174,7 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                 'college' => ['nullable', 'string', 'max:255'],
                 'staff_category' => ['required'],
                 'invigilation_role' => ['required'],
+                'eligible_roles' => ['nullable'],
                 'phone' => ['required', 'string', 'max:30'],
                 'max_assignments' => ['nullable', 'integer', 'min:0'],
                 'max_assignments_per_day' => ['nullable', 'integer', 'min:1'],
@@ -184,6 +191,7 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                 'college' => __('exam.fields.college'),
                 'staff_category' => __('exam.fields.staff_category'),
                 'invigilation_role' => __('exam.fields.invigilation_role'),
+                'eligible_roles' => __('exam.fields.eligible_invigilation_roles'),
                 'phone' => __('exam.fields.phone'),
                 'max_assignments' => __('exam.fields.max_assignments'),
                 'max_assignments_per_day' => __('exam.fields.max_assignments_per_day'),
@@ -206,6 +214,14 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
 
             if (filled($row['invigilation_role'] ?? null) && ! InvigilationRole::fromImportValue($row['invigilation_role'])) {
                 $validator->errors()->add('invigilation_role', __('exam.validation.invalid_invigilation_role'));
+            }
+
+            if (
+                array_key_exists('eligible_roles', $row)
+                && filled($row['eligible_roles'])
+                && $this->hasInvalidEligibleRoles($row['eligible_roles'])
+            ) {
+                $validator->errors()->add('eligible_roles', __('exam.validation.invalid_eligible_invigilation_roles'));
             }
 
             if (array_key_exists('is_active', $row) && $this->normalizeBoolean($row['is_active']) === null) {
@@ -274,6 +290,46 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                 }
             })
             ->first();
+    }
+
+    protected function normalizeEligibleRoles(mixed $value, mixed $primaryRole): array
+    {
+        $roles = collect($this->splitRoleImportValue($value))
+            ->map(fn (mixed $role): ?InvigilationRole => InvigilationRole::fromImportValue($role))
+            ->filter()
+            ->map(fn (InvigilationRole $role): string => $role->value);
+
+        $primary = InvigilationRole::fromImportValue($primaryRole);
+
+        if ($primary) {
+            $roles->prepend($primary->value);
+        }
+
+        return $roles->unique()->values()->all();
+    }
+
+    protected function splitRoleImportValue(mixed $value): array
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return [];
+        }
+
+        return collect(preg_split('/[,،؛;|\\n]+/u', (string) $value) ?: [])
+            ->map(fn (string $role): string => trim($role))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    protected function hasInvalidEligibleRoles(mixed $value): bool
+    {
+        foreach ($this->splitRoleImportValue($value) as $role) {
+            if (! InvigilationRole::fromImportValue($role)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function normalizeBoolean(mixed $value): ?bool

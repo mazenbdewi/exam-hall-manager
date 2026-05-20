@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use App\Filament\Pages\ExamScheduleGenerator;
 use App\Models\AcademicYear;
 use App\Models\College;
 use App\Models\Department;
@@ -15,8 +16,11 @@ use App\Models\SubjectExamOffering;
 use App\Models\SubjectExamRoster;
 use App\Models\User;
 use App\Services\ExamScheduleGeneratorService;
+use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class ExamScheduleGeneratorServiceTest extends TestCase
@@ -179,6 +183,64 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         ]));
 
         $this->assertSame('unscheduled', $draft->items()->firstOrFail()->status);
+    }
+
+    #[Test]
+    public function canceling_a_manual_draft_item_deletes_it_even_after_the_source_roster_was_deleted(): void
+    {
+        $context = $this->createAcademicContext();
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo([
+            Permission::findOrCreate('view_exam_schedule_generator', 'web'),
+            Permission::findOrCreate('update_exam_schedule_draft', 'web'),
+        ]);
+        $this->actingAs($user);
+
+        $subject = $this->createSubject($context, 'تحليل محذوف');
+        $roster = $this->createRoster($context, $subject, [['S-001', 'طالب', 'regular']]);
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+        $item = $draft->items()->firstOrFail();
+
+        $roster->delete();
+        $this->assertNull($item->refresh()->sourceRoster);
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(ExamScheduleGenerator::class)
+            ->set('draft_id', $draft->id)
+            ->call('cancelDraftItem', $item->id);
+
+        $this->assertDatabaseMissing('exam_schedule_draft_items', ['id' => $item->id]);
+        $this->assertSame(0, $draft->fresh()->items()->count());
+    }
+
+    #[Test]
+    public function generator_does_not_copy_pinned_items_whose_source_roster_was_deleted(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        $oldSubject = $this->createSubject($context, 'قائمة قديمة');
+        $oldRoster = $this->createRoster($context, $oldSubject, [['S-001', 'طالب قديم', 'regular']]);
+        $previousDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+        $previousItem = $previousDraft->items()->firstOrFail();
+        $previousItem->update([
+            'metadata' => array_merge($previousItem->metadata ?? [], ['pinned' => true]),
+        ]);
+
+        $oldRoster->delete();
+        $this->assertNull($previousItem->refresh()->sourceRoster);
+
+        $newSubject = $this->createSubject($context, 'قائمة جديدة');
+        $this->createRoster($context, $newSubject, [['S-002', 'طالب جديد', 'regular']]);
+
+        $newDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'previous_draft_id' => $previousDraft->id,
+        ]));
+
+        $this->assertSame(1, $newDraft->items()->count());
+        $this->assertSame($newSubject->id, $newDraft->items()->firstOrFail()->subject_id);
     }
 
     #[Test]

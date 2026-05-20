@@ -264,15 +264,20 @@ class ExamScheduleGenerator extends Page
     {
         $this->authorizeGeneratorAction('update_exam_schedule_draft');
 
-        $this->draftItem($itemId)->update([
-            'exam_date' => null,
-            'start_time' => null,
-            'end_time' => null,
-            'status' => 'unscheduled',
-            'conflict_notes' => 'ألغيت المادة من المسودة يدوياً.',
-        ]);
+        $item = $this->draftItem($itemId);
+        $subjectName = $item->subject?->name;
 
+        $item->delete();
+        unset($this->itemEdits[$itemId]);
+
+        $this->refreshDraftValidationSummary();
         $this->refreshDraftState();
+
+        Notification::make()
+            ->title('تم حذف المادة من المسودة')
+            ->body($subjectName ? 'حُذفت '.$subjectName.' من جدول التعديل اليدوي.' : null)
+            ->success()
+            ->send();
     }
 
     public function pinDraftItem(int $itemId): void
@@ -949,6 +954,22 @@ class ExamScheduleGenerator extends Page
                 ],
             ])
             ->all() ?? [];
+    }
+
+    protected function refreshDraftValidationSummary(): void
+    {
+        $this->cachedDraft = null;
+        $this->cachedValidation = null;
+
+        $draft = $this->currentDraft();
+
+        if (! $draft) {
+            return;
+        }
+
+        $validation = app(ExamScheduleGeneratorService::class)->validateDraft($draft);
+        $draft->update(['summary_json' => $validation['summary']]);
+        $this->cachedValidation = $validation;
     }
 
     protected function periodKeyForTime(?string $startTime): string

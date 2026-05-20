@@ -46,6 +46,14 @@ class InvigilatorsTable
                     ->badge()
                     ->formatStateUsing(fn ($state): string => $state instanceof InvigilationRole ? $state->label() : __("exam.invigilation_roles.{$state}"))
                     ->sortable(),
+                TextColumn::make('eligible_roles')
+                    ->label(__('exam.fields.eligible_invigilation_roles'))
+                    ->getStateUsing(fn ($record): string => collect($record->eligibleRoleValues())
+                        ->map(fn (string $role): string => __("exam.invigilation_roles.{$role}"))
+                        ->implode('،'))
+                    ->badge()
+                    ->separator('،')
+                    ->toggleable(),
                 TextColumn::make('max_assignments')
                     ->label(__('exam.fields.max_assignments'))
                     ->placeholder(__('exam.fields.default_value'))
