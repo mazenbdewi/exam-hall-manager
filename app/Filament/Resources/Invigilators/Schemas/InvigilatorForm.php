@@ -52,23 +52,31 @@ class InvigilatorForm
                             ->options(StaffCategory::options())
                             ->required(),
                         Select::make('invigilation_role')
-                            ->label(__('exam.fields.invigilation_role'))
+                            ->label(__('exam.fields.primary_invigilation_role'))
                             ->options(InvigilationRole::options())
                             ->live()
-                            ->afterStateUpdated(function (Set $set, mixed $state): void {
-                                if (filled($state)) {
-                                    $set('eligible_roles', [$state]);
-                                }
+                            ->afterStateUpdated(function (Set $set, Get $get, mixed $state): void {
+                                $set('eligible_roles', collect($get('eligible_roles') ?? [])
+                                    ->reject(fn (mixed $role): bool => (string) $role === (string) $state)
+                                    ->values()
+                                    ->all());
                             })
                             ->required(),
                         Select::make('eligible_roles')
-                            ->label(__('exam.fields.eligible_invigilation_roles'))
-                            ->options(InvigilationRole::options())
+                            ->label(__('exam.fields.additional_eligible_invigilation_roles'))
+                            ->options(fn (Get $get): array => collect(InvigilationRole::options())
+                                ->except((string) $get('invigilation_role'))
+                                ->all())
                             ->multiple()
                             ->searchable()
                             ->preload()
-                            ->required()
-                            ->helperText(__('exam.helpers.eligible_invigilation_roles')),
+                            ->afterStateHydrated(function (Select $component, Get $get, mixed $state): void {
+                                $component->state(collect($state ?? [])
+                                    ->reject(fn (mixed $role): bool => (string) $role === (string) $get('invigilation_role'))
+                                    ->values()
+                                    ->all());
+                            })
+                            ->helperText(__('exam.helpers.additional_eligible_invigilation_roles')),
                         Toggle::make('is_active')
                             ->label(__('exam.fields.is_active'))
                             ->default(true)

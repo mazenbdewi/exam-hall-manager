@@ -77,8 +77,8 @@ class InvigilatorDistributionTest extends TestCase
                     'اسم المراقب',
                     'نوع الكادر',
                     'رقم الهاتف',
-                    'نوع المراقبة',
-                    'الأدوار الممكنة',
+                    'الدور الأساسي',
+                    'أدوار إضافية ممكنة',
                     'الحد الأقصى للمراقبات',
                     'نسبة تخفيض المراقبات',
                     'السماح بأكثر من مراقبة في اليوم',
@@ -92,8 +92,8 @@ class InvigilatorDistributionTest extends TestCase
             public function array(): array
             {
                 return [
-                    ['د. أحمد', 'دكتور', '0999', 'رئيس قاعة', 'رئيس قاعة', 4, '25%', 'نعم', null, 'الأيام الأولى', 'نعم', 'محدث'],
-                    ['سارة', 'موظف إداري', '0998', 'مراقب عادي', 'أمين سر، مراقب عادي', null, null, null, null, 'استخدام الإعداد العام', 'yes', null],
+                    ['د. أحمد', 'دكتور', '0999', 'رئيس قاعة', '', 4, '25%', 'نعم', null, 'الأيام الأولى', 'نعم', 'محدث'],
+                    ['سارة', 'موظف إداري', '0998', 'مراقب عادي', 'أمين سر', null, null, null, null, 'استخدام الإعداد العام', 'yes', null],
                 ];
             }
         }, $path, 'local');
@@ -202,8 +202,8 @@ class InvigilatorDistributionTest extends TestCase
             'الكلية',
             'رقم الهاتف',
             'نوع الكادر',
-            'نوع المراقبة',
-            'الأدوار الممكنة',
+            'الدور الأساسي',
+            'أدوار إضافية ممكنة',
             'الحد الأقصى للمراقبات',
             'الحد الأقصى في اليوم',
             'السماح بأكثر من مراقبة في اليوم',
@@ -214,7 +214,7 @@ class InvigilatorDistributionTest extends TestCase
         ], $export->headings());
 
         $this->assertSame('كلية الهندسة', $export->collection()->first()[1]);
-        $this->assertSame('رئيس قاعة', $export->collection()->first()[5]);
+        $this->assertSame('', $export->collection()->first()[5]);
         $this->assertSame('لا', $export->collection()->first()[8]);
         $this->assertSame('متوازن', $export->collection()->first()[9]);
     }
