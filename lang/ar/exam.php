@@ -646,6 +646,7 @@ return [
         'role_not_allowed' => 'غير مسموح لك بإسناد هذا الدور.',
         'only_super_admin_can_assign_super_admin' => 'فقط المدير العام يمكنه إسناد دور المدير العام.',
         'excel_file_required' => 'ملف Excel مطلوب.',
+        'excel_file_missing' => 'تعذر قراءة ملف Excel المرفوع. يرجى اختيار الملف مرة أخرى ثم إعادة الاستيراد.',
         'rows_min' => 'الملف المرفوع لا يحتوي على أي صفوف.',
         'duplicate_student_number_in_file' => 'الرقم الجامعي مكرر داخل الملف: :student_number.',
         'student_number_exists_in_offering' => 'الرقم الجامعي :student_number موجود مسبقاً ضمن هذا البرنامج.',

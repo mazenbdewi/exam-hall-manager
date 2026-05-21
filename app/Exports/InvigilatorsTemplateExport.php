@@ -6,9 +6,11 @@ use App\Models\College;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithColumnFormatting;
 use Maatwebsite\Excel\Concerns\WithHeadings;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
-class InvigilatorsTemplateExport implements FromCollection, ShouldAutoSize, WithHeadings
+class InvigilatorsTemplateExport implements FromCollection, ShouldAutoSize, WithColumnFormatting, WithHeadings
 {
     public function __construct(
         protected ?College $college = null,
@@ -68,6 +70,13 @@ class InvigilatorsTemplateExport implements FromCollection, ShouldAutoSize, With
             'نسبة تخفيض المراقبات',
             'فعال',
             'ملاحظات',
+        ];
+    }
+
+    public function columnFormats(): array
+    {
+        return [
+            'C' => NumberFormat::FORMAT_TEXT,
         ];
     }
 }

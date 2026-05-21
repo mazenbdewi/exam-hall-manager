@@ -162,10 +162,29 @@ class InvigilatorsImport implements SkipsEmptyRows, ToCollection, WithHeadingRow
                 continue;
             }
 
-            $normalized[$target] = is_string($value) ? trim($value) : $value;
+            $normalized[$target] = $target === 'phone'
+                ? $this->normalizePhoneValue($value)
+                : (is_string($value) ? trim($value) : $value);
         }
 
         return $normalized;
+    }
+
+    protected function normalizePhoneValue(mixed $value): mixed
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_int($value)) {
+            return (string) $value;
+        }
+
+        if (is_float($value) && floor($value) === $value) {
+            return number_format($value, 0, '', '');
+        }
+
+        return trim((string) $value);
     }
 
     protected function validateRow(array $row): void

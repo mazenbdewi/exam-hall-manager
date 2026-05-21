@@ -143,6 +143,37 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function it_imports_numeric_phone_values_as_text_from_excel(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الهندسة', 'is_active' => true]);
+        $path = 'testing/invigilators-numeric-phone.xlsx';
+
+        Excel::store(new class implements FromArray, WithHeadings
+        {
+            public function headings(): array
+            {
+                return ['اسم المراقب', 'نوع الكادر', 'رقم الهاتف', 'نوع المراقبة'];
+            }
+
+            public function array(): array
+            {
+                return [
+                    ['د. أحمد', 'دكتور', 991000001, 'رئيس قاعة'],
+                ];
+            }
+        }, $path, 'local');
+
+        $import = new InvigilatorsImport($college);
+        Excel::import($import, Storage::disk('local')->path($path));
+
+        $this->assertSame(1, $import->getImportedCount());
+        $this->assertDatabaseHas('invigilators', [
+            'college_id' => $college->id,
+            'phone' => '991000001',
+        ]);
+    }
+
+    #[Test]
     public function it_can_import_invigilator_college_from_the_excel_file(): void
     {
         $engineering = College::query()->create(['name' => 'كلية الهندسة', 'code' => 'ENG', 'is_active' => true]);
@@ -217,6 +248,10 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame('', $export->collection()->first()[5]);
         $this->assertSame('لا', $export->collection()->first()[8]);
         $this->assertSame('متوازن', $export->collection()->first()[9]);
+        $this->assertSame(
+            ['C' => \PhpOffice\PhpSpreadsheet\Style\NumberFormat::FORMAT_TEXT],
+            $export->columnFormats(),
+        );
     }
 
     #[Test]

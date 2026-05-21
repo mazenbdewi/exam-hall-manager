@@ -53,8 +53,7 @@ class ListInvigilators extends ListRecords
                         ->hidden(fn (): bool => ! ExamCollegeScope::isSuperAdmin()),
                     FileUpload::make('file')
                         ->label(__('exam.actions.import_invigilators'))
-                        ->disk('local')
-                        ->directory('imports/invigilators')
+                        ->storeFiles(false)
                         ->required()
                         ->acceptedFileTypes([
                             'application/vnd.ms-excel',
@@ -65,18 +64,19 @@ class ListInvigilators extends ListRecords
                 ->action(function (array $data): void {
                     $collegeId = ExamCollegeScope::enforceCollegeId($data['college_id'] ?? null);
                     $college = College::query()->findOrFail($collegeId);
-                    $path = $data['file'] ?? null;
+                    $file = $data['file'] ?? null;
 
-                    if (! $path) {
+                    if (! $file) {
                         throw ValidationException::withMessages([
                             'file' => __('exam.validation.excel_file_required'),
                         ]);
                     }
 
                     $import = new InvigilatorsImport($college, ExamCollegeScope::isSuperAdmin());
+                    $fileName = $this->importFileName($file);
 
                     try {
-                        Excel::import($import, Storage::disk('local')->path($path));
+                        Excel::import($import, $this->importFilePath($file));
 
                         Notification::make()
                             ->success()
@@ -89,7 +89,7 @@ class ListInvigilators extends ListRecords
                             module: 'imports',
                             description: 'استيراد ملف',
                             metadata: [
-                                'file_name' => basename((string) $path),
+                                'file_name' => $fileName,
                                 'faculty_id' => $college->getKey(),
                                 'rows_total' => $import->getImportedCount(),
                                 'rows_success' => $import->getImportedCount(),
@@ -108,7 +108,7 @@ class ListInvigilators extends ListRecords
                             module: 'imports',
                             description: 'استيراد ملف',
                             metadata: [
-                                'file_name' => basename((string) $path),
+                                'file_name' => $fileName,
                                 'faculty_id' => $college->getKey(),
                                 'rows_success' => $import->getImportedCount(),
                                 'rows_failed' => 1,
@@ -130,7 +130,7 @@ class ListInvigilators extends ListRecords
                             module: 'imports',
                             description: 'استيراد ملف',
                             metadata: [
-                                'file_name' => basename((string) $path),
+                                'file_name' => $fileName,
                                 'faculty_id' => $college->getKey(),
                                 'rows_success' => $import->getImportedCount(),
                                 'rows_failed' => 1,
@@ -141,10 +141,40 @@ class ListInvigilators extends ListRecords
 
                         throw $exception;
                     } finally {
-                        Storage::disk('local')->delete($path);
+                        if (is_string($file)) {
+                            Storage::disk('local')->delete($file);
+                        }
                     }
                 }),
         ];
+    }
+
+    protected function importFilePath(mixed $file): string
+    {
+        if (is_object($file) && method_exists($file, 'getRealPath')) {
+            $path = $file->getRealPath();
+
+            if (is_string($path) && $path !== '' && is_file($path)) {
+                return $path;
+            }
+        }
+
+        if (is_string($file) && Storage::disk('local')->exists($file)) {
+            return Storage::disk('local')->path($file);
+        }
+
+        throw ValidationException::withMessages([
+            'file' => __('exam.validation.excel_file_missing'),
+        ]);
+    }
+
+    protected function importFileName(mixed $file): string
+    {
+        if (is_object($file) && method_exists($file, 'getClientOriginalName')) {
+            return (string) $file->getClientOriginalName();
+        }
+
+        return basename((string) $file);
     }
 
     protected function templateCollege(): ?College
