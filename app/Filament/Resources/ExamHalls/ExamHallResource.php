@@ -82,6 +82,10 @@ class ExamHallResource extends Resource
     public static function validateAndNormalizeData(array $data, ?ExamHall $record = null): array
     {
         $data['college_id'] = ExamCollegeScope::enforceCollegeId($data['college_id'] ?? null);
+
+        $data['is_drawing_studio'] = $data['is_drawing_studio'] ?? false;
+        $data['is_active'] = $data['is_active'] ?? true;
+
         $validator = Validator::make(
             $data,
             [
@@ -97,6 +101,7 @@ class ExamHallResource extends Resource
                 'location' => ['required', 'string', 'max:255'],
                 'capacity' => ['required', 'integer', 'min:1'],
                 'hall_type' => ['required', Rule::in(ExamHallType::values())],
+                'is_drawing_studio' => ['boolean'],
                 'priority' => ['required', Rule::in(ExamHallPriority::values())],
                 'is_active' => ['boolean'],
             ],
@@ -106,6 +111,7 @@ class ExamHallResource extends Resource
                 'location' => __('exam.fields.hall_location'),
                 'capacity' => __('exam.fields.capacity'),
                 'hall_type' => __('exam.fields.hall_type'),
+                'is_drawing_studio' => __('exam.fields.is_drawing_studio'),
                 'priority' => __('exam.fields.priority'),
                 'is_active' => __('exam.fields.status'),
             ],
