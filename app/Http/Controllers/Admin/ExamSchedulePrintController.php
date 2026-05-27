@@ -68,6 +68,7 @@ class ExamSchedulePrintController extends Controller
 
         abort_unless(
             ExamCollegeScope::isSuperAdmin($user)
+                || ($user?->can(ShieldPermission::resource('viewAny', 'SubjectExamOffering')) ?? false)
                 || ($user?->can(ShieldPermission::resource('viewAny', 'FixedExamProgram')) ?? false)
                 || ($user?->can('view_exam_schedule_generator') ?? false),
             403,
@@ -108,6 +109,9 @@ class ExamSchedulePrintController extends Controller
             return redirect(ReportsDashboard::getUrl());
         }
 
+        $filters['academic_year_id'] ??= $draft->academic_year_id;
+        $filters['semester_id'] ??= $draft->semester_id;
+
         $snapshot = app(FixedExamProgramSnapshotService::class)->snapshotFromDraft(
             draft: $draft,
             departmentId: $filters['department_id'],
@@ -124,7 +128,7 @@ class ExamSchedulePrintController extends Controller
     }
 
     /**
-     * @return array{college_id:int,department_id:?int,academic_year_id:int,semester_id:int}
+     * @return array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int}
      */
     protected function normalizedDraftFilters(Request $request): array
     {
@@ -150,16 +154,13 @@ class ExamSchedulePrintController extends Controller
         return [
             'college_id' => $collegeId,
             'department_id' => $departmentId,
-            'academic_year_id' => $request->integer('academic_year_id')
-                ?: (int) AcademicYear::query()->where('is_current', true)->value('id')
-                ?: (int) AcademicYear::query()->where('is_active', true)->latest('id')->value('id'),
-            'semester_id' => $request->integer('semester_id')
-                ?: (int) Semester::query()->where('is_active', true)->orderBy('sort_order')->value('id'),
+            'academic_year_id' => $request->filled('academic_year_id') ? ($request->integer('academic_year_id') ?: null) : null,
+            'semester_id' => $request->filled('semester_id') ? ($request->integer('semester_id') ?: null) : null,
         ];
     }
 
     /**
-     * @param  array{college_id:int,department_id:?int,academic_year_id:int,semester_id:int}  $filters
+     * @param  array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int}  $filters
      */
     protected function latestMatchingDraft(array $filters): ?ExamScheduleDraft
     {
@@ -173,8 +174,8 @@ class ExamSchedulePrintController extends Controller
                 'items.subject.studyLevel',
             ])
             ->where('faculty_id', $filters['college_id'])
-            ->where('academic_year_id', $filters['academic_year_id'])
-            ->where('semester_id', $filters['semester_id'])
+            ->when($filters['academic_year_id'], fn ($query, int $academicYearId) => $query->where('academic_year_id', $academicYearId))
+            ->when($filters['semester_id'], fn ($query, int $semesterId) => $query->where('semester_id', $semesterId))
             ->whereIn('status', ['draft', 'generated'])
             ->when($filters['department_id'], function ($query, int $departmentId): void {
                 $query->whereHas('items', function ($itemsQuery) use ($departmentId): void {

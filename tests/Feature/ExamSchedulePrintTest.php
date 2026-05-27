@@ -225,6 +225,46 @@ class ExamSchedulePrintTest extends TestCase
         $this->assertStringStartsWith('%PDF', $pdfResponse->streamedContent());
     }
 
+    #[Test]
+    public function draft_print_link_opens_latest_matching_draft_without_year_or_semester_filters(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الهندسة', 'is_active' => true]);
+        $department = Department::query()->create(['college_id' => $college->id, 'name' => 'قسم المعلوماتية', 'is_active' => true]);
+        $level = StudyLevel::query()->create(['name' => 'الأولى', 'sort_order' => 1, 'is_active' => true]);
+        $academicYear = AcademicYear::query()->create(['name' => '2025-2026', 'is_active' => true, 'is_current' => true]);
+        Semester::query()->create(['name' => 'الفصل الأول', 'sort_order' => 1, 'is_active' => true]);
+        $secondSemester = Semester::query()->create(['name' => 'الفصل الثاني', 'sort_order' => 2, 'is_active' => true]);
+        $subject = $this->createSubject($college, $department, $level, 'برمجة متقدمة');
+        $draft = ExamScheduleDraft::query()->create([
+            'faculty_id' => $college->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $secondSemester->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-05',
+            'status' => 'generated',
+            'settings_json' => [],
+        ]);
+
+        $this->createDraftItem($draft, $subject, $department, '2026-06-01', '09:00:00', '11:00:00');
+
+        $user = User::factory()->create(['college_id' => $college->id]);
+        $user->assignRole(Role::findOrCreate(RoleNames::ADMIN, 'web'));
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $response = $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'source' => 'draft',
+                'college_id' => $college->id,
+            ]));
+
+        $response
+            ->assertOk()
+            ->assertSee('مسودة البرنامج')
+            ->assertSee('الفصل الثاني')
+            ->assertSee('برمجة متقدمة');
+    }
+
     protected function createSubject(College $college, Department $department, StudyLevel $studyLevel, string $name): Subject
     {
         return Subject::query()->create([
