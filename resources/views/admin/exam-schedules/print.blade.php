@@ -1,7 +1,9 @@
 @php
     $isPdfDownload = (bool) ($isPdfDownload ?? false);
     $fixedProgram = $fixedProgram ?? null;
+    $printMode = $printMode ?? 'fixed';
     $snapshot = $snapshot ?? [];
+    $isDraft = $printMode === 'draft' || data_get($snapshot, 'meta.document_status') === 'draft';
     $universityName = filled($systemSetting?->university_name ?? null) ? $systemSetting->university_name : \App\Support\InstitutionSettings::make()->universityName();
     $universityLogo = $logoDataUri ?? $systemSetting?->logo_data_uri ?? null;
     $collegeName = $college?->name ?? '—';
@@ -215,6 +217,18 @@
             margin-top: 3.5mm;
             min-width: 68%;
             padding: 3px 24px 4px;
+        }
+
+        .draft-banner {
+            background: #fff7ed;
+            border: 2px solid #c2410c;
+            color: #9a3412;
+            display: inline-block;
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.4;
+            margin-bottom: 3mm;
+            padding: 3px 28px 4px;
         }
 
         .schedule-table {
@@ -460,6 +474,10 @@
                 </div>
             @else
             <form class="toolbar-inner" method="GET" action="{{ route('filament.adminpanel.exam-schedules.print') }}">
+                @if ($isDraft)
+                    <input type="hidden" name="source" value="draft">
+                @endif
+
                 @if (\App\Support\ExamCollegeScope::isSuperAdmin())
                     <div class="toolbar-field">
                         <label for="college_id">الكلية</label>
@@ -502,7 +520,7 @@
                 </div>
 
                 <button class="toolbar-button" type="submit">تحديث المعاينة</button>
-                <button class="toolbar-button primary" type="button" onclick="window.print()">طباعة برنامج الامتحان</button>
+                <button class="toolbar-button primary" type="button" onclick="window.print()">{{ $isDraft ? 'طباعة مسودة البرنامج' : 'طباعة برنامج الامتحان' }}</button>
                 <a class="toolbar-link" href="{{ $pdfUrl }}">تحميل PDF</a>
             </form>
             @endif
@@ -519,6 +537,9 @@
                     <div class="university-name">{{ $universityName }}</div>
                     <div class="college-name">{{ $collegeName }}</div>
                     <div class="department-name">{{ $departmentName }}</div>
+                    @if ($isDraft)
+                        <div class="draft-banner">مسودة البرنامج</div>
+                    @endif
                     <div class="program-title">{{ $reportTitle }}</div>
                 </header>
 
@@ -558,7 +579,7 @@
                         @empty
                             <tr>
                                 <td class="empty-state" colspan="{{ 2 + $levelsCount }}">
-                                    لا توجد مواد امتحانية معتمدة ضمن الفلاتر المحددة.
+                                    {{ $isDraft ? 'لا توجد مواد امتحانية ضمن مسودة البرنامج والفلاتر المحددة.' : 'لا توجد مواد امتحانية معتمدة ضمن الفلاتر المحددة.' }}
                                 </td>
                             </tr>
                         @endforelse
@@ -566,7 +587,7 @@
                 </table>
 
                 <div class="notes-row">
-                    ملاحظة: تعرض هذه الوثيقة برنامج الامتحان الرسمي للمواد المعتمدة فقط، ولا تمثل تقرير توزيع الطلاب على القاعات.
+                    {{ $isDraft ? 'ملاحظة: هذه الوثيقة مسودة برنامج امتحاني للمراجعة قبل التثبيت والاعتماد، ولا تمثل نسخة رسمية نهائية.' : 'ملاحظة: تعرض هذه الوثيقة برنامج الامتحان الرسمي للمواد المعتمدة فقط، ولا تمثل تقرير توزيع الطلاب على القاعات.' }}
                 </div>
 
                 <table class="signature-table">

@@ -39,39 +39,18 @@ class FixedExamProgramSnapshotService
             return $existing;
         }
 
-        $systemSetting = SystemSetting::current();
+        $fixedAt = now(config('app.timezone'));
+        $snapshot = $this->snapshotFromDraft(
+            draft: $draft,
+            departmentId: $departmentId,
+            fixedAt: $fixedAt,
+            fixedBy: auth()->user()?->name,
+        );
+        $meta = data_get($snapshot, 'meta', []);
+
         $department = $departmentId ? Department::query()->find($departmentId) : null;
-        $levels = $this->studyLevelsForDraft($draft, $departmentId);
-        $entries = $this->entriesForDraft($draft);
-        $rows = $this->rowsForEntries($entries, $levels);
         $academicYear = (string) ($draft->academicYear?->name ?? '—');
         $semester = (string) ($draft->semester?->name ?? '—');
-        $title = 'برنامج امتحان '.$semester.' للعام الدراسي '.$academicYear;
-        $fixedAt = now(config('app.timezone'));
-
-        $snapshot = [
-            'meta' => [
-                'university_name' => $systemSetting->university_name,
-                'college_id' => $draft->faculty_id,
-                'college_name' => $draft->college?->name,
-                'department_id' => $departmentId,
-                'department_name' => $department?->name ?? 'كل الأقسام',
-                'academic_year_id' => $draft->academic_year_id,
-                'academic_year' => $academicYear,
-                'semester_id' => $draft->semester_id,
-                'semester' => $semester,
-                'title' => $title,
-                'fixed_at' => $fixedAt->toDateTimeString(),
-                'fixed_by' => auth()->user()?->name,
-            ],
-            'levels' => $levels->map(fn (StudyLevel $level): array => [
-                'id' => $level->id,
-                'name' => $level->name,
-                'sort_order' => $level->sort_order,
-            ])->values()->all(),
-            'rows' => $rows->values()->all(),
-            'entries' => $entries->values()->all(),
-        ];
 
         return FixedExamProgram::query()->create([
             'exam_schedule_draft_id' => $draft->id,
@@ -83,12 +62,66 @@ class FixedExamProgramSnapshotService
             'department_name' => $department?->name ?? 'كل الأقسام',
             'academic_year' => $academicYear,
             'semester' => $semester,
-            'title' => $title,
+            'title' => (string) data_get($meta, 'title', 'برنامج امتحان '.$semester.' للعام الدراسي '.$academicYear),
             'status' => 'fixed',
             'fixed_at' => $fixedAt,
             'fixed_by' => auth()->id(),
             'snapshot_data' => $snapshot,
         ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function snapshotFromDraft(
+        ExamScheduleDraft $draft,
+        ?int $departmentId = null,
+        ?Carbon $fixedAt = null,
+        ?string $fixedBy = null,
+        string $documentStatus = 'fixed',
+    ): array {
+        $draft->loadMissing([
+            'college',
+            'academicYear',
+            'semester',
+            'items.department',
+            'items.subject.department',
+            'items.subject.studyLevel',
+        ]);
+
+        $systemSetting = SystemSetting::current();
+        $department = $departmentId ? Department::query()->find($departmentId) : null;
+        $levels = $this->studyLevelsForDraft($draft, $departmentId);
+        $entries = $this->entriesForDraft($draft, $departmentId);
+        $rows = $this->rowsForEntries($entries, $levels);
+        $academicYear = (string) ($draft->academicYear?->name ?? '—');
+        $semester = (string) ($draft->semester?->name ?? '—');
+        $title = 'برنامج امتحان '.$semester.' للعام الدراسي '.$academicYear;
+
+        return [
+            'meta' => [
+                'document_status' => $documentStatus,
+                'university_name' => $systemSetting->university_name,
+                'college_id' => $draft->faculty_id,
+                'college_name' => $draft->college?->name,
+                'department_id' => $departmentId,
+                'department_name' => $department?->name ?? 'كل الأقسام',
+                'academic_year_id' => $draft->academic_year_id,
+                'academic_year' => $academicYear,
+                'semester_id' => $draft->semester_id,
+                'semester' => $semester,
+                'title' => $title,
+                'fixed_at' => $fixedAt?->toDateTimeString(),
+                'fixed_by' => $fixedBy,
+            ],
+            'levels' => $levels->map(fn (StudyLevel $level): array => [
+                'id' => $level->id,
+                'name' => $level->name,
+                'sort_order' => $level->sort_order,
+            ])->values()->all(),
+            'rows' => $rows->values()->all(),
+            'entries' => $entries->values()->all(),
+        ];
     }
 
     /**
@@ -128,9 +161,16 @@ class FixedExamProgramSnapshotService
     /**
      * @return Collection<int, array<string, mixed>>
      */
-    protected function entriesForDraft(ExamScheduleDraft $draft): Collection
+    protected function entriesForDraft(ExamScheduleDraft $draft, ?int $departmentId = null): Collection
     {
         return $draft->items
+            ->filter(function (ExamScheduleDraftItem $item) use ($departmentId): bool {
+                if (! $departmentId) {
+                    return true;
+                }
+
+                return (int) ($item->department_id ?: $item->subject?->department_id) === $departmentId;
+            })
             ->filter(fn (ExamScheduleDraftItem $item): bool => in_array($item->status, ['scheduled', 'manually_adjusted', 'conflict'], true)
                 && $item->exam_date
                 && filled($item->start_time)

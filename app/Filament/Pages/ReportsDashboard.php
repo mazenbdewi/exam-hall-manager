@@ -7,6 +7,7 @@ use App\Filament\Pages\Reports\StudentHallAssignmentReport;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\College;
+use App\Models\Department;
 use App\Models\FixedExamProgram;
 use App\Models\HallAssignment;
 use App\Models\StudentDistributionRun;
@@ -33,6 +34,8 @@ class ReportsDashboard extends Page
     protected string $view = 'filament.pages.reports-dashboard';
 
     public ?int $college_id = null;
+
+    public ?int $department_id = null;
 
     public ?int $fixed_exam_program_id = null;
 
@@ -92,6 +95,7 @@ class ReportsDashboard extends Page
 
     public function updatedCollegeId(): void
     {
+        $this->department_id = null;
         $this->fixed_exam_program_id = $this->latestFixedProgram()?->getKey();
         $this->attendance_slot = $this->latestAttendanceSlotKey();
         $this->hall_assignment_id = $this->firstHallAssignmentForSelectedSlot()?->getKey();
@@ -104,6 +108,11 @@ class ReportsDashboard extends Page
     public function updatedAttendanceSlot(): void
     {
         $this->hall_assignment_id = $this->firstHallAssignmentForSelectedSlot()?->getKey();
+    }
+
+    public function updatedDepartmentId(): void
+    {
+        $this->fixed_exam_program_id = $this->latestFixedProgram()?->getKey();
     }
 
     public function collegeOptions(): array
@@ -119,6 +128,7 @@ class ReportsDashboard extends Page
     {
         return FixedExamProgram::query()
             ->when($this->college_id, fn (Builder $query) => $query->where('college_id', $this->college_id))
+            ->when($this->department_id, fn (Builder $query) => $query->where('department_id', $this->department_id))
             ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
             ->latest('fixed_at')
             ->latest('id')
@@ -127,6 +137,17 @@ class ReportsDashboard extends Page
             ->mapWithKeys(fn (FixedExamProgram $program): array => [
                 $program->getKey() => trim(($program->title ?: 'برنامج مثبت').' - '.($program->fixed_at?->format('Y-m-d H:i') ?? '')),
             ])
+            ->all();
+    }
+
+    public function departmentOptions(): array
+    {
+        return Department::query()
+            ->when($this->college_id, fn (Builder $query) => $query->where('college_id', $this->college_id))
+            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name', 'id')
             ->all();
     }
 
@@ -173,7 +194,17 @@ class ReportsDashboard extends Page
     {
         return route('filament.adminpanel.exam-schedules.print', collect([
             'college_id' => $this->college_id,
+            'department_id' => $this->department_id,
             'fixed_exam_program_id' => $this->fixed_exam_program_id,
+        ])->filter(fn ($value): bool => filled($value))->all());
+    }
+
+    public function draftExamSchedulePrintUrl(): string
+    {
+        return route('filament.adminpanel.exam-schedules.print', collect([
+            'source' => 'draft',
+            'college_id' => $this->college_id,
+            'department_id' => $this->department_id,
         ])->filter(fn ($value): bool => filled($value))->all());
     }
 
@@ -341,6 +372,7 @@ class ReportsDashboard extends Page
     {
         return FixedExamProgram::query()
             ->when($this->college_id, fn (Builder $query) => $query->where('college_id', $this->college_id))
+            ->when($this->department_id, fn (Builder $query) => $query->where('department_id', $this->department_id))
             ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
             ->latest('fixed_at')
             ->latest('id')

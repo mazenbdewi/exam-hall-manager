@@ -1,6 +1,7 @@
 <x-filament-panels::page>
     @php
         $fixedProgramOptions = $this->fixedProgramOptions();
+        $departmentOptions = $this->departmentOptions();
         $attendanceSlotOptions = $this->attendanceSlotOptions();
         $hallAssignmentOptions = $this->hallAssignmentOptions();
         $hallAttendancePrintUrl = $this->hallAttendancePrintUrl();
@@ -42,11 +43,21 @@
                     </div>
                     <div>
                         <h3 class="font-bold text-gray-950 dark:text-white">طباعة برنامج الامتحان</h3>
-                        <p class="{{ $descriptionClasses }}">طباعة البرنامج الامتحاني الرسمي حسب الكلية والقسم والفصل من آخر نسخة مثبتة مناسبة.</p>
+                        <p class="{{ $descriptionClasses }}">طباعة البرنامج الامتحاني حسب الكلية والقسم، سواء كان مسودة للمراجعة أو نسخة مثبتة جاهزة.</p>
                     </div>
                 </div>
 
                 <div class="mt-4 space-y-3">
+                    <label class="space-y-1">
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">القسم</span>
+                        <select wire:model.live="department_id" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
+                            <option value="">كل الأقسام</option>
+                            @foreach ($departmentOptions as $id => $name)
+                                <option value="{{ $id }}">{{ $name }}</option>
+                            @endforeach
+                        </select>
+                    </label>
+
                     <label class="space-y-1">
                         <span class="text-sm font-medium text-gray-700 dark:text-gray-200">النسخة المثبتة</span>
                         <select wire:model.live="fixed_exam_program_id" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
@@ -59,7 +70,10 @@
 
                     <div class="flex flex-wrap gap-2">
                         <x-filament::button tag="a" :href="$this->examSchedulePrintUrl()" target="_blank" rel="noopener" icon="heroicon-o-printer">
-                            فتح
+                            فتح البرنامج المثبت
+                        </x-filament::button>
+                        <x-filament::button tag="a" :href="$this->draftExamSchedulePrintUrl()" target="_blank" rel="noopener" color="warning" icon="heroicon-o-document-text">
+                            مسودة البرنامج
                         </x-filament::button>
                         <x-filament::button tag="a" :href="$this->fixedProgramsUrl()" color="gray" icon="heroicon-o-document-check">
                             طباعة البرامج الامتحانية المثبتة
