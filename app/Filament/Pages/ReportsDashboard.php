@@ -8,6 +8,7 @@ use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\College;
 use App\Models\Department;
+use App\Models\ExamScheduleDraft;
 use App\Models\FixedExamProgram;
 use App\Models\HallAssignment;
 use App\Models\StudentDistributionRun;
@@ -201,10 +202,15 @@ class ReportsDashboard extends Page
 
     public function draftExamSchedulePrintUrl(): string
     {
+        $draft = $this->latestDraft();
+
         return route('filament.adminpanel.exam-schedules.print', collect([
             'source' => 'draft',
+            'draft_id' => $draft?->getKey(),
             'college_id' => $this->college_id,
             'department_id' => $this->department_id,
+            'academic_year_id' => $draft?->academic_year_id,
+            'semester_id' => $draft?->semester_id,
         ])->filter(fn ($value): bool => filled($value))->all());
     }
 
@@ -386,6 +392,26 @@ class ReportsDashboard extends Page
             ->when($this->college_id, fn (Builder $query) => $query->where('college_id', $this->college_id))
             ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
             ->latest('executed_at')
+            ->latest('id')
+            ->first();
+    }
+
+    protected function latestDraft(): ?ExamScheduleDraft
+    {
+        return ExamScheduleDraft::query()
+            ->when($this->college_id, fn (Builder $query) => $query->where('faculty_id', $this->college_id))
+            ->when($this->department_id, function (Builder $query, int $departmentId): void {
+                $query->whereHas('items', function (Builder $itemsQuery) use ($departmentId): void {
+                    $itemsQuery->where(function (Builder $departmentQuery) use ($departmentId): void {
+                        $departmentQuery
+                            ->where('department_id', $departmentId)
+                            ->orWhereHas('subject', fn (Builder $subjectQuery) => $subjectQuery->where('department_id', $departmentId));
+                    });
+                });
+            })
+            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('faculty_id', ExamCollegeScope::currentCollegeId()))
+            ->whereIn('status', ['draft', 'generated', 'approved'])
+            ->latest('updated_at')
             ->latest('id')
             ->first();
     }

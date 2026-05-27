@@ -128,7 +128,7 @@ class ExamSchedulePrintController extends Controller
     }
 
     /**
-     * @return array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int}
+     * @return array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int,draft_id:?int}
      */
     protected function normalizedDraftFilters(Request $request): array
     {
@@ -156,11 +156,12 @@ class ExamSchedulePrintController extends Controller
             'department_id' => $departmentId,
             'academic_year_id' => $request->filled('academic_year_id') ? ($request->integer('academic_year_id') ?: null) : null,
             'semester_id' => $request->filled('semester_id') ? ($request->integer('semester_id') ?: null) : null,
+            'draft_id' => $request->filled('draft_id') ? ($request->integer('draft_id') ?: null) : null,
         ];
     }
 
     /**
-     * @param  array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int}  $filters
+     * @param  array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int,draft_id:?int}  $filters
      */
     protected function latestMatchingDraft(array $filters): ?ExamScheduleDraft
     {
@@ -173,10 +174,11 @@ class ExamSchedulePrintController extends Controller
                 'items.subject.department',
                 'items.subject.studyLevel',
             ])
+            ->when($filters['draft_id'], fn ($query, int $draftId) => $query->whereKey($draftId))
             ->where('faculty_id', $filters['college_id'])
             ->when($filters['academic_year_id'], fn ($query, int $academicYearId) => $query->where('academic_year_id', $academicYearId))
             ->when($filters['semester_id'], fn ($query, int $semesterId) => $query->where('semester_id', $semesterId))
-            ->whereIn('status', ['draft', 'generated'])
+            ->whereIn('status', ['draft', 'generated', 'approved'])
             ->when($filters['department_id'], function ($query, int $departmentId): void {
                 $query->whereHas('items', function ($itemsQuery) use ($departmentId): void {
                     $itemsQuery->where(function ($departmentQuery) use ($departmentId): void {
@@ -202,6 +204,7 @@ class ExamSchedulePrintController extends Controller
         $institution = InstitutionSettings::make();
         $routeFilters = array_filter([
             'source' => 'draft',
+            'draft_id' => $draft->getKey(),
             'college_id' => $filters['college_id'],
             'department_id' => $filters['department_id'],
             'academic_year_id' => $filters['academic_year_id'],

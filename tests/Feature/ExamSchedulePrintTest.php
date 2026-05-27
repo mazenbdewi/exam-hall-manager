@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Pages\ReportsDashboard;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Models\AcademicYear;
 use App\Models\College;
@@ -170,7 +171,7 @@ class ExamSchedulePrintTest extends TestCase
             'semester_id' => $semester->id,
             'start_date' => '2026-05-03',
             'end_date' => '2026-05-04',
-            'status' => 'generated',
+            'status' => 'approved',
             'settings_json' => [],
         ]);
 
@@ -255,6 +256,7 @@ class ExamSchedulePrintTest extends TestCase
             ->actingAs($user)
             ->get(route('filament.adminpanel.exam-schedules.print', [
                 'source' => 'draft',
+                'draft_id' => $draft->id,
                 'college_id' => $college->id,
             ]));
 
@@ -263,6 +265,11 @@ class ExamSchedulePrintTest extends TestCase
             ->assertSee('مسودة البرنامج')
             ->assertSee('الفصل الثاني')
             ->assertSee('برمجة متقدمة');
+
+        $dashboard = new ReportsDashboard();
+        $dashboard->college_id = $college->id;
+
+        $this->assertStringContainsString('draft_id='.$draft->id, $dashboard->draftExamSchedulePrintUrl());
     }
 
     protected function createSubject(College $college, Department $department, StudyLevel $studyLevel, string $name): Subject
