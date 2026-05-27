@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ExamOfferingStatus;
 use App\Filament\Pages\ReportsDashboard;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Models\AcademicYear;
@@ -13,6 +14,7 @@ use App\Models\FixedExamProgram;
 use App\Models\Semester;
 use App\Models\StudyLevel;
 use App\Models\Subject;
+use App\Models\SubjectExamOffering;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\ExamScheduleGeneratorService;
@@ -270,6 +272,73 @@ class ExamSchedulePrintTest extends TestCase
         $dashboard->college_id = $college->id;
 
         $this->assertStringContainsString('draft_id='.$draft->id, $dashboard->draftExamSchedulePrintUrl());
+    }
+
+    #[Test]
+    public function manually_entered_draft_offerings_can_be_printed_as_draft_schedule(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الاقتصاد', 'is_active' => true]);
+        $department = Department::query()->create(['college_id' => $college->id, 'name' => 'قسم المحاسبة', 'is_active' => true]);
+        $level = StudyLevel::query()->create(['name' => 'الأولى', 'sort_order' => 1, 'is_active' => true]);
+        $academicYear = AcademicYear::query()->create(['name' => '2025-2026', 'is_active' => true, 'is_current' => true]);
+        $semester = Semester::query()->create(['name' => 'الفصل الثاني', 'sort_order' => 2, 'is_active' => true]);
+        $draftSubject = $this->createSubject($college, $department, $level, 'مبادئ محاسبة 2');
+        $readySubject = $this->createSubject($college, $department, $level, 'إدارة مالية');
+
+        SubjectExamOffering::query()->create([
+            'subject_id' => $draftSubject->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'exam_date' => '2026-07-13',
+            'exam_start_time' => '09:30:00',
+            'status' => ExamOfferingStatus::Draft,
+        ]);
+
+        SubjectExamOffering::query()->create([
+            'subject_id' => $readySubject->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'exam_date' => '2026-07-14',
+            'exam_start_time' => '09:30:00',
+            'status' => ExamOfferingStatus::Ready,
+        ]);
+
+        $user = User::factory()->create(['college_id' => $college->id]);
+        $user->assignRole(Role::findOrCreate(RoleNames::ADMIN, 'web'));
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $response = $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'source' => 'draft',
+                'college_id' => $college->id,
+                'academic_year_id' => $academicYear->id,
+                'semester_id' => $semester->id,
+            ]));
+
+        $response
+            ->assertOk()
+            ->assertSee('مسودة البرنامج')
+            ->assertSee('كلية الاقتصاد')
+            ->assertSee('الفصل الثاني')
+            ->assertSee('مبادئ محاسبة 2')
+            ->assertDontSee('إدارة مالية');
+
+        $pdfResponse = $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'source' => 'draft',
+                'college_id' => $college->id,
+                'academic_year_id' => $academicYear->id,
+                'semester_id' => $semester->id,
+                'download' => 1,
+            ]));
+
+        $pdfResponse
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->assertStringStartsWith('%PDF', $pdfResponse->streamedContent());
     }
 
     protected function createSubject(College $college, Department $department, StudyLevel $studyLevel, string $name): Subject

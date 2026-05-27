@@ -7,6 +7,7 @@ use App\Models\ExamScheduleDraft;
 use App\Models\ExamScheduleDraftItem;
 use App\Models\FixedExamProgram;
 use App\Models\StudyLevel;
+use App\Models\SubjectExamOffering;
 use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -125,6 +126,58 @@ class FixedExamProgramSnapshotService
     }
 
     /**
+     * @param  Collection<int, SubjectExamOffering>  $offerings
+     * @return array<string, mixed>
+     */
+    public function snapshotFromOfferings(
+        Collection $offerings,
+        int $collegeId,
+        ?int $departmentId = null,
+        string $documentStatus = 'draft',
+    ): array {
+        $offerings = $offerings
+            ->loadMissing(['subject.college', 'subject.department', 'subject.studyLevel', 'academicYear', 'semester', 'examScheduleDraftItem'])
+            ->filter(fn (SubjectExamOffering $offering): bool => $offering->subject !== null)
+            ->values();
+
+        $firstOffering = $offerings->first();
+        $systemSetting = SystemSetting::current();
+        $department = $departmentId ? Department::query()->find($departmentId) : null;
+        $levels = $this->studyLevelsForOfferings($offerings);
+        $entries = $this->entriesForOfferings($offerings);
+        $rows = $this->rowsForEntries($entries, $levels);
+        $academicYear = (string) ($firstOffering?->academicYear?->name ?? '—');
+        $semester = (string) ($firstOffering?->semester?->name ?? '—');
+        $collegeName = $firstOffering?->subject?->college?->name;
+        $title = 'برنامج امتحان '.$semester.' للعام الدراسي '.$academicYear;
+
+        return [
+            'meta' => [
+                'document_status' => $documentStatus,
+                'university_name' => $systemSetting->university_name,
+                'college_id' => $collegeId,
+                'college_name' => $collegeName,
+                'department_id' => $departmentId,
+                'department_name' => $department?->name ?? 'كل الأقسام',
+                'academic_year_id' => $firstOffering?->academic_year_id,
+                'academic_year' => $academicYear,
+                'semester_id' => $firstOffering?->semester_id,
+                'semester' => $semester,
+                'title' => $title,
+                'fixed_at' => null,
+                'fixed_by' => null,
+            ],
+            'levels' => $levels->map(fn (StudyLevel $level): array => [
+                'id' => $level->id,
+                'name' => $level->name,
+                'sort_order' => $level->sort_order,
+            ])->values()->all(),
+            'rows' => $rows->values()->all(),
+            'entries' => $entries->values()->all(),
+        ];
+    }
+
+    /**
      * @return Collection<int, StudyLevel>
      */
     protected function studyLevelsForDraft(ExamScheduleDraft $draft, ?int $departmentId): Collection
@@ -199,6 +252,65 @@ class FixedExamProgramSnapshotService
                     'exam_end_time' => $this->timeString($item->end_time),
                     'time_range' => $this->timeRange($item->start_time, $item->end_time),
                     'status' => $item->status,
+                ];
+            })
+            ->values();
+    }
+
+    /**
+     * @param  Collection<int, SubjectExamOffering>  $offerings
+     * @return Collection<int, StudyLevel>
+     */
+    protected function studyLevelsForOfferings(Collection $offerings): Collection
+    {
+        $levelIds = $offerings
+            ->pluck('subject.study_level_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        return StudyLevel::query()
+            ->when($levelIds->isNotEmpty(), fn (Builder $query): Builder => $query->whereIn('id', $levelIds))
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get();
+    }
+
+    /**
+     * @param  Collection<int, SubjectExamOffering>  $offerings
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function entriesForOfferings(Collection $offerings): Collection
+    {
+        return $offerings
+            ->filter(fn (SubjectExamOffering $offering): bool => $offering->exam_date
+                && filled($offering->exam_start_time)
+                && $offering->subject !== null)
+            ->sortBy([
+                ['exam_date', 'asc'],
+                ['exam_start_time', 'asc'],
+                ['subject.name', 'asc'],
+            ])
+            ->map(function (SubjectExamOffering $offering): array {
+                $examDate = $offering->exam_date instanceof Carbon
+                    ? $offering->exam_date
+                    : Carbon::parse($offering->exam_date);
+
+                return [
+                    'exam_date' => $examDate->toDateString(),
+                    'day_name' => $this->arabicDayName($examDate),
+                    'subject_id' => $offering->subject_id,
+                    'subject_name' => $offering->subject?->name,
+                    'subject_code' => $offering->subject?->code,
+                    'department_id' => $offering->subject?->department_id,
+                    'department_name' => $offering->subject?->department?->name,
+                    'study_level_id' => $offering->subject?->study_level_id,
+                    'study_level_name' => $offering->subject?->studyLevel?->name,
+                    'exam_start_time' => $this->timeString($offering->exam_start_time),
+                    'exam_end_time' => $this->timeString($offering->examScheduleDraftItem?->end_time),
+                    'time_range' => $this->timeRange($offering->exam_start_time, $offering->examScheduleDraftItem?->end_time),
+                    'status' => $offering->status instanceof \BackedEnum ? $offering->status->value : (string) $offering->status,
                 ];
             })
             ->values();
