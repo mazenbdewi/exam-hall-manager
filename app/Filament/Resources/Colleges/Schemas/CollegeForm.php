@@ -27,6 +27,11 @@ class CollegeForm
                             ->label(__('exam.fields.is_active'))
                             ->default(true)
                             ->inline(false),
+                        Toggle::make('enable_department_student_number_prefix')
+                            ->label('تفعيل ترميز الأرقام الجامعية حسب القسم')
+                            ->helperText('عند التفعيل يمكن تعديل أرقام طلاب القوائم بإضافة ترميز القسم لتفادي التشابه بين الأقسام.')
+                            ->default(false)
+                            ->inline(false),
                     ]),
             ]);
     }

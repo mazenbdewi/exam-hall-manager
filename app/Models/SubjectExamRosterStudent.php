@@ -13,6 +13,7 @@ class SubjectExamRosterStudent extends Model
     protected $fillable = [
         'subject_exam_roster_id',
         'student_number',
+        'original_student_number',
         'full_name',
         'student_type',
         'is_eligible',

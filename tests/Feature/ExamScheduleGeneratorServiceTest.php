@@ -16,6 +16,7 @@ use App\Models\SubjectExamOffering;
 use App\Models\SubjectExamRoster;
 use App\Models\User;
 use App\Services\ExamScheduleGeneratorService;
+use App\Services\RosterStudentNumberPrefixService;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -220,6 +221,56 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->assertStringContainsString('+ 2 آخرين', $html);
         $this->assertStringContainsString('تم إرفاق ملف تفصيلي يحتوي جميع أرقام الطلاب المتعارضين بدون اختصار', $html);
         $this->assertStringContainsString('عدد الصفوف التفصيلية: 12', $html);
+    }
+
+    #[Test]
+    public function department_student_number_prefixing_prevents_false_conflicts_between_departments(): void
+    {
+        $context = $this->createAcademicContext();
+        $context['college']->update(['enable_department_student_number_prefix' => true]);
+        $context['department']->update(['student_number_prefix' => '11']);
+        $secondDepartment = Department::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قسم القوى الميكانيكية',
+            'student_number_prefix' => '12',
+            'is_active' => true,
+        ]);
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        $firstSubject = $this->createSubject($context, 'تصميم آلات 1');
+        $secondSubject = $this->createSubject($context, 'تصميم آلات 2', ['department_id' => $secondDepartment->id]);
+        $firstRoster = $this->createRoster($context, $firstSubject, [['3456', 'طالب قسم التصميم', 'regular']]);
+        $secondRoster = $this->createRoster($context, $secondSubject, [['3456', 'طالب قسم القوى', 'regular']], ['department_id' => $secondDepartment->id]);
+        $prefixService = app(RosterStudentNumberPrefixService::class);
+
+        $firstResult = $prefixService->applyPrefixing($firstRoster->refresh());
+        $secondResult = $prefixService->applyPrefixing($secondRoster->refresh());
+
+        $this->assertSame(1, $firstResult['updated_students_count']);
+        $this->assertSame(1, $secondResult['updated_students_count']);
+        $this->assertSame('113456', $firstRoster->rosterStudents()->firstOrFail()->student_number);
+        $this->assertSame('3456', $firstRoster->rosterStudents()->firstOrFail()->original_student_number);
+        $this->assertSame('123456', $secondRoster->rosterStudents()->firstOrFail()->student_number);
+
+        $secondApply = $prefixService->applyPrefixing($firstRoster->refresh());
+        $this->assertSame(0, $secondApply['updated_students_count']);
+        $this->assertSame('113456', $firstRoster->rosterStudents()->firstOrFail()->student_number);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-03',
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+        ]));
+        $validation = app(ExamScheduleGeneratorService::class)->validateDraft($draft->refresh());
+
+        $this->assertSame(0, $draft->items()->where('status', 'unscheduled')->count());
+        $this->assertSame([], collect($validation['conflicts'])->whereIn('type', ['same_student_time', 'same_student_day'])->values()->all());
+
+        $restoreResult = $prefixService->restoreOriginalNumbers($firstRoster->refresh());
+        $this->assertSame(1, $restoreResult['updated_students_count']);
+        $this->assertSame('3456', $firstRoster->rosterStudents()->firstOrFail()->student_number);
     }
 
     #[Test]

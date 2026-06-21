@@ -17,12 +17,14 @@ class College extends Model
         'name',
         'code',
         'is_active',
+        'enable_department_student_number_prefix',
     ];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'enable_department_student_number_prefix' => 'boolean',
         ];
     }
 

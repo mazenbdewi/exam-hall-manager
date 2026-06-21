@@ -68,6 +68,11 @@ class RosterStudentsRelationManager extends RelationManager
                     ->label('الرقم الامتحاني')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('original_student_number')
+                    ->label('الرقم الجامعي الأصلي')
+                    ->placeholder('—')
+                    ->searchable()
+                    ->toggleable(),
                 TextColumn::make('full_name')
                     ->label('اسم الطالب')
                     ->searchable()

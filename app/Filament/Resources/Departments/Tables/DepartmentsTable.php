@@ -34,6 +34,11 @@ class DepartmentsTable
                     ->label(__('exam.fields.code'))
                     ->searchable()
                     ->toggleable(),
+                TextColumn::make('student_number_prefix')
+                    ->label('ترميز الطلاب')
+                    ->placeholder('—')
+                    ->searchable()
+                    ->toggleable(),
                 IconColumn::make('is_active')
                     ->label(__('exam.fields.is_active'))
                     ->boolean()

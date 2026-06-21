@@ -31,6 +31,10 @@ class CollegesTable
                     ->label(__('exam.fields.is_active'))
                     ->boolean()
                     ->sortable(),
+                IconColumn::make('enable_department_student_number_prefix')
+                    ->label('ترميز أرقام الطلاب')
+                    ->boolean()
+                    ->sortable(),
                 TextColumn::make('departments_count')
                     ->counts('departments')
                     ->label(__('exam.fields.departments')),
@@ -43,6 +47,8 @@ class CollegesTable
             ])
             ->filters([
                 TernaryFilter::make('is_active'),
+                TernaryFilter::make('enable_department_student_number_prefix')
+                    ->label('ترميز الأرقام حسب القسم'),
                 TrashedFilter::make(),
             ])
             ->recordActions([

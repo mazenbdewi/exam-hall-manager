@@ -17,6 +17,7 @@ class Department extends Model
         'college_id',
         'name',
         'code',
+        'student_number_prefix',
         'is_active',
     ];
 
