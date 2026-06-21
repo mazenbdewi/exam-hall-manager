@@ -27,6 +27,7 @@ use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
@@ -175,9 +176,20 @@ class ExamScheduleGenerator extends Page
 
     public function generateDraft(): void
     {
-        $this->authorizeGeneratorAction('generate_exam_schedule_draft');
+        Log::info('Exam schedule generator generateDraft reached.', [
+            'user_id' => auth()->id(),
+            'college_id' => $this->college_id,
+            'academic_year_id' => $this->academic_year_id,
+            'semester_id' => $this->semester_id,
+            'department_id' => $this->department_id,
+            'study_level_id' => $this->study_level_id,
+            'start_date' => $this->start_date,
+            'end_date' => $this->end_date,
+        ]);
 
         try {
+            $this->authorizeGeneratorAction('generate_exam_schedule_draft');
+
             $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settingsPayload());
             $this->draft_id = $draft->id;
             $this->active_week_start = $draft->start_date?->startOfWeek(Carbon::SUNDAY)->toDateString();
@@ -201,13 +213,32 @@ class ExamScheduleGenerator extends Page
                 ->success()
                 ->send();
         } catch (ValidationException $exception) {
-            throw $exception;
+            Log::warning('Exam schedule draft generation validation failed.', [
+                'user_id' => auth()->id(),
+                'errors' => $exception->errors(),
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+            ]);
+
+            Notification::make()
+                ->title('تعذر توليد المسودة')
+                ->body($this->validationExceptionMessage($exception))
+                ->warning()
+                ->persistent()
+                ->send();
         } catch (\Throwable $exception) {
-            report($exception);
+            Log::error('Exam schedule draft generation failed.', [
+                'user_id' => auth()->id(),
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+                'trace' => $exception->getTraceAsString(),
+            ]);
 
             Notification::make()
                 ->title('فشل توليد المسودة')
-                ->body($exception->getMessage())
+                ->body('حدث خطأ غير متوقع أثناء توليد مسودة البرنامج. تم تسجيل التفاصيل في سجل النظام للمراجعة.')
                 ->danger()
                 ->persistent()
                 ->send();
@@ -1008,6 +1039,20 @@ class ExamScheduleGenerator extends Page
             'التعارضات: '.($summary['conflicts_count'] ?? 0),
             'التحذيرات: '.($summary['warnings_count'] ?? 0),
         ])->implode(' | ');
+    }
+
+    protected function validationExceptionMessage(ValidationException $exception): string
+    {
+        $messages = collect($exception->errors())
+            ->flatten()
+            ->filter()
+            ->values();
+
+        if ($messages->isEmpty()) {
+            return 'يرجى مراجعة إعدادات التوليد والمحاولة مرة أخرى.';
+        }
+
+        return $messages->take(3)->implode(' ');
     }
 
     protected function timeString(mixed $time): ?string

@@ -16,6 +16,7 @@ use Carbon\CarbonPeriod;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -27,6 +28,11 @@ class ExamScheduleGeneratorService
     public function generateDraft(array $settings): ExamScheduleDraft
     {
         $settings = $this->normalizeSettings($settings);
+        Log::info('Exam schedule draft generation: settings normalized.', [
+            'user_id' => auth()->id(),
+            'settings' => $this->loggableSettings($settings),
+        ]);
+
         $collegeId = ExamCollegeScope::enforceCollegeId($settings['faculty_id'] ?? null, 'faculty_id');
         $settings['faculty_id'] = $collegeId;
 
@@ -42,7 +48,31 @@ class ExamScheduleGeneratorService
             ]);
         }
 
-        return DB::transaction(function () use ($settings, $collegeId): ExamScheduleDraft {
+        $slots = $this->availableSlots($settings);
+        Log::info('Exam schedule draft generation: available slots built.', [
+            'user_id' => auth()->id(),
+            'college_id' => $collegeId,
+            'slots_count' => count($slots),
+            'first_slot' => $slots[0]['key'] ?? null,
+            'last_slot' => $slots !== [] ? $slots[array_key_last($slots)]['key'] : null,
+        ]);
+
+        $units = $this->buildSchedulingUnits($settings);
+        Log::info('Exam schedule draft generation: scheduling units built.', [
+            'user_id' => auth()->id(),
+            'college_id' => $collegeId,
+            'units_count' => $units->count(),
+            'subjects_count' => $units->sum(fn (array $unit): int => count($unit['subjects'] ?? [])),
+        ]);
+
+        Log::info('Exam schedule draft generation: before creating draft.', [
+            'user_id' => auth()->id(),
+            'college_id' => $collegeId,
+            'academic_year_id' => $settings['academic_year_id'],
+            'semester_id' => $settings['semester_id'],
+        ]);
+
+        return DB::transaction(function () use ($settings, $collegeId, $slots, $units): ExamScheduleDraft {
             $draft = ExamScheduleDraft::query()->create([
                 'faculty_id' => $collegeId,
                 'academic_year_id' => $settings['academic_year_id'],
@@ -54,8 +84,12 @@ class ExamScheduleGeneratorService
                 'settings_json' => $settings,
             ]);
 
-            $slots = $this->availableSlots($settings);
-            $units = $this->buildSchedulingUnits($settings);
+            Log::info('Exam schedule draft generation: draft created.', [
+                'user_id' => auth()->id(),
+                'draft_id' => $draft->id,
+                'college_id' => $collegeId,
+            ]);
+
             $slotLoads = collect($slots)->mapWithKeys(fn (array $slot): array => [$slot['key'] => 0])->all();
             $dayLoads = [];
             $academicAssignments = [];
@@ -127,15 +161,36 @@ class ExamScheduleGeneratorService
                 }
             }
 
+            Log::info('Exam schedule draft generation: before validating draft.', [
+                'user_id' => auth()->id(),
+                'draft_id' => $draft->id,
+                'items_count' => $draft->items()->count(),
+            ]);
+
             $validation = $this->validateDraft($draft->refresh());
             $this->syncValidationToDraft($draft, $validation);
+            Log::info('Exam schedule draft generation: validation synced to draft.', [
+                'user_id' => auth()->id(),
+                'draft_id' => $draft->id,
+                'summary' => $validation['summary'] ?? [],
+                'hard_conflicts_count' => $validation['hard_conflicts_count'] ?? null,
+                'warnings_count' => $validation['warnings_count'] ?? null,
+            ]);
 
             $draft->update([
                 'status' => 'generated',
                 'summary_json' => $validation['summary'],
             ]);
 
-            return $draft->refresh();
+            $draft = $draft->refresh();
+            Log::info('Exam schedule draft generation: before return.', [
+                'user_id' => auth()->id(),
+                'draft_id' => $draft->id,
+                'status' => $draft->status,
+                'summary_status' => $draft->summary_json['status'] ?? null,
+            ]);
+
+            return $draft;
         });
     }
 
@@ -495,6 +550,28 @@ class ExamScheduleGeneratorService
                 ->values()
                 ->all(),
             'periods' => $periods,
+            'prevent_same_day' => (bool) ($settings['prevent_same_day'] ?? false),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array<string, mixed>
+     */
+    protected function loggableSettings(array $settings): array
+    {
+        return [
+            'faculty_id' => $settings['faculty_id'] ?? null,
+            'academic_year_id' => $settings['academic_year_id'] ?? null,
+            'semester_id' => $settings['semester_id'] ?? null,
+            'study_level_id' => $settings['study_level_id'] ?? null,
+            'department_id' => $settings['department_id'] ?? null,
+            'previous_draft_id' => $settings['previous_draft_id'] ?? null,
+            'start_date' => $settings['start_date'] ?? null,
+            'end_date' => $settings['end_date'] ?? null,
+            'excluded_weekdays' => $settings['excluded_weekdays'] ?? [],
+            'holidays_count' => count($settings['holidays'] ?? []),
+            'periods_count' => count($settings['periods'] ?? []),
             'prevent_same_day' => (bool) ($settings['prevent_same_day'] ?? false),
         ];
     }
