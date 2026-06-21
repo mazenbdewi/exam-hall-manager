@@ -19,7 +19,6 @@ use App\Models\StudentDistributionRun;
 use App\Models\StudyLevel;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
-use App\Models\SystemSetting;
 use App\Services\ExamHallDistributionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
@@ -299,7 +298,7 @@ class ExamHallDistributionTest extends TestCase
     {
         $context = $this->createAcademicContext();
         $offering = $this->createOfferingWithStudents($context, 'تحليل يحتاج سعة', 8);
-        SystemSetting::current()->update([
+        $context['college']->update([
             'allow_normal_subjects_in_drawing_studios' => true,
         ]);
 

@@ -78,7 +78,6 @@ class SystemSettingResource extends Resource
             $data,
             [
                 'university_name' => ['required', 'string', 'max:255'],
-                'allow_normal_subjects_in_drawing_studios' => ['boolean'],
                 'university_logo' => [
                     'nullable',
                     'string',
@@ -102,7 +101,6 @@ class SystemSettingResource extends Resource
             attributes: [
                 'university_name' => __('exam.fields.university_name'),
                 'university_logo' => __('exam.fields.university_logo'),
-                'allow_normal_subjects_in_drawing_studios' => __('exam.fields.allow_normal_subjects_in_drawing_studios'),
             ],
         )->validate();
     }

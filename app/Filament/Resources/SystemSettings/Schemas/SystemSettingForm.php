@@ -4,7 +4,6 @@ namespace App\Filament\Resources\SystemSettings\Schemas;
 
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
@@ -29,12 +28,6 @@ class SystemSettingForm
                             ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp'])
                             ->imageEditor()
                             ->maxSize(5120),
-                        Toggle::make('allow_normal_subjects_in_drawing_studios')
-                            ->label(__('exam.fields.allow_normal_subjects_in_drawing_studios'))
-                            ->helperText(__('exam.helpers.allow_normal_subjects_in_drawing_studios'))
-                            ->default(false)
-                            ->dehydrated(true)
-                            ->inline(false),
                     ]),
             ]);
     }

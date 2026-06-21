@@ -32,7 +32,11 @@ class CollegesTable
                     ->boolean()
                     ->sortable(),
                 IconColumn::make('enable_department_student_number_prefix')
-                    ->label('ترميز أرقام الطلاب')
+                    ->label('إضافة رمز القسم')
+                    ->boolean()
+                    ->sortable(),
+                IconColumn::make('allow_normal_subjects_in_drawing_studios')
+                    ->label('استخدام المراسم للمواد العادية')
                     ->boolean()
                     ->sortable(),
                 TextColumn::make('departments_count')
@@ -48,7 +52,9 @@ class CollegesTable
             ->filters([
                 TernaryFilter::make('is_active'),
                 TernaryFilter::make('enable_department_student_number_prefix')
-                    ->label('ترميز الأرقام حسب القسم'),
+                    ->label('إضافة رمز القسم إلى الرقم الجامعي'),
+                TernaryFilter::make('allow_normal_subjects_in_drawing_studios')
+                    ->label('السماح باستخدام المراسم للمواد العادية'),
                 TrashedFilter::make(),
             ])
             ->recordActions([

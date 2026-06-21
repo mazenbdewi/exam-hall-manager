@@ -38,12 +38,9 @@ class DepartmentForm
                             ->label(__('exam.fields.name'))
                             ->required()
                             ->maxLength(255),
-                        TextInput::make('code')
-                            ->label(__('exam.fields.code'))
-                            ->maxLength(255),
                         TextInput::make('student_number_prefix')
-                            ->label('ترميز الأرقام الجامعية')
-                            ->helperText('مثال: 11 أو 12. يستخدم كبادئة للرقم الجامعي عند تعديل أرقام طلاب القوائم.')
+                            ->label('رمز')
+                            ->helperText('مثال: 11 أو 12')
                             ->maxLength(20)
                             ->dehydrateStateUsing(fn (?string $state): ?string => filled($state) ? trim($state) : null)
                             ->required(fn (Get $get): bool => self::collegeUsesStudentNumberPrefix($get('college_id')))
@@ -60,7 +57,7 @@ class DepartmentForm
                                         ->exists();
 
                                     if ($exists) {
-                                        $fail('ترميز الأرقام الجامعية مستخدم مسبقاً ضمن نفس الكلية.');
+                                        $fail('الرمز مستخدم مسبقاً ضمن نفس الكلية.');
                                     }
                                 },
                             ]),

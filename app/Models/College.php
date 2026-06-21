@@ -18,6 +18,7 @@ class College extends Model
         'code',
         'is_active',
         'enable_department_student_number_prefix',
+        'allow_normal_subjects_in_drawing_studios',
     ];
 
     protected function casts(): array
@@ -25,6 +26,7 @@ class College extends Model
         return [
             'is_active' => 'boolean',
             'enable_department_student_number_prefix' => 'boolean',
+            'allow_normal_subjects_in_drawing_studios' => 'boolean',
         ];
     }
 

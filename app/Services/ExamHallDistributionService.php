@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ExamHallPriority;
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use App\Models\College;
 use App\Models\ExamHall;
 use App\Models\ExamStudent;
 use App\Models\ExamStudentHallAssignment;
@@ -16,6 +17,7 @@ use App\Models\SubjectExamOffering;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class ExamHallDistributionService
 {
@@ -32,7 +34,7 @@ class ExamHallDistributionService
         $settings = [
             'separate_carry_students' => $separateCarryStudents,
             'allow_multiple_subjects_per_hall' => $allowMultipleSubjectsPerHall,
-            'allow_normal_subjects_in_drawing_studios' => $this->allowNormalSubjectsInDrawingStudios(),
+            'allow_normal_subjects_in_drawing_studios' => $this->allowNormalSubjectsInDrawingStudios($collegeId),
         ];
 
         $offerings = SubjectExamOffering::query()
@@ -302,7 +304,7 @@ class ExamHallDistributionService
             $usedHallsCount = 0;
             $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
             $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
-            $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios();
+            $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios((int) $slot['college_id']);
 
             foreach ($availableHalls as $hall) {
                 if (array_sum($remainingCounts) === 0) {
@@ -436,7 +438,7 @@ class ExamHallDistributionService
         $plans = [];
         $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
         $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
-        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios();
+        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios((int) $slot['college_id']);
 
         $regularStudentsCount = array_sum($remainingCounts[ExamStudentType::Regular->value]);
         $carryStudentsCount = array_sum($remainingCounts[ExamStudentType::Carry->value]);
@@ -1881,7 +1883,7 @@ class ExamHallDistributionService
             ->sum('capacity');
         $allCapacity = (int) $availableHalls->sum('capacity');
 
-        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios();
+        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios($this->collegeIdForSlotOfferings($slotOfferings));
 
         if ($drawingStudents === 0) {
             $usableCapacity = $allowNormalSubjectsInDrawingStudios ? $allCapacity : $nonDrawingHallCapacity;
@@ -1971,12 +1973,26 @@ class ExamHallDistributionService
         return (bool) ($hall->is_drawing_studio ?? false);
     }
 
-    protected function allowNormalSubjectsInDrawingStudios(): bool
+    protected function allowNormalSubjectsInDrawingStudios(?int $collegeId): bool
     {
+        if ($collegeId && Schema::hasColumn('colleges', 'allow_normal_subjects_in_drawing_studios')) {
+            return (bool) College::query()
+                ->whereKey($collegeId)
+                ->value('allow_normal_subjects_in_drawing_studios');
+        }
+
         return (bool) app(AppSettingsService::class)->get(
             AppSettingsService::ALLOW_NORMAL_SUBJECTS_IN_DRAWING_STUDIOS,
             false,
         );
+    }
+
+    protected function collegeIdForSlotOfferings(Collection $slotOfferings): ?int
+    {
+        /** @var SubjectExamOffering|null $firstOffering */
+        $firstOffering = $slotOfferings->first();
+
+        return $firstOffering?->subject?->college_id ? (int) $firstOffering->subject->college_id : null;
     }
 
     protected function hasUnassignedDrawingStudents(Collection $slotOfferings, array $remainingCounts): bool

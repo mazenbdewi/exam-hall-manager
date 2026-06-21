@@ -30,12 +30,8 @@ class DepartmentsTable
                     ->label(__('exam.fields.name'))
                     ->searchable()
                     ->sortable(),
-                TextColumn::make('code')
-                    ->label(__('exam.fields.code'))
-                    ->searchable()
-                    ->toggleable(),
                 TextColumn::make('student_number_prefix')
-                    ->label('ترميز الطلاب')
+                    ->label('رمز')
                     ->placeholder('—')
                     ->searchable()
                     ->toggleable(),

@@ -28,8 +28,13 @@ class CollegeForm
                             ->default(true)
                             ->inline(false),
                         Toggle::make('enable_department_student_number_prefix')
-                            ->label('تفعيل ترميز الأرقام الجامعية حسب القسم')
-                            ->helperText('عند التفعيل يمكن تعديل أرقام طلاب القوائم بإضافة ترميز القسم لتفادي التشابه بين الأقسام.')
+                            ->label('تفعيل إضافة رمز القسم إلى الرقم الجامعي')
+                            ->helperText('عند التفعيل يظهر زر تعديل الأرقام الجامعية داخل قوائم الطلاب.')
+                            ->default(false)
+                            ->inline(false),
+                        Toggle::make('allow_normal_subjects_in_drawing_studios')
+                            ->label('السماح باستخدام المراسم للمواد العادية عند الحاجة')
+                            ->helperText('إذا كان معطلاً فلن تستخدم المواد العادية قاعات المراسم.')
                             ->default(false)
                             ->inline(false),
                     ]),
