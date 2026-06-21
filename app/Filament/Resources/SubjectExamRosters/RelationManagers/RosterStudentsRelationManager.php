@@ -184,7 +184,10 @@ class RosterStudentsRelationManager extends RelationManager
         }
 
         $examples = collect($preview['preview_rows'] ?? [])
-            ->map(fn (array $row): string => ($row['name'] ?? 'طالب').' | '.($row['old_number'] ?? '—').' ← '.($row['new_number'] ?? '—'))
+            ->map(fn (array $row): string => ($row['name'] ?? 'طالب')
+                .' | الأصلي: '.($row['original_number'] ?? '—')
+                .' | الحالي: '.($row['current_number'] ?? '—')
+                .' | بعد التعديل: '.($row['new_number'] ?? '—'))
             ->implode("\n");
 
         return trim(implode("\n", [

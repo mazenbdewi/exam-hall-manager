@@ -23,7 +23,8 @@ class RosterStudentNumberPrefixService
             ->map(fn (SubjectExamRosterStudent $student): array => [
                 'student_id' => $student->id,
                 'name' => $student->full_name,
-                'old_number' => $student->student_number,
+                'original_number' => $this->baseStudentNumber($student),
+                'current_number' => $student->student_number,
                 'new_number' => $this->targetPrefixedNumber($student, $prefix),
             ])
             ->values()
@@ -49,14 +50,15 @@ class RosterStudentNumberPrefixService
             $this->ensureUniqueTargetNumbers($students, fn (SubjectExamRosterStudent $student): string => $this->targetPrefixedNumber($student, $prefix));
 
             $updated = 0;
+            $alreadyCorrect = 0;
 
             foreach ($students as $student) {
-                $originalStudentNumber = filled($student->original_student_number)
-                    ? (string) $student->original_student_number
-                    : (string) $student->student_number;
+                $originalStudentNumber = $this->baseStudentNumber($student);
                 $newStudentNumber = $this->targetPrefixedNumber($student, $prefix);
 
                 if ($student->student_number === $newStudentNumber && filled($student->original_student_number)) {
+                    $alreadyCorrect++;
+
                     continue;
                 }
 
@@ -72,11 +74,13 @@ class RosterStudentNumberPrefixService
                 roster: $roster,
                 prefix: $prefix,
                 updatedStudentsCount: $updated,
+                alreadyCorrectStudentsCount: $alreadyCorrect,
             );
 
             return [
                 'prefix' => $prefix,
                 'updated_students_count' => $updated,
+                'already_correct_students_count' => $alreadyCorrect,
                 'students_count' => $students->count(),
             ];
         });
@@ -112,6 +116,7 @@ class RosterStudentNumberPrefixService
                 roster: $roster,
                 prefix: $this->departmentForRoster($roster)?->student_number_prefix,
                 updatedStudentsCount: $updated,
+                alreadyCorrectStudentsCount: 0,
             );
 
             return [
@@ -180,17 +185,14 @@ class RosterStudentNumberPrefixService
 
     protected function targetPrefixedNumber(SubjectExamRosterStudent $student, string $prefix): string
     {
-        $current = trim((string) $student->student_number);
+        return $prefix.$this->baseStudentNumber($student);
+    }
 
-        if (filled($student->original_student_number)) {
-            return $prefix.trim((string) $student->original_student_number);
-        }
-
-        if (str_starts_with($current, $prefix)) {
-            return $current;
-        }
-
-        return $prefix.$current;
+    protected function baseStudentNumber(SubjectExamRosterStudent $student): string
+    {
+        return filled($student->original_student_number)
+            ? trim((string) $student->original_student_number)
+            : trim((string) $student->student_number);
     }
 
     /**
@@ -225,8 +227,13 @@ class RosterStudentNumberPrefixService
         ]);
     }
 
-    protected function audit(string $action, SubjectExamRoster $roster, ?string $prefix, int $updatedStudentsCount): void
-    {
+    protected function audit(
+        string $action,
+        SubjectExamRoster $roster,
+        ?string $prefix,
+        int $updatedStudentsCount,
+        int $alreadyCorrectStudentsCount,
+    ): void {
         $department = $this->departmentForRoster($roster);
 
         app(AuditLogService::class)->log(
@@ -243,6 +250,7 @@ class RosterStudentNumberPrefixService
                 'roster_id' => $roster->id,
                 'prefix' => $prefix,
                 'updated_students_count' => $updatedStudentsCount,
+                'already_correct_students_count' => $alreadyCorrectStudentsCount,
             ],
         );
     }

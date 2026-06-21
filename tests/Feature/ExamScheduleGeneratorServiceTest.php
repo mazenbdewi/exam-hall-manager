@@ -274,6 +274,42 @@ class ExamScheduleGeneratorServiceTest extends TestCase
     }
 
     #[Test]
+    public function department_student_number_prefixing_does_not_skip_numbers_that_already_start_with_prefix(): void
+    {
+        $context = $this->createAcademicContext();
+        $context['college']->update(['enable_department_student_number_prefix' => true]);
+        $context['department']->update(['student_number_prefix' => '12']);
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'قياسات مخبرية');
+        $roster = $this->createRoster($context, $subject, [
+            ['1284', 'طالب يبدأ رقمه بالرمز', 'regular'],
+            ['816', 'طالب لا يبدأ رقمه بالرمز', 'regular'],
+        ]);
+        $prefixService = app(RosterStudentNumberPrefixService::class);
+
+        $preview = $prefixService->previewPrefixing($roster->refresh());
+        $this->assertSame('1284', $preview['preview_rows'][0]['original_number']);
+        $this->assertSame('1284', $preview['preview_rows'][0]['current_number']);
+        $this->assertSame('121284', $preview['preview_rows'][0]['new_number']);
+
+        $firstResult = $prefixService->applyPrefixing($roster->refresh());
+
+        $this->assertSame(2, $firstResult['updated_students_count']);
+        $this->assertSame(0, $firstResult['already_correct_students_count']);
+        $this->assertSame('121284', $roster->rosterStudents()->where('full_name', 'طالب يبدأ رقمه بالرمز')->firstOrFail()->student_number);
+        $this->assertSame('1284', $roster->rosterStudents()->where('full_name', 'طالب يبدأ رقمه بالرمز')->firstOrFail()->original_student_number);
+        $this->assertSame('12816', $roster->rosterStudents()->where('full_name', 'طالب لا يبدأ رقمه بالرمز')->firstOrFail()->student_number);
+        $this->assertSame('816', $roster->rosterStudents()->where('full_name', 'طالب لا يبدأ رقمه بالرمز')->firstOrFail()->original_student_number);
+
+        $secondResult = $prefixService->applyPrefixing($roster->refresh());
+
+        $this->assertSame(0, $secondResult['updated_students_count']);
+        $this->assertSame(2, $secondResult['already_correct_students_count']);
+        $this->assertSame('121284', $roster->rosterStudents()->where('full_name', 'طالب يبدأ رقمه بالرمز')->firstOrFail()->student_number);
+        $this->assertSame('12816', $roster->rosterStudents()->where('full_name', 'طالب لا يبدأ رقمه بالرمز')->firstOrFail()->student_number);
+    }
+
+    #[Test]
     public function same_student_same_day_conflict_is_prevented_when_enabled(): void
     {
         $context = $this->createAcademicContext();
