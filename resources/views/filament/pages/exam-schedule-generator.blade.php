@@ -385,6 +385,9 @@
                 <x-filament::button color="gray" icon="heroicon-o-document-arrow-down" wire:click="exportConflictPdf" wire:loading.attr="disabled">
                     تصدير تقرير التعارضات PDF
                 </x-filament::button>
+                <x-filament::button color="gray" icon="heroicon-o-table-cells" wire:click="exportStudentConflictDetailsCsv" wire:loading.attr="disabled">
+                    تحميل جدول الطلاب المتعارضين
+                </x-filament::button>
                 <x-filament::button color="success" icon="heroicon-o-check-circle" wire:click="approveDraft" wire:confirm="سيتم اعتماد المسودة ونقلها إلى البرامج الامتحانية. هل تريد المتابعة؟" wire:loading.attr="disabled">
                     تثبيت المسودة واعتماد البرنامج
                 </x-filament::button>
@@ -403,7 +406,7 @@
 
             <div class="grid gap-4 lg:grid-cols-3">
                 <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
-                    <h2 class="mb-3 text-base font-semibold text-gray-950 dark:text-white">المواد غير المجدولة</h2>
+                    <h2 class="mb-3 text-base font-semibold text-gray-950 dark:text-white">ملخص عدم الجدولة</h2>
                     @forelse ($unscheduledItems as $item)
                         <div class="rounded-md border border-danger-200 bg-danger-50 p-3 text-sm text-danger-900 dark:border-danger-500/20 dark:bg-danger-500/10 dark:text-danger-100">
                             {{ $item->subject?->name }} - {{ $item->department?->name ?? $item->subject?->department?->name }}
@@ -571,6 +574,44 @@
                     </table>
                 </div>
             </div>
+
+            @php
+                $unscheduledItemRows = $validation['unscheduled_items'] ?? [];
+            @endphp
+
+            @if (! empty($unscheduledItemRows))
+                <div class="rounded-lg border border-danger-200 bg-white p-4 shadow-sm dark:border-danger-500/20 dark:bg-gray-900">
+                    <h2 class="mb-3 text-base font-semibold text-gray-950 dark:text-white">المواد غير المجدولة</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-white/10">
+                            <thead>
+                                <tr class="text-gray-600 dark:text-gray-300">
+                                    <th class="px-3 py-2 text-right">المادة</th>
+                                    <th class="px-3 py-2 text-right">القسم</th>
+                                    <th class="px-3 py-2 text-right">عدد الطلاب</th>
+                                    <th class="px-3 py-2 text-right">سبب عدم الجدولة</th>
+                                    <th class="px-3 py-2 text-right">عدد الفترات المجربة</th>
+                                    <th class="px-3 py-2 text-right">أرقام طلاب متعارضين</th>
+                                    <th class="px-3 py-2 text-right">الإجراء المقترح</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100 dark:divide-white/5">
+                                @foreach ($unscheduledItemRows as $unscheduledItem)
+                                    <tr>
+                                        <td class="px-3 py-2 font-medium text-gray-950 dark:text-white">{{ $unscheduledItem['subject'] ?? '—' }}</td>
+                                        <td class="px-3 py-2">{{ $unscheduledItem['department'] ?? '—' }}</td>
+                                        <td class="px-3 py-2">{{ $unscheduledItem['student_count'] ?? 0 }}</td>
+                                        <td class="px-3 py-2">{{ $unscheduledItem['reason'] ?? '—' }}</td>
+                                        <td class="px-3 py-2">{{ $unscheduledItem['attempted_slots_count'] ?? '—' }}</td>
+                                        <td class="px-3 py-2">{{ $unscheduledItem['conflicting_student_numbers_label'] ?? '—' }}</td>
+                                        <td class="px-3 py-2">{{ $unscheduledItem['suggested_action'] ?? '—' }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            @endif
 
             <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
                 <h2 class="mb-3 text-base font-semibold text-gray-950 dark:text-white">تعارضات البرنامج الامتحاني</h2>

@@ -33,6 +33,12 @@
         التعارضات: {{ $summary['conflicts_count'] ?? 0 }} |
         التحذيرات: {{ $summary['warnings_count'] ?? 0 }}
     </div>
+    @if (($studentConflictDetailsCount ?? 0) > 0)
+        <div class="summary">
+            تم إرفاق ملف تفصيلي يحتوي جميع أرقام الطلاب المتعارضين بدون اختصار.
+            عدد الصفوف التفصيلية: {{ $studentConflictDetailsCount }}.
+        </div>
+    @endif
 
     <table>
         <thead>

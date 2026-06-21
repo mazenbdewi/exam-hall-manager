@@ -114,10 +114,29 @@ class ExamScheduleGeneratorService
             $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
 
             foreach ($units->sortByDesc(fn (array $unit): int => count($unit['subjects']))->values() as $unit) {
-                $choice = $this->chooseSlot($unit, $slots, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments, $settings);
+                $choiceResult = $this->chooseSlot($unit, $slots, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments, $settings);
+                $choice = $choiceResult['slot'] ?? null;
 
                 if (! $choice) {
-                    $this->createUnscheduledItems($draft, $unit);
+                    Log::info('Exam schedule unit could not be scheduled', [
+                        'user_id' => auth()->id(),
+                        'draft_id' => $draft->id,
+                        'unit_key' => $unit['shared_group_key'] ?? null,
+                        'subjects' => collect($unit['subjects'] ?? [])
+                            ->map(fn (array $payload): array => [
+                                'roster_id' => $payload['roster']->id ?? null,
+                                'subject_id' => $payload['subject']->id ?? null,
+                                'subject_name' => $payload['subject']->name ?? null,
+                                'students_count' => $payload['student_count'] ?? null,
+                            ])
+                            ->values()
+                            ->all(),
+                        'reason_code' => $choiceResult['failure_reason_code'] ?? 'unknown',
+                        'attempted_slots_count' => $choiceResult['diagnostics']['attempted_slots_count'] ?? null,
+                        'diagnostics' => $choiceResult['diagnostics'] ?? [],
+                    ]);
+
+                    $this->createUnscheduledItems($draft, $unit, $choiceResult);
                     continue;
                 }
 
@@ -231,7 +250,20 @@ class ExamScheduleGeneratorService
             $time = $this->timeString($item->start_time);
 
             if ($item->status === 'unscheduled' || blank($date) || blank($time)) {
-                $conflicts[] = $this->conflictRow($item, 'unscheduled', 'مادة لم يتم جدولتها', 'غير مجدولة', 'اختر موعداً يدوياً ثم أعد فحص التعارضات.');
+                $metadata = $item->metadata ?? [];
+                $conflictingStudentNumbers = $this->sampleConflictingStudentNumbersFromMetadata($metadata);
+
+                $conflicts[] = $this->conflictRow(
+                    $item,
+                    'unscheduled',
+                    'مادة لم يتم جدولتها',
+                    $metadata['unscheduled_reason'] ?? 'غير مجدولة',
+                    $metadata['unscheduled_suggested_action'] ?? $this->unscheduledSuggestedAction((string) ($metadata['unscheduled_reason_code'] ?? 'unknown')),
+                    $this->unscheduledDetailsFromMetadata($metadata),
+                    true,
+                    (int) ($metadata['conflicting_student_numbers_count'] ?? count($conflictingStudentNumbers)),
+                    $conflictingStudentNumbers,
+                );
                 continue;
             }
 
@@ -429,9 +461,100 @@ class ExamScheduleGeneratorService
         return [
             'summary' => $summary,
             'conflicts' => $conflicts,
+            'unscheduled_items' => $draft->items
+                ->filter(fn (ExamScheduleDraftItem $item): bool => $item->status === 'unscheduled' || blank($item->exam_date) || blank($item->start_time))
+                ->map(fn (ExamScheduleDraftItem $item): array => $this->unscheduledItemSummary($item))
+                ->values()
+                ->all(),
             'hard_conflicts_count' => $hardConflictsCount,
             'warnings_count' => $warningsCount,
         ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function studentConflictDetailRows(ExamScheduleDraft $draft): array
+    {
+        $draft->loadMissing(['items.department', 'items.subject.department']);
+
+        $settings = $this->normalizeSettings($draft->settings_json ?? []);
+        $settings['faculty_id'] = $draft->faculty_id;
+        $settings['academic_year_id'] = $draft->academic_year_id;
+        $settings['semester_id'] = $draft->semester_id;
+        $settings['start_date'] = $draft->start_date?->toDateString();
+        $settings['end_date'] = $draft->end_date?->toDateString();
+
+        $slotStudents = [];
+        $dayStudents = [];
+
+        foreach ($draft->items as $item) {
+            $date = $item->exam_date?->toDateString();
+            $time = $this->timeString($item->start_time);
+
+            if ($item->status === 'unscheduled' || blank($date) || blank($time)) {
+                continue;
+            }
+
+            foreach ($this->studentNumbersForItem($item) as $studentNumber) {
+                $slotStudents[$date.'|'.$time][$studentNumber][] = $item;
+                $dayStudents[$date][$studentNumber][] = $item;
+            }
+        }
+
+        $rows = [];
+
+        foreach ($slotStudents as $students) {
+            foreach ($students as $studentNumber => $items) {
+                if (count($items) <= 1) {
+                    continue;
+                }
+
+                $rows = array_merge(
+                    $rows,
+                    $this->studentConflictPairRows(
+                        draft: $draft,
+                        studentNumber: (string) $studentNumber,
+                        items: array_values($items),
+                        conflictType: 'طالب لديه مادتان في نفس الوقت',
+                        details: 'لا يمكن أن يكون للطالب مادتان في نفس الوقت.',
+                    ),
+                );
+            }
+        }
+
+        if ((bool) ($settings['prevent_same_day'] ?? false)) {
+            foreach ($dayStudents as $students) {
+                foreach ($students as $studentNumber => $items) {
+                    if (count($items) <= 1) {
+                        continue;
+                    }
+
+                    $rows = array_merge(
+                        $rows,
+                        $this->studentConflictPairRows(
+                            draft: $draft,
+                            studentNumber: (string) $studentNumber,
+                            items: array_values($items),
+                            conflictType: 'طالب لديه مادتان في نفس اليوم',
+                            details: 'منع مادتين في نفس اليوم لنفس الطالب مفعل.',
+                            skipSameSlotPairs: true,
+                        ),
+                    );
+                }
+            }
+        }
+
+        return collect($rows)
+            ->sortBy([
+                ['conflict_date', 'asc'],
+                ['conflict_time', 'asc'],
+                ['student_number', 'asc'],
+                ['first_subject', 'asc'],
+                ['second_subject', 'asc'],
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -1133,20 +1256,54 @@ class ExamScheduleGeneratorService
         ];
     }
 
-    protected function chooseSlot(array $unit, array $slots, array $slotLoads, array $dayLoads, array $academicAssignments, array $studentAssignments, array $settings): ?array
+    protected function chooseSlot(array $unit, array $slots, array $slotLoads, array $dayLoads, array $academicAssignments, array $studentAssignments, array $settings): array
     {
         $candidates = [];
+        $diagnostics = $this->initialSlotDiagnostics($slots);
+
+        if ($slots === []) {
+            return $this->slotFailureResult('no_available_slots', $diagnostics);
+        }
+
+        if (collect($unit['subjects'] ?? [])->contains(fn (array $payload): bool => (int) ($payload['student_count'] ?? 0) <= 0)) {
+            return $this->slotFailureResult('missing_student_data', $diagnostics);
+        }
 
         foreach ($slots as $slot) {
-            if ($this->hasAcademicHardConflict($unit, $slot, $academicAssignments, $settings)) {
-                continue;
+            $isBlocked = false;
+            $academicConflict = $this->academicHardConflictDetails($unit, $slot, $academicAssignments, $settings);
+            $studentConflict = $this->studentHardConflictDetails($unit, $slot, $studentAssignments, $settings);
+            $preferredPeriodBlocked = $this->hasStrictCorePeriodConflict($unit, $slot);
+
+            if ($academicConflict['blocked']) {
+                $diagnostics['academic_conflict_slots_count']++;
+                $isBlocked = true;
             }
 
-            if ($this->hasStudentHardConflict($unit, $slot, $studentAssignments, $settings)) {
-                continue;
+            if ($studentConflict['blocked']) {
+                $diagnostics['student_conflict_slots_count']++;
+                $diagnostics['sample_conflicting_student_numbers'] = $this->mergeLimitedStudentNumbers(
+                    $diagnostics['sample_conflicting_student_numbers'],
+                    $studentConflict['student_numbers'],
+                );
+                $diagnostics['conflicting_student_numbers_count'] = count(array_unique(array_merge(
+                    $diagnostics['all_conflicting_student_numbers'],
+                    $studentConflict['student_numbers'],
+                )));
+                $diagnostics['all_conflicting_student_numbers'] = array_values(array_unique(array_merge(
+                    $diagnostics['all_conflicting_student_numbers'],
+                    $studentConflict['student_numbers'],
+                )));
+                $isBlocked = true;
             }
 
-            if ($this->hasStrictCorePeriodConflict($unit, $slot)) {
+            if ($preferredPeriodBlocked) {
+                $diagnostics['preferred_period_blocked_count']++;
+                $isBlocked = true;
+            }
+
+            if ($isBlocked) {
+                $diagnostics['blocked_slots_count']++;
                 continue;
             }
 
@@ -1161,12 +1318,160 @@ class ExamScheduleGeneratorService
         }
 
         if ($candidates === []) {
-            return null;
+            return $this->slotFailureResult($this->resolveSlotFailureReason($diagnostics), $diagnostics);
         }
 
         usort($candidates, fn (array $a, array $b): int => $a['score'] <=> $b['score']);
 
-        return $candidates[0];
+        return [
+            'slot' => $candidates[0],
+            'failure_reason_code' => null,
+            'failure_reason' => null,
+            'diagnostics' => $this->publicSlotDiagnostics($diagnostics),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function initialSlotDiagnostics(array $slots): array
+    {
+        return [
+            'attempted_slots_count' => count($slots),
+            'blocked_slots_count' => 0,
+            'student_conflict_slots_count' => 0,
+            'academic_conflict_slots_count' => 0,
+            'preferred_period_blocked_count' => 0,
+            'max_daily_load_reached_count' => 0,
+            'sample_conflicting_student_numbers' => [],
+            'all_conflicting_student_numbers' => [],
+            'conflicting_student_numbers_count' => 0,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function slotFailureResult(string $reasonCode, array $diagnostics): array
+    {
+        if ($reasonCode === 'unknown') {
+            Log::warning('Exam schedule slot failure reason is unknown.', [
+                'user_id' => auth()->id(),
+                'diagnostics' => $this->publicSlotDiagnostics($diagnostics),
+            ]);
+        }
+
+        return [
+            'slot' => null,
+            'failure_reason_code' => $reasonCode,
+            'failure_reason' => $this->unscheduledReason($reasonCode),
+            'suggested_action' => $this->unscheduledSuggestedAction($reasonCode),
+            'diagnostics' => $this->publicSlotDiagnostics($diagnostics),
+        ];
+    }
+
+    protected function resolveSlotFailureReason(array $diagnostics): string
+    {
+        $attemptedSlots = (int) ($diagnostics['attempted_slots_count'] ?? 0);
+
+        if ($attemptedSlots <= 0) {
+            return 'no_available_slots';
+        }
+
+        $fullBlockers = [
+            'student_conflict' => (int) ($diagnostics['student_conflict_slots_count'] ?? 0),
+            'academic_group_conflict' => (int) ($diagnostics['academic_conflict_slots_count'] ?? 0),
+            'preferred_period_constraint' => (int) ($diagnostics['preferred_period_blocked_count'] ?? 0),
+            'max_daily_load_reached' => (int) ($diagnostics['max_daily_load_reached_count'] ?? 0),
+        ];
+
+        foreach ($fullBlockers as $reasonCode => $count) {
+            if ($count >= $attemptedSlots) {
+                return $reasonCode;
+            }
+        }
+
+        arsort($fullBlockers);
+        $reasonCode = array_key_first($fullBlockers);
+
+        return ($reasonCode && $fullBlockers[$reasonCode] > 0) ? $reasonCode : 'unknown';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function publicSlotDiagnostics(array $diagnostics): array
+    {
+        unset($diagnostics['all_conflicting_student_numbers']);
+
+        return $diagnostics;
+    }
+
+    /**
+     * @param  array<int, string>  $current
+     * @param  array<int, string>  $new
+     * @return array<int, string>
+     */
+    protected function mergeLimitedStudentNumbers(array $current, array $new, int $limit = 50): array
+    {
+        return collect($current)
+            ->merge($new)
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->take($limit)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array{blocked: bool, academic_group_keys: array<int, string>}
+     */
+    protected function academicHardConflictDetails(array $unit, array $slot, array $academicAssignments, array $settings): array
+    {
+        $conflictingGroups = [];
+
+        foreach ($unit['academic_group_keys'] as $academicGroupKey) {
+            foreach ($academicAssignments[$academicGroupKey] ?? [] as $assignment) {
+                $sameSlot = $assignment['date'] === $slot['date'] && $assignment['start_time'] === $slot['start_time'];
+                $sameDay = (bool) ($settings['prevent_same_day'] ?? false) && $assignment['date'] === $slot['date'];
+
+                if ($sameSlot || $sameDay) {
+                    $conflictingGroups[] = (string) $academicGroupKey;
+                    break;
+                }
+            }
+        }
+
+        return [
+            'blocked' => $conflictingGroups !== [],
+            'academic_group_keys' => array_values(array_unique($conflictingGroups)),
+        ];
+    }
+
+    /**
+     * @return array{blocked: bool, student_numbers: array<int, string>}
+     */
+    protected function studentHardConflictDetails(array $unit, array $slot, array $studentAssignments, array $settings): array
+    {
+        $conflictingStudentNumbers = [];
+
+        foreach ($unit['student_numbers'] as $studentNumber) {
+            foreach ($studentAssignments[$studentNumber] ?? [] as $assignment) {
+                $sameSlot = $assignment['date'] === $slot['date'] && $assignment['start_time'] === $slot['start_time'];
+                $sameDay = (bool) ($settings['prevent_same_day'] ?? false) && $assignment['date'] === $slot['date'];
+
+                if ($sameSlot || $sameDay) {
+                    $conflictingStudentNumbers[] = (string) $studentNumber;
+                    break;
+                }
+            }
+        }
+
+        return [
+            'blocked' => $conflictingStudentNumbers !== [],
+            'student_numbers' => array_values(array_unique($conflictingStudentNumbers)),
+        ];
     }
 
     protected function hasAcademicHardConflict(array $unit, array $slot, array $academicAssignments, array $settings): bool
@@ -1259,8 +1564,26 @@ class ExamScheduleGeneratorService
         return 0;
     }
 
-    protected function createUnscheduledItems(ExamScheduleDraft $draft, array $unit): void
+    protected function createUnscheduledItems(ExamScheduleDraft $draft, array $unit, array $failureDiagnostics): void
     {
+        $reasonCode = (string) ($failureDiagnostics['failure_reason_code'] ?? 'unknown');
+        $reason = (string) ($failureDiagnostics['failure_reason'] ?? $this->unscheduledReason($reasonCode));
+        $suggestedAction = (string) ($failureDiagnostics['suggested_action'] ?? $this->unscheduledSuggestedAction($reasonCode));
+        $diagnostics = $failureDiagnostics['diagnostics'] ?? [];
+        $conflictNotes = $this->unscheduledDetailsFromMetadata([
+            'unscheduled_reason_code' => $reasonCode,
+            'unscheduled_reason' => $reason,
+            'unscheduled_suggested_action' => $suggestedAction,
+            'attempted_slots_count' => $diagnostics['attempted_slots_count'] ?? null,
+            'blocked_slots_count' => $diagnostics['blocked_slots_count'] ?? null,
+            'student_conflict_slots_count' => $diagnostics['student_conflict_slots_count'] ?? null,
+            'academic_conflict_slots_count' => $diagnostics['academic_conflict_slots_count'] ?? null,
+            'preferred_period_blocked_count' => $diagnostics['preferred_period_blocked_count'] ?? null,
+            'max_daily_load_reached_count' => $diagnostics['max_daily_load_reached_count'] ?? null,
+            'sample_conflicting_student_numbers' => $diagnostics['sample_conflicting_student_numbers'] ?? [],
+            'conflicting_student_numbers_count' => $diagnostics['conflicting_student_numbers_count'] ?? null,
+        ]);
+
         foreach ($unit['subjects'] as $subjectPayload) {
             $draft->items()->create([
                 'source_roster_id' => $subjectPayload['roster']->id,
@@ -1273,7 +1596,7 @@ class ExamScheduleGeneratorService
                 'is_core_subject' => $subjectPayload['is_core_subject'],
                 'shared_group_key' => $unit['shared_group_key'],
                 'status' => 'unscheduled',
-                'conflict_notes' => 'تعذر إيجاد موعد يحقق القيود المحددة.',
+                'conflict_notes' => $conflictNotes,
                 'metadata' => [
                     'academic_group_key' => $subjectPayload['academic_group_key'],
                     'shared_subject_scheduling_mode' => $unit['shared_subject_scheduling_mode'],
@@ -1283,6 +1606,17 @@ class ExamScheduleGeneratorService
                     'student_examples' => $subjectPayload['student_examples'],
                     'preferred_exam_period' => $subjectPayload['preferred_exam_period'],
                     'core_subject_priority' => $subjectPayload['core_subject_priority'],
+                    'unscheduled_reason_code' => $reasonCode,
+                    'unscheduled_reason' => $reason,
+                    'unscheduled_suggested_action' => $suggestedAction,
+                    'attempted_slots_count' => $diagnostics['attempted_slots_count'] ?? null,
+                    'blocked_slots_count' => $diagnostics['blocked_slots_count'] ?? null,
+                    'student_conflict_slots_count' => $diagnostics['student_conflict_slots_count'] ?? null,
+                    'academic_conflict_slots_count' => $diagnostics['academic_conflict_slots_count'] ?? null,
+                    'preferred_period_blocked_count' => $diagnostics['preferred_period_blocked_count'] ?? null,
+                    'max_daily_load_reached_count' => $diagnostics['max_daily_load_reached_count'] ?? null,
+                    'sample_conflicting_student_numbers' => $diagnostics['sample_conflicting_student_numbers'] ?? [],
+                    'conflicting_student_numbers_count' => $diagnostics['conflicting_student_numbers_count'] ?? null,
                 ],
             ]);
         }
@@ -1296,6 +1630,107 @@ class ExamScheduleGeneratorService
 
         return collect($settings['holidays'] ?? [])
             ->contains(fn (array $holiday): bool => ($holiday['date'] ?? null) === $date->toDateString());
+    }
+
+    protected function unscheduledReason(string $reasonCode): string
+    {
+        return match ($reasonCode) {
+            'no_available_slots' => 'لا توجد أي فترات متاحة ضمن المدة المحددة بعد استبعاد العطل والأيام المستبعدة.',
+            'student_conflict' => 'تعذر إيجاد موعد لا يسبب تعارضاً للطلاب المسجلين في هذه المادة.',
+            'academic_group_conflict' => 'كل الفترات الممكنة تسبب تعارضاً لنفس القسم أو السنة أو المجموعة الأكاديمية.',
+            'preferred_period_constraint' => 'المادة مقيدة بفترة امتحانية محددة، ولم توجد فترة مناسبة لها.',
+            'max_daily_load_reached' => 'تم الوصول إلى الحد الأقصى للمواد في اليوم أو الفترة.',
+            'missing_student_data' => 'لا توجد أرقام طلاب صالحة للمادة أو أن القائمة غير مكتملة.',
+            'missing_roster_data' => 'بيانات القائمة ناقصة: مادة، قسم، سنة، أو عدد طلاب.',
+            default => 'تعذر تحديد سبب عدم الجدولة بدقة. راجع سجل النظام.',
+        };
+    }
+
+    protected function unscheduledSuggestedAction(string $reasonCode): string
+    {
+        return match ($reasonCode) {
+            'student_conflict' => 'غيّر موعد إحدى المواد المشتركة أو اسمح بتوليد أوسع أو راجع الطلاب المشتركين.',
+            'no_available_slots' => 'زد عدد أيام الامتحان أو أضف فترة امتحانية جديدة.',
+            'preferred_period_constraint' => 'خفف إلزام الفترة المفضلة أو اسمح بفترة بديلة.',
+            'academic_group_conflict' => 'راجع قيود القسم/السنة أو اسمح بتباعد أقل بين مواد نفس المجموعة.',
+            'missing_student_data' => 'راجع ملف الطلاب أو تأكد أن قائمة المادة جاهزة وفيها طلاب مؤهلون.',
+            'missing_roster_data' => 'راجع بيانات القائمة وتأكد من ربط المادة والقسم والسنة وعدد الطلاب.',
+            'max_daily_load_reached' => 'زد الطاقة اليومية أو أضف أياماً وفترات إضافية.',
+            default => 'راجع إعدادات التوليد وسجل النظام ثم أعد المحاولة.',
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     */
+    protected function unscheduledDetailsFromMetadata(array $metadata): string
+    {
+        $reasonCode = (string) ($metadata['unscheduled_reason_code'] ?? 'unknown');
+        $reason = (string) ($metadata['unscheduled_reason'] ?? $this->unscheduledReason($reasonCode));
+        $parts = ['لم يتم جدولتها: '.$reason];
+
+        if (array_key_exists('attempted_slots_count', $metadata) && $metadata['attempted_slots_count'] !== null) {
+            $parts[] = 'عدد الفترات المجربة: '.(int) $metadata['attempted_slots_count'].'.';
+        }
+
+        if (array_key_exists('blocked_slots_count', $metadata) && $metadata['blocked_slots_count'] !== null) {
+            $parts[] = 'عدد الفترات المرفوضة: '.(int) $metadata['blocked_slots_count'].'.';
+        }
+
+        $studentNumbers = $this->sampleConflictingStudentNumbersFromMetadata($metadata);
+
+        if ($studentNumbers !== []) {
+            $parts[] = 'طلاب متأثرون: '.$this->formatConflictStudentNumbers(
+                $studentNumbers,
+                (int) ($metadata['conflicting_student_numbers_count'] ?? count($studentNumbers)),
+            ).'.';
+        }
+
+        return implode(' ', $parts);
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     * @return array<int, string>
+     */
+    protected function sampleConflictingStudentNumbersFromMetadata(array $metadata): array
+    {
+        return collect($metadata['sample_conflicting_student_numbers'] ?? [])
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function unscheduledItemSummary(ExamScheduleDraftItem $item): array
+    {
+        $metadata = $item->metadata ?? [];
+        $reasonCode = (string) ($metadata['unscheduled_reason_code'] ?? 'unknown');
+        $studentNumbers = $this->sampleConflictingStudentNumbersFromMetadata($metadata);
+
+        return [
+            'item_id' => $item->id,
+            'subject' => $item->subject?->name,
+            'department' => $item->department?->name ?? $item->subject?->department?->name,
+            'student_count' => $item->student_count,
+            'reason_code' => $reasonCode,
+            'reason' => $metadata['unscheduled_reason'] ?? $this->unscheduledReason($reasonCode),
+            'details' => $this->unscheduledDetailsFromMetadata($metadata),
+            'attempted_slots_count' => $metadata['attempted_slots_count'] ?? null,
+            'blocked_slots_count' => $metadata['blocked_slots_count'] ?? null,
+            'student_conflict_slots_count' => $metadata['student_conflict_slots_count'] ?? null,
+            'academic_conflict_slots_count' => $metadata['academic_conflict_slots_count'] ?? null,
+            'conflicting_student_numbers' => $studentNumbers,
+            'conflicting_student_numbers_label' => $this->formatConflictStudentNumbers(
+                $studentNumbers,
+                (int) ($metadata['conflicting_student_numbers_count'] ?? count($studentNumbers)),
+            ),
+            'suggested_action' => $metadata['unscheduled_suggested_action'] ?? $this->unscheduledSuggestedAction($reasonCode),
+        ];
     }
 
     /**
@@ -1331,14 +1766,71 @@ class ExamScheduleGeneratorService
             'affected_students' => $affectedStudents,
             'conflicting_student_numbers' => $conflictingStudentNumbers,
             'student_numbers' => $conflictingStudentNumbers,
-            'conflicting_student_numbers_label' => $this->formatConflictStudentNumbers($conflictingStudentNumbers),
+            'conflicting_student_numbers_label' => $this->formatConflictStudentNumbers($conflictingStudentNumbers, $affectedStudents),
             'details' => $details ?: $label,
             'suggested_action' => $suggestedAction,
             'hard' => $hard,
         ];
     }
 
-    protected function formatConflictStudentNumbers(array $studentNumbers): string
+    /**
+     * @param  array<int, ExamScheduleDraftItem>  $items
+     * @return array<int, array<string, mixed>>
+     */
+    protected function studentConflictPairRows(
+        ExamScheduleDraft $draft,
+        string $studentNumber,
+        array $items,
+        string $conflictType,
+        string $details,
+        bool $skipSameSlotPairs = false,
+    ): array {
+        $rows = [];
+        $items = collect($items)
+            ->sortBy([
+                ['exam_date', 'asc'],
+                ['start_time', 'asc'],
+                ['subject.name', 'asc'],
+            ])
+            ->values();
+
+        for ($firstIndex = 0; $firstIndex < $items->count(); $firstIndex++) {
+            for ($secondIndex = $firstIndex + 1; $secondIndex < $items->count(); $secondIndex++) {
+                /** @var ExamScheduleDraftItem $first */
+                $first = $items->get($firstIndex);
+                /** @var ExamScheduleDraftItem $second */
+                $second = $items->get($secondIndex);
+                $firstDate = $first->exam_date?->toDateString();
+                $firstTime = $this->timeString($first->start_time);
+                $secondDate = $second->exam_date?->toDateString();
+                $secondTime = $this->timeString($second->start_time);
+
+                if ($skipSameSlotPairs && $firstDate === $secondDate && $firstTime === $secondTime) {
+                    continue;
+                }
+
+                $rows[] = [
+                    'student_number' => $studentNumber,
+                    'conflict_date' => $firstDate ?: $secondDate,
+                    'conflict_time' => $firstTime === $secondTime ? substr((string) $firstTime, 0, 5) : collect([$firstTime, $secondTime])
+                        ->filter()
+                        ->map(fn (string $time): string => substr($time, 0, 5))
+                        ->implode(' / '),
+                    'first_subject' => $first->subject?->name,
+                    'first_department' => $first->department?->name ?? $first->subject?->department?->name,
+                    'second_subject' => $second->subject?->name,
+                    'second_department' => $second->department?->name ?? $second->subject?->department?->name,
+                    'conflict_type' => $conflictType,
+                    'draft_id' => $draft->id,
+                    'details' => $details,
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    protected function formatConflictStudentNumbers(array $studentNumbers, ?int $totalCount = null): string
     {
         $studentNumbers = collect($studentNumbers)
             ->filter()
@@ -1346,12 +1838,15 @@ class ExamScheduleGeneratorService
             ->unique()
             ->values();
 
-        if ($studentNumbers->isEmpty()) {
+        $totalCount = $totalCount && $totalCount > 0 ? $totalCount : $studentNumbers->count();
+
+        if ($studentNumbers->isEmpty() || $totalCount <= 0) {
             return '—';
         }
 
-        $visible = $studentNumbers->take(10)->implode(', ');
-        $remaining = $studentNumbers->count() - 10;
+        $visibleNumbers = $studentNumbers->take(10);
+        $visible = $visibleNumbers->implode(', ');
+        $remaining = $totalCount - $visibleNumbers->count();
 
         if ($remaining <= 0) {
             return $visible;

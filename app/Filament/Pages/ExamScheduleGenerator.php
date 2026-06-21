@@ -400,6 +400,7 @@ class ExamScheduleGenerator extends Page
         }
 
         $validation = $this->validationData();
+        $studentConflictRows = app(ExamScheduleGeneratorService::class)->studentConflictDetailRows($draft);
         $tempDir = storage_path('app/mpdf-temp');
 
         if (! File::exists($tempDir)) {
@@ -432,6 +433,7 @@ class ExamScheduleGenerator extends Page
             'draft' => $draft,
             'conflicts' => $validation['conflicts'] ?? [],
             'summary' => $validation['summary'] ?? [],
+            'studentConflictDetailsCount' => count($studentConflictRows),
             'systemSetting' => $institution->reportContext($draft->college?->name),
             'logoDataUri' => $institution->logoDataUri(),
         ])->render());
@@ -441,6 +443,70 @@ class ExamScheduleGenerator extends Page
             'exam-schedule-conflicts-'.$draft->id.'.pdf',
             ['Content-Type' => 'application/pdf'],
         );
+    }
+
+    public function exportStudentConflictDetailsCsv(): StreamedResponse|Response|null
+    {
+        $this->authorizeGeneratorAction('export_exam_schedule_conflicts');
+
+        $draft = $this->currentDraft();
+
+        if (! $draft) {
+            return null;
+        }
+
+        $rows = app(ExamScheduleGeneratorService::class)->studentConflictDetailRows($draft);
+
+        if ($rows === []) {
+            Notification::make()
+                ->title('لا توجد تعارضات طلاب للتصدير')
+                ->body('لا يحتوي البرنامج الحالي على طلاب لديهم مواد متعارضة.')
+                ->warning()
+                ->send();
+
+            return null;
+        }
+
+        return response()->streamDownload(function () use ($rows): void {
+            $output = fopen('php://output', 'w');
+
+            if ($output === false) {
+                return;
+            }
+
+            fwrite($output, "\xEF\xBB\xBF");
+            fputcsv($output, [
+                'رقم الطالب',
+                'تاريخ التعارض',
+                'وقت التعارض',
+                'المادة الأولى',
+                'قسم المادة الأولى',
+                'المادة الثانية',
+                'قسم المادة الثانية',
+                'نوع التعارض',
+                'رقم المسودة',
+                'ملاحظة / تفاصيل',
+            ]);
+
+            foreach ($rows as $row) {
+                fputcsv($output, [
+                    $row['student_number'] ?? '',
+                    $row['conflict_date'] ?? '',
+                    $row['conflict_time'] ?? '',
+                    $row['first_subject'] ?? '',
+                    $row['first_department'] ?? '',
+                    $row['second_subject'] ?? '',
+                    $row['second_department'] ?? '',
+                    $row['conflict_type'] ?? '',
+                    $row['draft_id'] ?? '',
+                    $row['details'] ?? '',
+                ]);
+            }
+
+            fclose($output);
+        }, 'student-conflict-details-draft-'.$draft->id.'.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function previousWeek(): void

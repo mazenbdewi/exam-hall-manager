@@ -98,6 +98,22 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         ]));
 
         $this->assertSame(1, $draft->items()->where('status', 'unscheduled')->count());
+
+        $unscheduledItem = $draft->items()->where('status', 'unscheduled')->firstOrFail();
+        $this->assertSame('student_conflict', $unscheduledItem->metadata['unscheduled_reason_code']);
+        $this->assertStringContainsString('تعذر إيجاد موعد لا يسبب تعارضاً للطلاب', $unscheduledItem->metadata['unscheduled_reason']);
+        $this->assertSame(1, $unscheduledItem->metadata['attempted_slots_count']);
+        $this->assertSame(1, $unscheduledItem->metadata['student_conflict_slots_count']);
+        $this->assertSame(['S-001'], $unscheduledItem->metadata['sample_conflicting_student_numbers']);
+        $this->assertStringContainsString('S-001', $unscheduledItem->conflict_notes);
+
+        $validation = app(ExamScheduleGeneratorService::class)->validateDraft($draft->refresh());
+        $unscheduledConflict = collect($validation['conflicts'])->firstWhere('type', 'unscheduled');
+        $this->assertNotNull($unscheduledConflict);
+        $this->assertSame(['S-001'], $unscheduledConflict['conflicting_student_numbers']);
+        $this->assertStringContainsString('عدد الفترات المجربة: 1', $unscheduledConflict['details']);
+        $this->assertSame(1, count($validation['unscheduled_items']));
+        $this->assertSame('student_conflict', $validation['unscheduled_items'][0]['reason_code']);
     }
 
     #[Test]
@@ -151,6 +167,59 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->assertStringNotContainsString('1001', $html);
         $this->assertStringNotContainsString('1003', $html);
         $this->assertStringNotContainsString('1005', $html);
+    }
+
+    #[Test]
+    public function student_conflict_detail_rows_include_every_conflicting_student_without_preview_limit(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $students = collect(range(1, 12))
+            ->map(fn (int $index): array => [sprintf('30%02d', $index), 'طالب '.$index, 'regular'])
+            ->all();
+
+        $this->createRoster($context, $this->createSubject($context, 'تصميم آلات 1'), $students);
+        $this->createRoster($context, $this->createSubject($context, 'ديناميك آلات'), $students);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+
+        $draft->items()->update([
+            'exam_date' => '2026-05-03',
+            'start_time' => '09:00:00',
+            'end_time' => '11:00:00',
+            'period_type' => 'morning',
+            'status' => 'scheduled',
+        ]);
+
+        $service = app(ExamScheduleGeneratorService::class);
+        $validation = $service->validateDraft($draft->refresh());
+        $studentConflict = collect($validation['conflicts'])->firstWhere('type', 'same_student_time');
+
+        $this->assertNotNull($studentConflict);
+        $this->assertSame(12, $studentConflict['affected_students']);
+        $this->assertSame('3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010 + 2 آخرين', $studentConflict['conflicting_student_numbers_label']);
+
+        $detailRows = $service->studentConflictDetailRows($draft->refresh());
+
+        $this->assertCount(12, $detailRows);
+        $this->assertSame(
+            collect($students)->pluck(0)->sort()->values()->all(),
+            collect($detailRows)->pluck('student_number')->sort()->values()->all(),
+        );
+        $this->assertContains('3012', collect($detailRows)->pluck('student_number')->all());
+
+        $html = view('pdf.exam-schedule-conflicts', [
+            'draft' => $draft->fresh('college'),
+            'conflicts' => $validation['conflicts'],
+            'summary' => $validation['summary'],
+            'studentConflictDetailsCount' => count($detailRows),
+            'systemSetting' => (object) ['university_name' => 'جامعة الاختبار'],
+            'logoDataUri' => null,
+        ])->render();
+
+        $this->assertStringContainsString('+ 2 آخرين', $html);
+        $this->assertStringContainsString('تم إرفاق ملف تفصيلي يحتوي جميع أرقام الطلاب المتعارضين بدون اختصار', $html);
+        $this->assertStringContainsString('عدد الصفوف التفصيلية: 12', $html);
     }
 
     #[Test]
