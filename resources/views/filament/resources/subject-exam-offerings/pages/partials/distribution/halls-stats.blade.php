@@ -49,7 +49,7 @@
                         <div class="flex flex-wrap justify-end gap-2">
                             @if (! empty($hall['is_drawing_studio']))
                                 <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses['info'] }}">
-                                    مرسم
+                                    مرسم - مخبر
                                 </span>
                             @endif
                             <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">

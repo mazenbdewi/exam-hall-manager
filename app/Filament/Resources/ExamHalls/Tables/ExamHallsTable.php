@@ -91,7 +91,7 @@ class ExamHallsTable
                 TernaryFilter::make('is_drawing_studio')
                     ->label(__('exam.fields.is_drawing_studio'))
                     ->placeholder('كل القاعات')
-                    ->trueLabel('المراسم فقط')
+                    ->trueLabel('المراسم - المخابر فقط')
                     ->falseLabel('القاعات العادية'),
                 TernaryFilter::make('is_active')
                     ->label(__('exam.fields.status')),

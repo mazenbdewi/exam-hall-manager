@@ -36,7 +36,7 @@ class CollegesTable
                     ->boolean()
                     ->sortable(),
                 IconColumn::make('allow_normal_subjects_in_drawing_studios')
-                    ->label('استخدام المراسم للمواد العادية')
+                    ->label('استخدام المراسم - المخابر للمواد العادية')
                     ->boolean()
                     ->sortable(),
                 TextColumn::make('departments_count')
@@ -54,7 +54,7 @@ class CollegesTable
                 TernaryFilter::make('enable_department_student_number_prefix')
                     ->label('إضافة رمز القسم إلى الرقم الجامعي'),
                 TernaryFilter::make('allow_normal_subjects_in_drawing_studios')
-                    ->label('السماح باستخدام المراسم للمواد العادية'),
+                    ->label('السماح باستخدام المراسم - المخابر للمواد العادية'),
                 TrashedFilter::make(),
             ])
             ->recordActions([

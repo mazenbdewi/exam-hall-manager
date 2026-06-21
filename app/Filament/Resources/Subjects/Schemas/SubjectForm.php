@@ -79,7 +79,7 @@ class SubjectForm
                             ->inline(false),
                         Toggle::make('is_drawing_subject')
                             ->label(__('exam.fields.is_drawing_subject'))
-                            ->helperText('فعّل هذا الخيار إذا كانت المادة تحتاج إلى مرسم عند التوزيع.')
+                            ->helperText('فعّل هذا الخيار إذا كانت المادة تحتاج إلى مرسم - مخبر عند التوزيع.')
                             ->default(false)
                             ->dehydrated(true)
                             ->inline(false),

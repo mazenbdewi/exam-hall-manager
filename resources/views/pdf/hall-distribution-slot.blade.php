@@ -315,7 +315,7 @@
                         {{ $hallAssignment['hall_student_type_label'] }}
                     </span>
                     @if (! empty($hallAssignment['is_drawing_studio']))
-                        <span class="pill gray">مرسم</span>
+                        <span class="pill gray">مرسم - مخبر</span>
                     @endif
                 </div>
 

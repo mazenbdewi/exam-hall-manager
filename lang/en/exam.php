@@ -14,15 +14,15 @@ return array_replace_recursive($arabic, [
         'college' => 'College',
         'period' => 'Period',
         'unassigned_students' => 'Unassigned students',
-        'is_drawing_studio' => 'Drawing studio',
+        'is_drawing_studio' => 'Drawing studio - lab',
         'is_drawing_subject' => 'Drawing subject',
-        'allow_normal_subjects_in_drawing_studios' => 'Allow drawing studios for normal subjects when needed',
+        'allow_normal_subjects_in_drawing_studios' => 'Allow drawing studios - labs for normal subjects when needed',
     ],
     'helpers' => [
-        'allow_normal_subjects_in_drawing_studios' => 'When enabled, normal subjects may use drawing studios only if normal halls do not have enough capacity.',
+        'allow_normal_subjects_in_drawing_studios' => 'When enabled, normal subjects may use drawing studios - labs only if normal halls do not have enough capacity.',
     ],
     'notifications' => [
-        'drawing_studio_capacity_shortage' => 'There are not enough drawing studios to distribute the drawing subject.',
+        'drawing_studio_capacity_shortage' => 'There are not enough drawing studios - labs to distribute the drawing subject.',
     ],
     'global_hall_distribution' => [
         'results_title' => 'Global Student Distribution Result',

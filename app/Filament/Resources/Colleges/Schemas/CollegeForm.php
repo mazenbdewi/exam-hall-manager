@@ -33,8 +33,8 @@ class CollegeForm
                             ->default(false)
                             ->inline(false),
                         Toggle::make('allow_normal_subjects_in_drawing_studios')
-                            ->label('السماح باستخدام المراسم للمواد العادية عند الحاجة')
-                            ->helperText('إذا كان معطلاً فلن تستخدم المواد العادية قاعات المراسم.')
+                            ->label('السماح باستخدام المراسم - المخابر للمواد العادية عند الحاجة')
+                            ->helperText('إذا كان معطلاً فلن تستخدم المواد العادية قاعات المراسم - المخابر.')
                             ->default(false)
                             ->inline(false),
                     ]),

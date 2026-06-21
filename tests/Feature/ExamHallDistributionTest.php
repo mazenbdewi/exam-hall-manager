@@ -360,7 +360,7 @@ class ExamHallDistributionTest extends TestCase
         $result = app(ExamHallDistributionService::class)->distributeForOffering($drawingOffering);
 
         $this->assertSame('danger', $result['status']);
-        $this->assertSame('لا توجد مراسم كافية لتوزيع مادة الرسم.', $result['message']);
+        $this->assertSame('لا توجد مراسم - مخابر كافية لتوزيع مادة الرسم.', $result['message']);
         $this->assertSame(0, $result['assigned_students_count']);
         $this->assertSame(4, $result['unassigned_students_count']);
         $this->assertSame(0, HallAssignment::query()->count());
