@@ -22,6 +22,8 @@ use Illuminate\Validation\ValidationException;
 
 class ExamScheduleGeneratorService
 {
+    protected const STUDENT_NUMBER_METADATA_LIMIT = 500;
+
     /**
      * @param  array<string, mixed>  $settings
      */
@@ -55,6 +57,13 @@ class ExamScheduleGeneratorService
             'slots_count' => count($slots),
             'first_slot' => $slots[0]['key'] ?? null,
             'last_slot' => $slots !== [] ? $slots[array_key_last($slots)]['key'] : null,
+        ]);
+
+        Log::info('Exam schedule draft generation: before building scheduling units.', [
+            'user_id' => auth()->id(),
+            'college_id' => $collegeId,
+            'academic_year_id' => $settings['academic_year_id'],
+            'semester_id' => $settings['semester_id'],
         ]);
 
         $units = $this->buildSchedulingUnits($settings);
@@ -133,7 +142,9 @@ class ExamScheduleGeneratorService
                             'period_name' => $choice['period_name'],
                             'academic_group_key' => $subjectPayload['academic_group_key'],
                             'shared_subject_scheduling_mode' => $unit['shared_subject_scheduling_mode'],
-                            'student_numbers' => $subjectPayload['student_numbers'],
+                            'student_numbers' => $subjectPayload['student_numbers_for_metadata'],
+                            'student_numbers_truncated' => $subjectPayload['student_numbers_truncated'],
+                            'student_numbers_count' => $subjectPayload['student_count'],
                             'student_examples' => $subjectPayload['student_examples'],
                             'preferred_exam_period' => $subjectPayload['preferred_exam_period'],
                             'core_subject_priority' => $subjectPayload['core_subject_priority'],
@@ -831,55 +842,168 @@ class ExamScheduleGeneratorService
      */
     protected function buildSchedulingUnits(array $settings): Collection
     {
-        $rosters = SubjectExamRoster::query()
-            ->with(['subject.department', 'subject.studyLevel', 'department', 'studyLevel', 'eligibleRosterStudents'])
-            ->where('college_id', $settings['faculty_id'])
-            ->where('status', 'ready')
-            ->where('academic_year_id', $settings['academic_year_id'])
-            ->where('semester_id', $settings['semester_id'])
-            ->whereHas('subject', fn (Builder $query) => $query->where('is_active', true))
-            ->when($settings['department_id'], fn (Builder $query) => $query->where('department_id', $settings['department_id']))
-            ->when($settings['study_level_id'], fn (Builder $query) => $query->where('study_level_id', $settings['study_level_id']))
-            ->orderBy('department_id')
-            ->orderBy('study_level_id')
-            ->orderBy('subject_id')
-            ->get();
+        Log::info('Exam schedule draft generation: buildSchedulingUnits entered.', [
+            'user_id' => auth()->id(),
+            'settings' => $this->loggableSettings($settings),
+        ]);
 
-        if ($rosters->isEmpty()) {
-            throw ValidationException::withMessages([
-                'rosters' => 'لا توجد قوائم طلاب مواد جاهزة ضمن الكلية والعام والفصل المحددين.',
+        try {
+            Log::info('Exam schedule draft generation: before ready rosters query.', [
+                'user_id' => auth()->id(),
+                'college_id' => $settings['faculty_id'] ?? null,
+                'academic_year_id' => $settings['academic_year_id'] ?? null,
+                'semester_id' => $settings['semester_id'] ?? null,
+                'department_id' => $settings['department_id'] ?? null,
+                'study_level_id' => $settings['study_level_id'] ?? null,
             ]);
-        }
 
-        $subjectPayloads = $rosters->map(fn (SubjectExamRoster $roster): array => $this->subjectPayload($roster, $settings));
-        $units = collect();
-        $handledSubjectIds = [];
+            $rosters = SubjectExamRoster::query()
+                ->with(['subject.department', 'subject.studyLevel', 'department', 'studyLevel'])
+                ->withCount([
+                    'eligibleRosterStudents as eligible_students_count',
+                    'eligibleRosterStudents as regular_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Regular->value),
+                    'eligibleRosterStudents as carry_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Carry->value),
+                ])
+                ->where('college_id', $settings['faculty_id'])
+                ->where('status', 'ready')
+                ->where('academic_year_id', $settings['academic_year_id'])
+                ->where('semester_id', $settings['semester_id'])
+                ->whereHas('subject', fn (Builder $query) => $query->where('is_active', true))
+                ->when($settings['department_id'], fn (Builder $query) => $query->where('department_id', $settings['department_id']))
+                ->when($settings['study_level_id'], fn (Builder $query) => $query->where('study_level_id', $settings['study_level_id']))
+                ->orderBy('department_id')
+                ->orderBy('study_level_id')
+                ->orderBy('subject_id')
+                ->get();
 
-        $sharedGroups = $subjectPayloads
-            ->filter(fn (array $payload): bool => (bool) $payload['subject']->is_shared_subject)
-            ->groupBy(fn (array $payload): string => $this->sharedGroupKey($payload['subject']));
+            Log::info('Exam schedule draft generation: ready rosters fetched.', [
+                'user_id' => auth()->id(),
+                'rosters_count' => $rosters->count(),
+                'eligible_students_count' => (int) $rosters->sum('eligible_students_count'),
+            ]);
 
-        foreach ($sharedGroups as $groupKey => $payloads) {
-            $mode = $this->sharedSchedulingMode($payloads);
-
-            if ($mode === 'all_departments_together' || $mode === 'auto') {
-                $units->push($this->unitFromPayloads($payloads, $groupKey, $mode));
-                $handledSubjectIds = array_merge($handledSubjectIds, $payloads->pluck('subject.id')->all());
-
-                continue;
+            if ($rosters->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'rosters' => 'لا توجد قوائم مواد جاهزة ضمن الكلية والعام والفصل المحددين.',
+                ]);
             }
 
-            foreach ($payloads as $payload) {
-                $units->push($this->unitFromPayloads(collect([$payload]), $groupKey, $mode));
-                $handledSubjectIds[] = $payload['subject']->id;
+            $rosters->each(function (SubjectExamRoster $roster): void {
+                Log::info('Exam schedule draft generation: ready roster row.', [
+                    'user_id' => auth()->id(),
+                    'roster_id' => $roster->id,
+                    'subject_id' => $roster->subject_id,
+                    'department_id' => $roster->department_id,
+                    'study_level_id' => $roster->study_level_id,
+                    'students_count' => (int) ($roster->eligible_students_count ?? 0),
+                    'has_subject' => $roster->subject !== null,
+                    'has_department' => $roster->department !== null,
+                    'has_study_level' => $roster->studyLevel !== null,
+                ]);
+            });
+
+            $this->validateRosterRelations($rosters);
+
+            $subjectPayloads = $rosters->map(fn (SubjectExamRoster $roster): array => $this->subjectPayload($roster, $settings));
+            $units = collect();
+            $handledSubjectIds = [];
+
+            $sharedGroups = $subjectPayloads
+                ->filter(fn (array $payload): bool => (bool) $payload['subject']->is_shared_subject)
+                ->groupBy(fn (array $payload): string => $this->sharedGroupKey($payload['subject']));
+
+            foreach ($sharedGroups as $groupKey => $payloads) {
+                $mode = $this->sharedSchedulingMode($payloads);
+                Log::info('Exam schedule draft generation: shared subject group.', [
+                    'user_id' => auth()->id(),
+                    'group_key' => $groupKey,
+                    'mode' => $mode,
+                    'payloads_count' => $payloads->count(),
+                    'subject_ids' => $payloads->pluck('subject.id')->values()->all(),
+                    'students_count' => (int) $payloads->sum('student_count'),
+                ]);
+
+                if ($mode === 'all_departments_together' || $mode === 'auto') {
+                    $units->push($this->unitFromPayloads($payloads, $groupKey, $mode));
+                    $handledSubjectIds = array_merge($handledSubjectIds, $payloads->pluck('subject.id')->all());
+
+                    continue;
+                }
+
+                foreach ($payloads as $payload) {
+                    Log::info('Exam schedule draft generation: separate shared roster unit.', [
+                        'user_id' => auth()->id(),
+                        'roster_id' => $payload['roster']->id,
+                        'subject_id' => $payload['subject']->id,
+                        'students_count' => $payload['student_count'],
+                    ]);
+                    $units->push($this->unitFromPayloads(collect([$payload]), $groupKey, $mode));
+                    $handledSubjectIds[] = $payload['subject']->id;
+                }
             }
+
+            foreach ($subjectPayloads->reject(fn (array $payload): bool => in_array($payload['subject']->id, $handledSubjectIds, true)) as $payload) {
+                Log::info('Exam schedule draft generation: regular roster unit.', [
+                    'user_id' => auth()->id(),
+                    'roster_id' => $payload['roster']->id,
+                    'subject_id' => $payload['subject']->id,
+                    'students_count' => $payload['student_count'],
+                ]);
+                $units->push($this->unitFromPayloads(collect([$payload]), null, 'single'));
+            }
+
+            Log::info('Exam schedule draft generation: buildSchedulingUnits returning.', [
+                'user_id' => auth()->id(),
+                'units_count' => $units->count(),
+                'subjects_count' => $units->sum(fn (array $unit): int => count($unit['subjects'] ?? [])),
+            ]);
+
+            return $units;
+        } catch (\Throwable $exception) {
+            Log::error('Exam schedule draft generation: buildSchedulingUnits failed.', [
+                'user_id' => auth()->id(),
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+                'trace' => $exception->getTraceAsString(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * @param  Collection<int, SubjectExamRoster>  $rosters
+     */
+    protected function validateRosterRelations(Collection $rosters): void
+    {
+        $invalidRows = $rosters
+            ->filter(function (SubjectExamRoster $roster): bool {
+                return $roster->subject === null
+                    || ($roster->department === null && $roster->subject?->department === null)
+                    || ($roster->studyLevel === null && $roster->subject?->studyLevel === null);
+            })
+            ->map(fn (SubjectExamRoster $roster): array => [
+                'roster_id' => $roster->id,
+                'subject_id' => $roster->subject_id,
+                'has_subject' => $roster->subject !== null,
+                'has_department' => $roster->department !== null || $roster->subject?->department !== null,
+                'has_study_level' => $roster->studyLevel !== null || $roster->subject?->studyLevel !== null,
+            ])
+            ->values();
+
+        if ($invalidRows->isEmpty()) {
+            return;
         }
 
-        foreach ($subjectPayloads->reject(fn (array $payload): bool => in_array($payload['subject']->id, $handledSubjectIds, true)) as $payload) {
-            $units->push($this->unitFromPayloads(collect([$payload]), null, 'single'));
-        }
+        Log::warning('Exam schedule draft generation: ready rosters have missing relations.', [
+            'user_id' => auth()->id(),
+            'invalid_rosters' => $invalidRows->all(),
+        ]);
 
-        return $units;
+        throw ValidationException::withMessages([
+            'rosters' => 'توجد قوائم مواد جاهزة لكن بيانات المادة أو القسم أو السنة الدراسية ناقصة. راجع القوائم والمواد المرتبطة بها.',
+        ]);
     }
 
     /**
@@ -889,13 +1013,30 @@ class ExamScheduleGeneratorService
     protected function subjectPayload(SubjectExamRoster $roster, array $settings): array
     {
         $subject = $roster->subject;
-        $students = $roster->eligibleRosterStudents;
-        $studentNumbers = $students
+        Log::info('Exam schedule draft generation: before building roster student numbers.', [
+            'user_id' => auth()->id(),
+            'roster_id' => $roster->id,
+            'subject_id' => $roster->subject_id,
+            'students_count' => (int) ($roster->eligible_students_count ?? 0),
+        ]);
+
+        $studentNumbers = $roster->eligibleRosterStudents()
+            ->orderBy('student_number')
             ->pluck('student_number')
             ->filter()
             ->map(fn ($number): string => (string) $number)
             ->unique()
             ->values();
+        $studentCount = $studentNumbers->count();
+        $storeStudentNumbers = $studentCount <= self::STUDENT_NUMBER_METADATA_LIMIT;
+
+        Log::info('Exam schedule draft generation: roster student numbers built.', [
+            'user_id' => auth()->id(),
+            'roster_id' => $roster->id,
+            'subject_id' => $roster->subject_id,
+            'student_numbers_count' => $studentCount,
+            'stored_in_metadata' => $storeStudentNumbers,
+        ]);
 
         return [
             'roster' => $roster,
@@ -903,11 +1044,19 @@ class ExamScheduleGeneratorService
             'department_id' => $roster->department_id ?: $subject->department_id,
             'study_level_id' => $roster->study_level_id ?: $subject->study_level_id,
             'academic_group_key' => $this->academicGroupKeyForRoster($roster),
-            'student_count' => $studentNumbers->count(),
-            'regular_count' => $students->where('student_type', ExamStudentType::Regular->value)->count(),
-            'carry_count' => $students->where('student_type', ExamStudentType::Carry->value)->count(),
+            'student_count' => $studentCount,
+            'regular_count' => (int) ($roster->regular_students_count ?? 0),
+            'carry_count' => (int) ($roster->carry_students_count ?? 0),
             'student_numbers' => $studentNumbers->all(),
-            'student_examples' => $students->take(5)->map(fn ($student): string => $student->student_number.' - '.$student->full_name)->values()->all(),
+            'student_numbers_for_metadata' => $storeStudentNumbers ? $studentNumbers->all() : [],
+            'student_numbers_truncated' => ! $storeStudentNumbers,
+            'student_examples' => $roster->eligibleRosterStudents()
+                ->orderBy('student_number')
+                ->limit(5)
+                ->get(['student_number', 'full_name'])
+                ->map(fn ($student): string => $student->student_number.' - '.$student->full_name)
+                ->values()
+                ->all(),
             'is_core_subject' => (bool) $subject->is_core_subject,
             'preferred_exam_period' => (string) ($subject->preferred_exam_period ?: ((bool) $subject->is_core_subject ? 'morning' : 'none')),
             'core_subject_priority' => (string) ($subject->core_subject_priority ?: 'preference'),
@@ -1104,7 +1253,9 @@ class ExamScheduleGeneratorService
                 'metadata' => [
                     'academic_group_key' => $subjectPayload['academic_group_key'],
                     'shared_subject_scheduling_mode' => $unit['shared_subject_scheduling_mode'],
-                    'student_numbers' => $subjectPayload['student_numbers'],
+                    'student_numbers' => $subjectPayload['student_numbers_for_metadata'],
+                    'student_numbers_truncated' => $subjectPayload['student_numbers_truncated'],
+                    'student_numbers_count' => $subjectPayload['student_count'],
                     'student_examples' => $subjectPayload['student_examples'],
                     'preferred_exam_period' => $subjectPayload['preferred_exam_period'],
                     'core_subject_priority' => $subjectPayload['core_subject_priority'],
@@ -1221,7 +1372,30 @@ class ExamScheduleGeneratorService
      */
     protected function studentNumbersForItem(ExamScheduleDraftItem $item): array
     {
-        return collect(($item->metadata ?? [])['student_numbers'] ?? [])
+        $metadata = $item->metadata ?? [];
+        $metadataNumbers = collect($metadata['student_numbers'] ?? [])
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values();
+
+        if ($metadataNumbers->isNotEmpty() && ! (bool) ($metadata['student_numbers_truncated'] ?? false)) {
+            return $metadataNumbers->all();
+        }
+
+        if (! $item->source_roster_id) {
+            return $metadataNumbers->all();
+        }
+
+        $sourceRoster = SubjectExamRoster::query()->find($item->source_roster_id);
+
+        if (! $sourceRoster) {
+            return $metadataNumbers->all();
+        }
+
+        return $sourceRoster
+            ->eligibleRosterStudents()
+            ->pluck('student_number')
             ->filter()
             ->map(fn ($number): string => (string) $number)
             ->unique()
