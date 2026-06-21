@@ -271,25 +271,37 @@ class ExamScheduleGeneratorService
         }
 
         foreach ($slotStudents as $students) {
+            $conflictsByItem = [];
+
             foreach ($students as $studentNumber => $items) {
                 if (count($items) <= 1) {
                     continue;
                 }
 
-                $examples = $this->studentExamplesForItems(collect($items), [$studentNumber]);
-
                 foreach ($items as $item) {
-                    $conflicts[] = $this->conflictRow(
-                        $item,
-                        'same_student_time',
-                        'طالب لديه مادتان في نفس الوقت',
-                        'طلاب متأثرون: 1',
-                        'غيّر موعد إحدى المواد المتعارضة.',
-                        'لا يمكن أن يكون للطالب مادتان في نفس الوقت. أمثلة: '.implode('، ', $examples),
-                        true,
-                        1,
-                    );
+                    $conflictsByItem[$item->id]['item'] = $item;
+                    $conflictsByItem[$item->id]['student_numbers'][] = (string) $studentNumber;
                 }
+            }
+
+            foreach ($conflictsByItem as $conflictData) {
+                $studentNumbers = collect($conflictData['student_numbers'] ?? [])
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                $conflicts[] = $this->conflictRow(
+                    $conflictData['item'],
+                    'same_student_time',
+                    'طالب لديه مادتان في نفس الوقت',
+                    'طلاب متأثرون: '.count($studentNumbers),
+                    'غيّر موعد إحدى المواد المتعارضة.',
+                    'لا يمكن أن يكون للطالب مادتان في نفس الوقت. أرقام الطلاب المتعارضين: '.$this->formatConflictStudentNumbers($studentNumbers),
+                    true,
+                    count($studentNumbers),
+                    $studentNumbers,
+                );
             }
         }
 
@@ -307,25 +319,37 @@ class ExamScheduleGeneratorService
 
         if ((bool) ($settings['prevent_same_day'] ?? false)) {
             foreach ($dayStudents as $students) {
+                $conflictsByItem = [];
+
                 foreach ($students as $studentNumber => $items) {
                     if (count($items) <= 1) {
                         continue;
                     }
 
-                    $examples = $this->studentExamplesForItems(collect($items), [$studentNumber]);
-
                     foreach ($items as $item) {
-                        $conflicts[] = $this->conflictRow(
-                            $item,
-                            'same_student_day',
-                            'طالب لديه مادتان في نفس اليوم',
-                            'طلاب متأثرون: 1',
-                            'انقل إحدى المواد إلى يوم آخر.',
-                            'منع مادتين في نفس اليوم لنفس الطالب مفعل. أمثلة: '.implode('، ', $examples),
-                            true,
-                            1,
-                        );
+                        $conflictsByItem[$item->id]['item'] = $item;
+                        $conflictsByItem[$item->id]['student_numbers'][] = (string) $studentNumber;
                     }
+                }
+
+                foreach ($conflictsByItem as $conflictData) {
+                    $studentNumbers = collect($conflictData['student_numbers'] ?? [])
+                        ->filter()
+                        ->unique()
+                        ->values()
+                        ->all();
+
+                    $conflicts[] = $this->conflictRow(
+                        $conflictData['item'],
+                        'same_student_day',
+                        'طالب لديه مادتان في نفس اليوم',
+                        'طلاب متأثرون: '.count($studentNumbers),
+                        'انقل إحدى المواد إلى يوم آخر.',
+                        'منع مادتين في نفس اليوم لنفس الطالب مفعل. أرقام الطلاب المتعارضين: '.$this->formatConflictStudentNumbers($studentNumbers),
+                        true,
+                        count($studentNumbers),
+                        $studentNumbers,
+                    );
                 }
             }
 
@@ -1286,7 +1310,15 @@ class ExamScheduleGeneratorService
         ?string $details = null,
         bool $hard = true,
         int $affectedStudents = 0,
+        array $conflictingStudentNumbers = [],
     ): array {
+        $conflictingStudentNumbers = collect($conflictingStudentNumbers)
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values()
+            ->all();
+
         return [
             'item_id' => $item->id,
             'subject' => $item->subject?->name,
@@ -1297,10 +1329,35 @@ class ExamScheduleGeneratorService
             'type_label' => $label,
             'impact' => $impact,
             'affected_students' => $affectedStudents,
+            'conflicting_student_numbers' => $conflictingStudentNumbers,
+            'student_numbers' => $conflictingStudentNumbers,
+            'conflicting_student_numbers_label' => $this->formatConflictStudentNumbers($conflictingStudentNumbers),
             'details' => $details ?: $label,
             'suggested_action' => $suggestedAction,
             'hard' => $hard,
         ];
+    }
+
+    protected function formatConflictStudentNumbers(array $studentNumbers): string
+    {
+        $studentNumbers = collect($studentNumbers)
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values();
+
+        if ($studentNumbers->isEmpty()) {
+            return '—';
+        }
+
+        $visible = $studentNumbers->take(10)->implode(', ');
+        $remaining = $studentNumbers->count() - 10;
+
+        if ($remaining <= 0) {
+            return $visible;
+        }
+
+        return $visible.' + '.$remaining.' آخرين';
     }
 
     protected function academicGroupKeyForRoster(SubjectExamRoster $roster): string

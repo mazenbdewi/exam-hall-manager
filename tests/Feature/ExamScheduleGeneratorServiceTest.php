@@ -101,6 +101,59 @@ class ExamScheduleGeneratorServiceTest extends TestCase
     }
 
     #[Test]
+    public function conflict_report_shows_only_the_intersecting_student_number(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $this->createRoster($context, $this->createSubject($context, 'تحليل تقاطع'), [
+            ['1001', 'طالب أول', 'regular'],
+            ['1002', 'طالب مشترك', 'regular'],
+            ['1003', 'طالب ثالث', 'regular'],
+        ]);
+        $this->createRoster($context, $this->createSubject($context, 'فيزياء تقاطع'), [
+            ['1002', 'طالب مشترك', 'carry'],
+            ['1005', 'طالب خامس', 'regular'],
+        ]);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+
+        $draft->items()->update([
+            'exam_date' => '2026-05-03',
+            'start_time' => '09:00:00',
+            'end_time' => '11:00:00',
+            'period_type' => 'morning',
+            'status' => 'scheduled',
+        ]);
+
+        $validation = app(ExamScheduleGeneratorService::class)->validateDraft($draft->refresh());
+        $studentConflicts = collect($validation['conflicts'])->where('type', 'same_student_time')->values();
+
+        $this->assertNotEmpty($studentConflicts);
+        $studentConflicts->each(function (array $conflict): void {
+            $this->assertSame(['1002'], $conflict['conflicting_student_numbers']);
+            $this->assertSame('1002', $conflict['conflicting_student_numbers_label']);
+            $this->assertStringContainsString('1002', $conflict['details']);
+            $this->assertStringNotContainsString('1001', $conflict['details']);
+            $this->assertStringNotContainsString('1003', $conflict['details']);
+            $this->assertStringNotContainsString('1005', $conflict['details']);
+        });
+
+        $html = view('pdf.exam-schedule-conflicts', [
+            'draft' => $draft->fresh('college'),
+            'conflicts' => $validation['conflicts'],
+            'summary' => $validation['summary'],
+            'systemSetting' => (object) ['university_name' => 'جامعة الاختبار'],
+            'logoDataUri' => null,
+        ])->render();
+
+        $this->assertStringContainsString('رقم الطالب المتعارض', $html);
+        $this->assertStringContainsString('1002', $html);
+        $this->assertStringNotContainsString('1001', $html);
+        $this->assertStringNotContainsString('1003', $html);
+        $this->assertStringNotContainsString('1005', $html);
+    }
+
+    #[Test]
     public function same_student_same_day_conflict_is_prevented_when_enabled(): void
     {
         $context = $this->createAcademicContext();

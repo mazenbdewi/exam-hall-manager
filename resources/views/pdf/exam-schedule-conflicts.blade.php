@@ -42,6 +42,7 @@
                 <th>التاريخ</th>
                 <th>الوقت</th>
                 <th>نوع التعارض</th>
+                <th>رقم الطالب المتعارض</th>
                 <th>الأثر</th>
                 <th>التفاصيل</th>
                 <th>الإجراء المقترح</th>
@@ -55,13 +56,14 @@
                     <td>{{ $conflict['date'] ?? '—' }}</td>
                     <td>{{ $conflict['time'] ?? '—' }}</td>
                     <td>{{ $conflict['type_label'] }}</td>
+                    <td>{{ $conflict['conflicting_student_numbers_label'] ?? '—' }}</td>
                     <td>{{ $conflict['impact'] ?? '—' }}</td>
                     <td>{{ $conflict['details'] }}</td>
                     <td>{{ $conflict['suggested_action'] }}</td>
                 </tr>
             @empty
                 <tr>
-                    <td colspan="8">لا توجد تعارضات حالياً.</td>
+                    <td colspan="9">لا توجد تعارضات حالياً.</td>
                 </tr>
             @endforelse
         </tbody>

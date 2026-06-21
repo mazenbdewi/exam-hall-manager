@@ -583,6 +583,7 @@
                                 <th class="px-3 py-2 text-right">التاريخ</th>
                                 <th class="px-3 py-2 text-right">الوقت</th>
                                 <th class="px-3 py-2 text-right">نوع التعارض</th>
+                                <th class="px-3 py-2 text-right">رقم الطالب المتعارض</th>
                                 <th class="px-3 py-2 text-right">عدد الطلاب المتأثرين</th>
                                 <th class="px-3 py-2 text-right">الأثر</th>
                                 <th class="px-3 py-2 text-right">التفاصيل</th>
@@ -597,6 +598,7 @@
                                     <td class="px-3 py-2">{{ $conflict['date'] ?? '—' }}</td>
                                     <td class="px-3 py-2">{{ $conflict['time'] ?? '—' }}</td>
                                     <td class="px-3 py-2">{{ $conflict['type_label'] }}</td>
+                                    <td class="px-3 py-2">{{ $conflict['conflicting_student_numbers_label'] ?? '—' }}</td>
                                     <td class="px-3 py-2">{{ $conflict['affected_students'] ?? 0 }}</td>
                                     <td class="px-3 py-2">{{ $conflict['impact'] ?? '—' }}</td>
                                     <td class="px-3 py-2">{{ $conflict['details'] }}</td>
@@ -604,7 +606,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="9" class="px-3 py-6 text-center text-gray-500">لا توجد تعارضات.</td>
+                                    <td colspan="10" class="px-3 py-6 text-center text-gray-500">لا توجد تعارضات.</td>
                                 </tr>
                             @endforelse
                         </tbody>
