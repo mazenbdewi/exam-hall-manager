@@ -35,9 +35,16 @@
                                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ $hall['hall_location'] }}</p>
                             @endif
                         </div>
-                        <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">
-                            {{ $hall['status_label'] }}
-                        </span>
+                        <div class="flex flex-wrap justify-end gap-2">
+                            @if (! empty($hall['is_drawing_studio']))
+                                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses['info'] }}">
+                                    مرسم
+                                </span>
+                            @endif
+                            <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">
+                                {{ $hall['status_label'] }}
+                            </span>
+                        </div>
                     </div>
 
                     <div class="mt-4 grid grid-cols-2 gap-3">
@@ -75,7 +82,14 @@
                         <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">المواد الموجودة داخل القاعة</div>
                         @foreach ($hall['subjects'] as $subject)
                             <div class="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-sm dark:bg-gray-900">
-                                <span class="text-gray-700 dark:text-gray-300">{{ $subject['subject_name'] }}</span>
+                                <span class="flex flex-wrap items-center gap-2 text-gray-700 dark:text-gray-300">
+                                    <span>{{ $subject['subject_name'] }}</span>
+                                    @if (! empty($subject['is_drawing_subject']))
+                                        <span class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold {{ $badgeClasses['info'] }}">
+                                            مادة رسم
+                                        </span>
+                                    @endif
+                                </span>
                                 <span class="font-bold text-gray-950 dark:text-white">{{ $subject['assigned_students_count'] }} طالب</span>
                             </div>
                         @endforeach

@@ -36,9 +36,16 @@
                 <article class="rounded-2xl border border-gray-200 bg-gray-50/60 p-4 dark:border-white/10 dark:bg-white/5">
                     <div class="flex items-start justify-between gap-3">
                         <h3 class="text-base font-bold text-gray-950 dark:text-white">{{ $subject['subject_name'] }}</h3>
-                        <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">
-                            {{ $statusLabel }}
-                        </span>
+                        <div class="flex flex-wrap justify-end gap-2">
+                            @if (! empty($subject['is_drawing_subject']))
+                                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses['info'] }}">
+                                    مادة رسم
+                                </span>
+                            @endif
+                            <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">
+                                {{ $statusLabel }}
+                            </span>
+                        </div>
                     </div>
 
                     <div class="mt-4 grid grid-cols-2 gap-3">

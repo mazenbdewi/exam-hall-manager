@@ -98,7 +98,10 @@ class SubjectsTable
                     ->relationship('studyLevel', 'name'),
                 TernaryFilter::make('is_active'),
                 TernaryFilter::make('is_drawing_subject')
-                    ->label(__('exam.fields.is_drawing_subject')),
+                    ->label(__('exam.fields.is_drawing_subject'))
+                    ->placeholder('كل المواد')
+                    ->trueLabel('مواد الرسم فقط')
+                    ->falseLabel('المواد العادية'),
                 TernaryFilter::make('is_shared_subject')
                     ->label('المواد المشتركة'),
                 TernaryFilter::make('is_core_subject')

@@ -46,9 +46,16 @@
                                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ $hall['location'] }}</p>
                             @endif
                         </div>
-                        <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">
-                            {{ $statusLabel }}
-                        </span>
+                        <div class="flex flex-wrap justify-end gap-2">
+                            @if (! empty($hall['is_drawing_studio']))
+                                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses['info'] }}">
+                                    مرسم
+                                </span>
+                            @endif
+                            <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {{ $badgeClasses[$tone] ?? $badgeClasses['gray'] }}">
+                                {{ $statusLabel }}
+                            </span>
+                        </div>
                     </div>
 
                     <div class="mt-4 grid grid-cols-2 gap-3">

@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\SystemSettings\Tables;
 
 use Filament\Actions\EditAction;
+use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -20,6 +21,9 @@ class SystemSettingsTable
                 TextColumn::make('university_name')
                     ->label(__('exam.fields.university_name'))
                     ->searchable(),
+                IconColumn::make('allow_normal_subjects_in_drawing_studios')
+                    ->label(__('exam.fields.allow_normal_subjects_in_drawing_studios'))
+                    ->boolean(),
                 TextColumn::make('updated_at')
                     ->label(__('exam.fields.updated_at'))
                     ->dateTime('d/m/Y H:i'),

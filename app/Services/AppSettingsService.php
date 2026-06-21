@@ -11,6 +11,7 @@ class AppSettingsService
     public const DATABASE_BACKUP_TIME = 'database_backup_time';
     public const UNIVERSITY_NAME = 'university_name';
     public const UNIVERSITY_LOGO = 'university_logo';
+    public const ALLOW_NORMAL_SUBJECTS_IN_DRAWING_STUDIOS = 'allow_normal_subjects_in_drawing_studios';
 
     public function get(string $key, mixed $default = null): mixed
     {
@@ -45,6 +46,7 @@ class AppSettingsService
             self::DATABASE_BACKUP_TIME,
             self::UNIVERSITY_NAME,
             self::UNIVERSITY_LOGO,
+            self::ALLOW_NORMAL_SUBJECTS_IN_DRAWING_STUDIOS,
         ], true);
     }
 }

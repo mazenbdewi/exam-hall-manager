@@ -16,6 +16,7 @@ class SystemSetting extends Model
         'university_name',
         'university_logo',
         'database_backup_time',
+        'allow_normal_subjects_in_drawing_studios',
     ];
 
     public static function defaults(): array
@@ -24,6 +25,14 @@ class SystemSetting extends Model
             'university_name' => InstitutionSettings::DEFAULT_UNIVERSITY_NAME,
             'university_logo' => null,
             'database_backup_time' => '02:00',
+            'allow_normal_subjects_in_drawing_studios' => false,
+        ];
+    }
+
+    protected function casts(): array
+    {
+        return [
+            'allow_normal_subjects_in_drawing_studios' => 'boolean',
         ];
     }
 

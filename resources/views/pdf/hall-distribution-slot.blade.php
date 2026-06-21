@@ -284,7 +284,12 @@
                 <tbody>
                     @foreach ($summary['offerings_summary'] as $offeringSummary)
                         <tr>
-                            <td>{{ $offeringSummary['subject_name'] }}</td>
+                            <td>
+                                {{ $offeringSummary['subject_name'] }}
+                                @if (! empty($offeringSummary['is_drawing_subject']))
+                                    <span class="pill gray">مادة رسم</span>
+                                @endif
+                            </td>
                             <td>{{ $offeringSummary['students_count'] }}</td>
                             <td>{{ $offeringSummary['assigned_students_count'] }}</td>
                             <td>{{ $offeringSummary['unassigned_students_count'] }}</td>
@@ -309,6 +314,9 @@
                     <span class="pill {{ $hallAssignment['hall_student_type_key'] === 'mixed' ? 'warning' : 'gray' }}">
                         {{ $hallAssignment['hall_student_type_label'] }}
                     </span>
+                    @if (! empty($hallAssignment['is_drawing_studio']))
+                        <span class="pill gray">مرسم</span>
+                    @endif
                 </div>
 
                 <div class="hall-meta" style="margin-top: 12px;">
@@ -324,6 +332,9 @@
                     @foreach ($hallAssignment['subjects'] as $assignmentSubject)
                         <span class="pill gray">
                             {{ $assignmentSubject['subject_name'] }} ({{ $assignmentSubject['assigned_students_count'] }})
+                            @if (! empty($assignmentSubject['is_drawing_subject']))
+                                - مادة رسم
+                            @endif
                         </span>
                     @endforeach
                 </div>

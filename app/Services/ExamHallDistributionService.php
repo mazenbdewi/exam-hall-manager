@@ -32,6 +32,7 @@ class ExamHallDistributionService
         $settings = [
             'separate_carry_students' => $separateCarryStudents,
             'allow_multiple_subjects_per_hall' => $allowMultipleSubjectsPerHall,
+            'allow_normal_subjects_in_drawing_studios' => $this->allowNormalSubjectsInDrawingStudios(),
         ];
 
         $offerings = SubjectExamOffering::query()
@@ -301,6 +302,7 @@ class ExamHallDistributionService
             $usedHallsCount = 0;
             $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
             $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
+            $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios();
 
             foreach ($availableHalls as $hall) {
                 if (array_sum($remainingCounts) === 0) {
@@ -320,6 +322,7 @@ class ExamHallDistributionService
                         subjectCounts: $subjectCounts,
                         maxSubjectsPerHall: $maxSubjectsPerHall,
                         slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                        allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
                     );
 
                     if (! $nextOffering) {
@@ -396,6 +399,7 @@ class ExamHallDistributionService
             }
 
             $unassignedStudentsCount = max(0, $totalStudents - $assignedStudentsCount);
+            $hasUnassignedDrawingStudents = $this->hasUnassignedDrawingStudents($slotOfferings, $remainingCounts);
 
             SubjectExamOffering::query()
                 ->whereKey($slotOfferings->modelKeys())
@@ -406,12 +410,14 @@ class ExamHallDistributionService
                 ]);
 
             return [
-                'status' => $unassignedStudentsCount === 0 ? 'success' : 'warning',
-                'message' => $unassignedStudentsCount === 0
-                    ? __('exam.notifications.distribution_completed')
-                    : __('exam.notifications.distribution_completed_with_unassigned', [
-                        'count' => $unassignedStudentsCount,
-                    ]),
+                'status' => $hasUnassignedDrawingStudents ? 'danger' : ($unassignedStudentsCount === 0 ? 'success' : 'warning'),
+                'message' => $hasUnassignedDrawingStudents
+                    ? __('exam.notifications.drawing_studio_capacity_shortage')
+                    : ($unassignedStudentsCount === 0
+                        ? __('exam.notifications.distribution_completed')
+                        : __('exam.notifications.distribution_completed_with_unassigned', [
+                            'count' => $unassignedStudentsCount,
+                        ])),
                 'assigned_students_count' => $assignedStudentsCount,
                 'unassigned_students_count' => $unassignedStudentsCount,
                 'used_halls_count' => $usedHallsCount,
@@ -430,6 +436,7 @@ class ExamHallDistributionService
         $plans = [];
         $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
         $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
+        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios();
 
         $regularStudentsCount = array_sum($remainingCounts[ExamStudentType::Regular->value]);
         $carryStudentsCount = array_sum($remainingCounts[ExamStudentType::Carry->value]);
@@ -450,6 +457,7 @@ class ExamHallDistributionService
                 remainingCounts: $remainingCounts,
                 maxSubjectsPerHall: $maxSubjectsPerHall,
                 slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
             );
         }
 
@@ -474,6 +482,7 @@ class ExamHallDistributionService
                 remainingCounts: $remainingCounts,
                 maxSubjectsPerHall: $maxSubjectsPerHall,
                 slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
             );
         }
 
@@ -486,6 +495,7 @@ class ExamHallDistributionService
             remainingCounts: $remainingCounts,
             maxSubjectsPerHall: $maxSubjectsPerHall,
             slotHasDrawingSubjects: $slotHasDrawingSubjects,
+            allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
         );
         $fallbackMixedStudents += $this->mixRemainingStudentTypeIntoExistingPlans(
             studentType: ExamStudentType::Carry->value,
@@ -495,10 +505,15 @@ class ExamHallDistributionService
             remainingCounts: $remainingCounts,
             maxSubjectsPerHall: $maxSubjectsPerHall,
             slotHasDrawingSubjects: $slotHasDrawingSubjects,
+            allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
         );
 
         [$assignedStudentsCount, $usedHallsCount] = $this->persistHallPlans($plans, $slot);
         $unassignedStudentsCount = max(0, $totalStudents - $assignedStudentsCount);
+        $hasUnassignedDrawingStudents = $this->hasUnassignedDrawingStudents(
+            $slotOfferings,
+            $this->combinedRemainingCounts($remainingCounts),
+        );
 
         SubjectExamOffering::query()
             ->whereKey($slotOfferings->modelKeys())
@@ -515,8 +530,9 @@ class ExamHallDistributionService
         $hasMixing = $mixedHallsCount > 0 || $fallbackMixedStudents > 0;
 
         return [
-            'status' => $unassignedStudentsCount === 0 && ! $hasMixing ? 'success' : 'warning',
+            'status' => $hasUnassignedDrawingStudents ? 'danger' : ($unassignedStudentsCount === 0 && ! $hasMixing ? 'success' : 'warning'),
             'message' => match (true) {
+                $hasUnassignedDrawingStudents => __('exam.notifications.drawing_studio_capacity_shortage'),
                 $unassignedStudentsCount > 0 => __('exam.notifications.distribution_completed_with_unassigned', [
                     'count' => $unassignedStudentsCount,
                 ]),
@@ -566,6 +582,12 @@ class ExamHallDistributionService
     {
         return $availableHalls
             ->sort(function (ExamHall $first, ExamHall $second): int {
+                $drawingStudioComparison = ((int) $this->isDrawingStudio($first)) <=> ((int) $this->isDrawingStudio($second));
+
+                if ($drawingStudioComparison !== 0) {
+                    return $drawingStudioComparison;
+                }
+
                 $capacityComparison = $first->capacity <=> $second->capacity;
 
                 if ($capacityComparison !== 0) {
@@ -605,6 +627,7 @@ class ExamHallDistributionService
         array &$remainingCounts,
         int $maxSubjectsPerHall,
         bool $slotHasDrawingSubjects,
+        bool $allowNormalSubjectsInDrawingStudios,
     ): int {
         $assignedCount = 0;
         $visitedOfferingIds = [];
@@ -618,6 +641,7 @@ class ExamHallDistributionService
                 hall: $plan['hall'],
                 maxSubjectsPerHall: $maxSubjectsPerHall,
                 slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
             );
 
             if (! $nextOffering) {
@@ -671,9 +695,10 @@ class ExamHallDistributionService
         ExamHall $hall,
         int $maxSubjectsPerHall,
         bool $slotHasDrawingSubjects,
+        bool $allowNormalSubjectsInDrawingStudios,
     ): ?SubjectExamOffering {
         return $slotOfferings
-            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $subjectCounts, $visitedOfferingIds, $hall, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings): bool {
+            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $subjectCounts, $visitedOfferingIds, $hall, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings, $allowNormalSubjectsInDrawingStudios): bool {
                 $offeringId = $slotOffering->getKey();
 
                 if (in_array($offeringId, $visitedOfferingIds, true)) {
@@ -691,6 +716,7 @@ class ExamHallDistributionService
                     slotOfferings: $slotOfferings,
                     maxSubjectsPerHall: $maxSubjectsPerHall,
                     slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                    allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
                 );
             });
     }
@@ -703,6 +729,7 @@ class ExamHallDistributionService
         array &$remainingCounts,
         int $maxSubjectsPerHall,
         bool $slotHasDrawingSubjects,
+        bool $allowNormalSubjectsInDrawingStudios,
     ): int {
         if (array_sum($remainingCounts[$studentType]) === 0) {
             return 0;
@@ -731,6 +758,7 @@ class ExamHallDistributionService
                 remainingCounts: $remainingCounts,
                 maxSubjectsPerHall: $maxSubjectsPerHall,
                 slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
             );
 
             if ($hadOppositeStudents) {
@@ -1188,6 +1216,12 @@ class ExamHallDistributionService
             ->where('is_active', true)
             ->get()
             ->sort(function (ExamHall $first, ExamHall $second): int {
+                $drawingStudioComparison = ((int) $this->isDrawingStudio($first)) <=> ((int) $this->isDrawingStudio($second));
+
+                if ($drawingStudioComparison !== 0) {
+                    return $drawingStudioComparison;
+                }
+
                 $priorityComparison = $this->priorityRank($first->priority?->value)
                     <=> $this->priorityRank($second->priority?->value);
 
@@ -1271,14 +1305,19 @@ class ExamHallDistributionService
                 continue;
             }
 
+            $isDrawingSubject = $this->isDrawingSubjectOffering($offering);
             $issue = [
                 'exam_date' => $examDate,
                 'start_time' => $examStartTime,
                 'subject_exam_offering_id' => $offering->id,
                 'subject_name' => $offering->subject?->name,
                 'unassigned_count' => $unassigned,
-                'reason' => $reason ?? __('exam.global_hall_distribution.issue_reasons.unassigned_students'),
-                'issue_type' => $slotCapacityShortage > 0 ? 'capacity_shortage' : 'unassigned_students',
+                'reason' => $isDrawingSubject
+                    ? __('exam.notifications.drawing_studio_capacity_shortage')
+                    : ($reason ?? __('exam.global_hall_distribution.issue_reasons.unassigned_students')),
+                'issue_type' => $isDrawingSubject
+                    ? 'drawing_studio_capacity_shortage'
+                    : ($slotCapacityShortage > 0 ? 'capacity_shortage' : 'unassigned_students'),
             ];
 
             $issues[] = $issue;
@@ -1797,9 +1836,10 @@ class ExamHallDistributionService
         array $subjectCounts,
         int $maxSubjectsPerHall,
         bool $slotHasDrawingSubjects,
+        bool $allowNormalSubjectsInDrawingStudios,
     ): ?SubjectExamOffering {
         return $slotOfferings
-            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $usedOfferingIds, $hall, $subjectCounts, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings): bool {
+            ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $usedOfferingIds, $hall, $subjectCounts, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings, $allowNormalSubjectsInDrawingStudios): bool {
                 if (in_array($slotOffering->getKey(), $usedOfferingIds, true)) {
                     return false;
                 }
@@ -1815,6 +1855,7 @@ class ExamHallDistributionService
                     slotOfferings: $slotOfferings,
                     maxSubjectsPerHall: $maxSubjectsPerHall,
                     slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                    allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
                 );
             });
     }
@@ -1840,14 +1881,18 @@ class ExamHallDistributionService
             ->sum('capacity');
         $allCapacity = (int) $availableHalls->sum('capacity');
 
+        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios();
+
         if ($drawingStudents === 0) {
+            $usableCapacity = $allowNormalSubjectsInDrawingStudios ? $allCapacity : $nonDrawingHallCapacity;
+
             return [
-                'usable_capacity' => $allCapacity,
-                'capacity_shortage' => max(0, $nonDrawingStudents - $allCapacity),
+                'usable_capacity' => $usableCapacity,
+                'capacity_shortage' => max(0, $nonDrawingStudents - $usableCapacity),
                 'drawing_students_count' => 0,
                 'drawing_studio_capacity' => $drawingStudioCapacity,
                 'non_drawing_students_count' => $nonDrawingStudents,
-                'non_drawing_hall_capacity' => $allCapacity,
+                'non_drawing_hall_capacity' => $usableCapacity,
             ];
         }
 
@@ -1876,6 +1921,7 @@ class ExamHallDistributionService
         Collection $slotOfferings,
         int $maxSubjectsPerHall,
         bool $slotHasDrawingSubjects,
+        bool $allowNormalSubjectsInDrawingStudios,
     ): bool {
         $offeringId = $offering->getKey();
 
@@ -1891,6 +1937,10 @@ class ExamHallDistributionService
         }
 
         if (! $isDrawingSubject && $slotHasDrawingSubjects && $isDrawingStudio) {
+            return false;
+        }
+
+        if (! $isDrawingSubject && $isDrawingStudio && ! $allowNormalSubjectsInDrawingStudios) {
             return false;
         }
 
@@ -1919,6 +1969,35 @@ class ExamHallDistributionService
     protected function isDrawingStudio(ExamHall $hall): bool
     {
         return (bool) ($hall->is_drawing_studio ?? false);
+    }
+
+    protected function allowNormalSubjectsInDrawingStudios(): bool
+    {
+        return (bool) app(AppSettingsService::class)->get(
+            AppSettingsService::ALLOW_NORMAL_SUBJECTS_IN_DRAWING_STUDIOS,
+            false,
+        );
+    }
+
+    protected function hasUnassignedDrawingStudents(Collection $slotOfferings, array $remainingCounts): bool
+    {
+        return $slotOfferings->contains(function (SubjectExamOffering $offering) use ($remainingCounts): bool {
+            return $this->isDrawingSubjectOffering($offering)
+                && (int) ($remainingCounts[$offering->getKey()] ?? 0) > 0;
+        });
+    }
+
+    protected function combinedRemainingCounts(array $remainingCounts): array
+    {
+        $combined = [];
+
+        foreach ($remainingCounts as $typeCounts) {
+            foreach ($typeCounts as $offeringId => $count) {
+                $combined[$offeringId] = ($combined[$offeringId] ?? 0) + (int) $count;
+            }
+        }
+
+        return $combined;
     }
 
     protected function priorityRank(?string $priority): int

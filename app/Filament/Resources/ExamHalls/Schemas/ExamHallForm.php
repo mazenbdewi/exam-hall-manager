@@ -84,6 +84,7 @@ class ExamHallForm
                         Toggle::make('is_drawing_studio')
                             ->label(__('exam.fields.is_drawing_studio'))
                             ->default(false)
+                            ->dehydrated(true)
                             ->inline(false),
                         Toggle::make('is_active')
                             ->label(__('exam.fields.status'))
