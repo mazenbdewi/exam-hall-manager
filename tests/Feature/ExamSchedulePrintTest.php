@@ -21,6 +21,7 @@ use App\Services\ExamScheduleGeneratorService;
 use App\Support\RoleNames;
 use App\Support\ShieldPermission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
@@ -244,7 +245,7 @@ class ExamSchedulePrintTest extends TestCase
             'semester_id' => $secondSemester->id,
             'start_date' => '2026-06-01',
             'end_date' => '2026-06-05',
-            'status' => 'generated',
+            'status' => ExamScheduleDraft::STATUS_COMPLETED,
             'settings_json' => [],
         ]);
 
@@ -268,10 +269,104 @@ class ExamSchedulePrintTest extends TestCase
             ->assertSee('الفصل الثاني')
             ->assertSee('برمجة متقدمة');
 
-        $dashboard = new ReportsDashboard();
+        $dashboard = new ReportsDashboard;
         $dashboard->college_id = $college->id;
 
         $this->assertStringContainsString('draft_id='.$draft->id, $dashboard->draftExamSchedulePrintUrl());
+    }
+
+    #[Test]
+    public function draft_print_rejects_incomplete_or_failed_draft_id(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الهندسة', 'is_active' => true]);
+        $academicYear = AcademicYear::query()->create(['name' => '2025-2026', 'is_active' => true, 'is_current' => true]);
+        $semester = Semester::query()->create(['name' => 'الفصل الثاني', 'sort_order' => 2, 'is_active' => true]);
+        $failedDraft = ExamScheduleDraft::query()->create([
+            'faculty_id' => $college->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-05',
+            'status' => ExamScheduleDraft::STATUS_FAILED,
+            'summary_json' => ['status' => 'failed'],
+        ]);
+        $user = User::factory()->create(['college_id' => $college->id]);
+        $user->assignRole(Role::findOrCreate(RoleNames::ADMIN, 'web'));
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'source' => 'draft',
+                'draft_id' => $failedDraft->id,
+                'college_id' => $college->id,
+                'academic_year_id' => $academicYear->id,
+                'semester_id' => $semester->id,
+            ]))
+            ->assertStatus(422)
+            ->assertSee('لا يمكن طباعة هذه المسودة لأنها غير مكتملة أو فشل توليدها');
+    }
+
+    #[Test]
+    public function cleanup_drafts_command_deletes_only_incomplete_drafts_and_preserves_completed_approved_and_pinned_offerings(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الهندسة', 'is_active' => true]);
+        $department = Department::query()->create(['college_id' => $college->id, 'name' => 'قسم المعلوماتية', 'is_active' => true]);
+        $level = StudyLevel::query()->create(['name' => 'الأولى', 'sort_order' => 1, 'is_active' => true]);
+        $academicYear = AcademicYear::query()->create(['name' => '2025-2026', 'is_active' => true, 'is_current' => true]);
+        $semester = Semester::query()->create(['name' => 'الفصل الثاني', 'sort_order' => 2, 'is_active' => true]);
+        $subject = $this->createSubject($college, $department, $level, 'خوارزميات');
+        $failedDraft = ExamScheduleDraft::query()->create([
+            'faculty_id' => $college->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-05',
+            'status' => ExamScheduleDraft::STATUS_FAILED,
+            'created_at' => now()->subHours(3),
+            'updated_at' => now()->subHours(3),
+        ]);
+        $completedDraft = ExamScheduleDraft::query()->create([
+            'faculty_id' => $college->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-05',
+            'status' => ExamScheduleDraft::STATUS_COMPLETED,
+            'summary_json' => ['status' => 'success'],
+        ]);
+        $approvedDraft = ExamScheduleDraft::query()->create([
+            'faculty_id' => $college->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-05',
+            'status' => ExamScheduleDraft::STATUS_APPROVED,
+        ]);
+        $this->createDraftItem($completedDraft, $subject, $department, '2026-06-01', '09:00:00', '11:00:00');
+        $this->createDraftItem($approvedDraft, $subject, $department, '2026-06-02', '09:00:00', '11:00:00');
+        $pinnedOffering = SubjectExamOffering::query()->create([
+            'subject_id' => $subject->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'exam_schedule_draft_id' => $failedDraft->id,
+            'exam_date' => '2026-06-01',
+            'exam_start_time' => '09:00:00',
+            'is_pinned' => true,
+            'status' => ExamOfferingStatus::Draft,
+        ]);
+
+        Artisan::call('exam-schedules:cleanup-drafts', ['--dry-run' => true]);
+        $this->assertDatabaseHas('exam_schedule_drafts', ['id' => $failedDraft->id]);
+
+        Artisan::call('exam-schedules:cleanup-drafts');
+
+        $this->assertDatabaseMissing('exam_schedule_drafts', ['id' => $failedDraft->id]);
+        $this->assertDatabaseHas('exam_schedule_drafts', ['id' => $completedDraft->id]);
+        $this->assertDatabaseHas('exam_schedule_drafts', ['id' => $approvedDraft->id]);
+        $this->assertTrue($pinnedOffering->refresh()->is_pinned);
+        $this->assertSame('2026-06-01', $pinnedOffering->exam_date?->toDateString());
+        $this->assertSame('09:00:00', substr((string) $pinnedOffering->exam_start_time, 0, 8));
     }
 
     #[Test]

@@ -8,6 +8,8 @@ use App\Filament\Pages\ExamScheduleGenerator;
 use App\Models\AcademicYear;
 use App\Models\College;
 use App\Models\Department;
+use App\Models\ExamScheduleDraft;
+use App\Models\ExamScheduleDraftItem;
 use App\Models\ExamStudent;
 use App\Models\Semester;
 use App\Models\StudyLevel;
@@ -43,10 +45,51 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
         $item = $draft->items()->firstOrFail();
 
+        $this->assertSame(ExamScheduleDraft::STATUS_COMPLETED, $draft->status);
         $this->assertSame(2, $item->student_count);
         $this->assertSame(1, $item->regular_count);
         $this->assertSame(1, $item->carry_count);
         $this->assertSame(['S-001', 'S-002'], $item->metadata['student_numbers']);
+    }
+
+    #[Test]
+    public function failed_generation_does_not_leave_a_completed_or_partial_draft(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+            $this->fail('Expected generation without ready rosters to fail.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('لا توجد قوائم مواد جاهزة', collect($exception->errors())->flatten()->first());
+        }
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
+        $this->assertSame(0, SubjectExamOffering::query()->whereNotNull('exam_schedule_draft_id')->count());
+    }
+
+    #[Test]
+    public function regenerating_same_scope_replaces_previous_unapproved_draft_inside_transaction(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'إعادة توليد');
+        $this->createRoster($context, $subject, [['S-001', 'طالب أول', 'regular']]);
+
+        $firstDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+        $secondDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+
+        $this->assertNotSame($firstDraft->id, $secondDraft->id);
+        $this->assertDatabaseMissing('exam_schedule_drafts', ['id' => $firstDraft->id]);
+        $this->assertSame(1, ExamScheduleDraft::query()
+            ->where('faculty_id', $context['college']->id)
+            ->where('academic_year_id', $context['academic_year']->id)
+            ->where('semester_id', $context['semester']->id)
+            ->where('status', '<>', ExamScheduleDraft::STATUS_APPROVED)
+            ->count());
+        $this->assertSame(1, SubjectExamOffering::query()->where('exam_schedule_draft_id', $secondDraft->id)->count());
     }
 
     #[Test]

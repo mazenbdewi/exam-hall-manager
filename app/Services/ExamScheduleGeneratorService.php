@@ -88,7 +88,7 @@ class ExamScheduleGeneratorService
                 'semester_id' => $settings['semester_id'],
                 'start_date' => $settings['start_date'],
                 'end_date' => $settings['end_date'],
-                'status' => 'draft',
+                'status' => ExamScheduleDraft::STATUS_GENERATING,
                 'generated_by' => auth()->id(),
                 'settings_json' => $settings,
             ]);
@@ -122,6 +122,7 @@ class ExamScheduleGeneratorService
                     studentAssignments: $studentAssignments,
                 ),
             )));
+            $this->deleteReplaceableDraftsForScope($settings, $draft->id);
             $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
 
             foreach ($units->sortByDesc(fn (array $unit): int => count($unit['subjects']))->values() as $unit) {
@@ -220,7 +221,7 @@ class ExamScheduleGeneratorService
             ]);
 
             $draft->update([
-                'status' => 'generated',
+                'status' => ExamScheduleDraft::STATUS_COMPLETED,
                 'summary_json' => $validation['summary'],
             ]);
 
@@ -579,7 +580,7 @@ class ExamScheduleGeneratorService
     {
         $draft->loadMissing('items.subject', 'items.sourceRoster.rosterStudents');
 
-        if ($draft->status === 'approved') {
+        if ($draft->status === ExamScheduleDraft::STATUS_APPROVED) {
             $fixedProgram = app(FixedExamProgramSnapshotService::class)->createFromDraft($draft);
 
             return [
@@ -657,7 +658,7 @@ class ExamScheduleGeneratorService
             }
 
             $draft->update([
-                'status' => 'approved',
+                'status' => ExamScheduleDraft::STATUS_APPROVED,
                 'approved_by' => auth()->id(),
                 'approved_at' => now(),
                 'summary_json' => $validation['summary'],
@@ -1195,6 +1196,31 @@ class ExamScheduleGeneratorService
         }
 
         return array_values(array_unique($pinnedRosterIds));
+    }
+
+    protected function deleteReplaceableDraftsForScope(array $settings, int $currentDraftId): void
+    {
+        $draftIds = ExamScheduleDraft::query()
+            ->where('faculty_id', $settings['faculty_id'])
+            ->where('academic_year_id', $settings['academic_year_id'])
+            ->where('semester_id', $settings['semester_id'])
+            ->whereKeyNot($currentDraftId)
+            ->where('status', '<>', ExamScheduleDraft::STATUS_APPROVED)
+            ->pluck('id');
+
+        if ($draftIds->isEmpty()) {
+            return;
+        }
+
+        SubjectExamOffering::query()
+            ->whereIn('exam_schedule_draft_id', $draftIds)
+            ->where('is_pinned', false)
+            ->where('status', ExamOfferingStatus::Draft->value)
+            ->delete();
+
+        ExamScheduleDraft::query()
+            ->whereKey($draftIds)
+            ->delete();
     }
 
     /**

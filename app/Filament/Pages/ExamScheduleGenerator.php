@@ -827,6 +827,7 @@ class ExamScheduleGenerator extends Page
             ->where('semester_id', $this->semester_id)
             ->when($this->department_id, fn (Builder $query): Builder => $query->where('settings_json->department_id', $this->department_id))
             ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query): Builder => $query->where('faculty_id', ExamCollegeScope::currentCollegeId()))
+            ->whereIn('status', [ExamScheduleDraft::STATUS_COMPLETED, ExamScheduleDraft::STATUS_APPROVED])
             ->latest('approved_at')
             ->latest('id')
             ->first();

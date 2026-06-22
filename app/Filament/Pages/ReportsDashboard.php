@@ -410,7 +410,7 @@ class ReportsDashboard extends Page
                 });
             })
             ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('faculty_id', ExamCollegeScope::currentCollegeId()))
-            ->whereIn('status', ['draft', 'generated', 'approved'])
+            ->printable()
             ->latest('updated_at')
             ->latest('id')
             ->first();

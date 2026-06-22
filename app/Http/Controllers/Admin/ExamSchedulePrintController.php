@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\ExamOfferingStatus;
 use App\Filament\Pages\ReportsDashboard;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
-use App\Enums\ExamOfferingStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AcademicYear;
 use App\Models\College;
@@ -108,7 +108,15 @@ class ExamSchedulePrintController extends Controller
         $draft = $this->latestMatchingDraft($filters);
 
         if (! $draft) {
+            if ($filters['draft_id']) {
+                return $this->invalidDraftResponse();
+            }
+
             return $this->printManualDraftOfferings($request, $filters);
+        }
+
+        if (! $draft->hasPrintableSchedule()) {
+            return $this->invalidDraftResponse();
         }
 
         $filters['academic_year_id'] ??= $draft->academic_year_id;
@@ -210,7 +218,7 @@ class ExamSchedulePrintController extends Controller
             ->where('faculty_id', $filters['college_id'])
             ->when($filters['academic_year_id'], fn ($query, int $academicYearId) => $query->where('academic_year_id', $academicYearId))
             ->when($filters['semester_id'], fn ($query, int $semesterId) => $query->where('semester_id', $semesterId))
-            ->whereIn('status', ['draft', 'generated', 'approved'])
+            ->printable()
             ->when($filters['department_id'], function ($query, int $departmentId): void {
                 $query->whereHas('items', function ($itemsQuery) use ($departmentId): void {
                     $itemsQuery->where(function ($departmentQuery) use ($departmentId): void {
@@ -223,6 +231,14 @@ class ExamSchedulePrintController extends Controller
             ->latest('updated_at')
             ->latest('id')
             ->first();
+    }
+
+    protected function invalidDraftResponse(): Response
+    {
+        return response(
+            'لا يمكن طباعة هذه المسودة لأنها غير مكتملة أو فشل توليدها. يرجى إعادة توليد البرنامج.',
+            422,
+        );
     }
 
     /**

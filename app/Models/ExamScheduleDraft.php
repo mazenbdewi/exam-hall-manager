@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,6 +11,16 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class ExamScheduleDraft extends Model
 {
     use HasFactory;
+
+    public const STATUS_GENERATING = 'generating';
+
+    public const STATUS_COMPLETED = 'completed';
+
+    public const STATUS_FAILED = 'failed';
+
+    public const STATUS_CANCELLED = 'cancelled';
+
+    public const STATUS_APPROVED = 'approved';
 
     protected $fillable = [
         'faculty_id',
@@ -69,5 +80,45 @@ class ExamScheduleDraft extends Model
     public function fixedExamPrograms(): HasMany
     {
         return $this->hasMany(FixedExamProgram::class);
+    }
+
+    public function scopePrintable(Builder $query): Builder
+    {
+        return $query
+            ->whereIn('status', [self::STATUS_COMPLETED, self::STATUS_APPROVED])
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('summary_json')
+                    ->orWhere('summary_json->status', '<>', 'failed');
+            })
+            ->whereHas('items', fn (Builder $query): Builder => $query
+                ->whereNotNull('exam_date')
+                ->whereNotNull('start_time')
+                ->whereIn('status', ['scheduled', 'manually_adjusted', 'conflict']))
+            ->whereDoesntHave('items', fn (Builder $query): Builder => $query
+                ->where('status', 'unscheduled')
+                ->orWhereNull('exam_date')
+                ->orWhereNull('start_time'));
+    }
+
+    public function hasPrintableSchedule(): bool
+    {
+        if (! in_array($this->status, [self::STATUS_COMPLETED, self::STATUS_APPROVED], true)) {
+            return false;
+        }
+
+        if (($this->summary_json['status'] ?? null) === 'failed') {
+            return false;
+        }
+
+        $items = $this->relationLoaded('items') ? $this->items : $this->items()->get();
+
+        if ($items->isEmpty()) {
+            return false;
+        }
+
+        return $items->every(fn (ExamScheduleDraftItem $item): bool => $item->status !== 'unscheduled'
+            && filled($item->exam_date)
+            && filled($item->start_time));
     }
 }
