@@ -16,9 +16,17 @@ class ListSubjectExamOfferings extends ListRecords
 {
     protected static string $resource = SubjectExamOfferingResource::class;
 
+    public function getTitle(): string
+    {
+        return 'مسودة البرنامج الامتحاني';
+    }
+
     public function getTabs(): array
     {
         return [
+            'drafts' => Tab::make('مسودات البرنامج')
+                ->query(fn (Builder $query): Builder => $query->where('status', 'draft'))
+                ->badge(fn (): int => $this->getOfferingsCount('drafts')),
             'today' => Tab::make('امتحانات اليوم')
                 ->query(fn (Builder $query): Builder => $query->whereTodayExam())
                 ->badge(fn (): int => $this->getOfferingsCount('today')),
@@ -36,7 +44,9 @@ class ListSubjectExamOfferings extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            CreateAction::make(),
+            CreateAction::make()
+                ->label('إضافة مادة امتحانية')
+                ->icon('heroicon-o-plus-circle'),
         ];
     }
 
@@ -59,6 +69,7 @@ class ListSubjectExamOfferings extends ListRecords
             'today' => $query->whereTodayExam()->count(),
             'upcoming' => $query->whereUpcomingExam()->count(),
             'finished' => $query->whereFinishedExam()->count(),
+            'drafts' => $query->where('status', 'draft')->count(),
             default => $query->count(),
         };
     }

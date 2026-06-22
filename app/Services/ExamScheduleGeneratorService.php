@@ -111,6 +111,17 @@ class ExamScheduleGeneratorService
                 academicAssignments: $academicAssignments,
                 studentAssignments: $studentAssignments,
             );
+            $pinnedRosterIds = array_values(array_unique(array_merge(
+                $pinnedRosterIds,
+                $this->copyPinnedItemsFromOfferings(
+                    draft: $draft,
+                    settings: $settings,
+                    slotLoads: $slotLoads,
+                    dayLoads: $dayLoads,
+                    academicAssignments: $academicAssignments,
+                    studentAssignments: $studentAssignments,
+                ),
+            )));
             $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
 
             foreach ($units->sortByDesc(fn (array $unit): int => count($unit['subjects']))->values() as $unit) {
@@ -137,6 +148,7 @@ class ExamScheduleGeneratorService
                     ]);
 
                     $this->createUnscheduledItems($draft, $unit, $choiceResult);
+
                     continue;
                 }
 
@@ -212,6 +224,8 @@ class ExamScheduleGeneratorService
                 'summary_json' => $validation['summary'],
             ]);
 
+            $this->syncDraftToSubjectExamOfferings($draft->refresh());
+
             $draft = $draft->refresh();
             Log::info('Exam schedule draft generation: before return.', [
                 'user_id' => auth()->id(),
@@ -264,6 +278,7 @@ class ExamScheduleGeneratorService
                     (int) ($metadata['conflicting_student_numbers_count'] ?? count($conflictingStudentNumbers)),
                     $conflictingStudentNumbers,
                 );
+
                 continue;
             }
 
@@ -596,14 +611,17 @@ class ExamScheduleGeneratorService
                     continue;
                 }
 
-                $existingOffering = SubjectExamOffering::query()
+                $existingOffering = $item->subjectExamOffering ?: SubjectExamOffering::query()
                     ->where('subject_id', $item->subject_id)
                     ->where('academic_year_id', $draft->academic_year_id)
                     ->where('semester_id', $draft->semester_id)
                     ->first();
 
+                $isCurrentDraftOffering = $existingOffering
+                    && (int) $existingOffering->exam_schedule_draft_id === (int) $draft->id;
+
                 if ($existingOffering) {
-                    if ($existingOfferingStrategy !== 'update_existing') {
+                    if (! $isCurrentDraftOffering && $existingOfferingStrategy !== 'update_existing') {
                         $skippedExisting++;
 
                         continue;
@@ -658,6 +676,272 @@ class ExamScheduleGeneratorService
                 'message' => 'تم تثبيت برنامج الامتحان وحفظه بنجاح',
             ];
         });
+    }
+
+    public function syncDraftToSubjectExamOfferings(ExamScheduleDraft $draft): void
+    {
+        $draft->loadMissing(['items.subject']);
+
+        foreach ($draft->items as $item) {
+            if (! in_array($item->status, ['scheduled', 'manually_adjusted', 'conflict'], true)) {
+                continue;
+            }
+
+            if (! $item->exam_date || blank($item->start_time)) {
+                continue;
+            }
+
+            $this->syncDraftItemToOffering($item);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public function updateOfferingSchedule(SubjectExamOffering $offering, array $data): SubjectExamOffering
+    {
+        return DB::transaction(function () use ($offering, $data): SubjectExamOffering {
+            $period = $this->periodForOfferingData($offering, $data);
+            $examDate = filled($data['exam_date'] ?? null)
+                ? Carbon::parse($data['exam_date'])->toDateString()
+                : $offering->exam_date?->toDateString();
+            $startTime = $period['start_time'] ?? $this->timeString($data['exam_start_time'] ?? $offering->exam_start_time);
+
+            $offering->update([
+                'exam_date' => $examDate,
+                'exam_start_time' => $startTime,
+            ]);
+
+            if ($offering->refresh()->is_pinned) {
+                $this->ensureOfferingCanBePinned($offering);
+            }
+
+            $this->syncOfferingToDraftItem($offering->refresh(), $period);
+
+            return $offering->refresh();
+        });
+    }
+
+    public function pinOffering(SubjectExamOffering $offering): SubjectExamOffering
+    {
+        $offering->loadMissing('subject');
+
+        if (! $offering->exam_date || blank($offering->exam_start_time)) {
+            throw ValidationException::withMessages([
+                'is_pinned' => 'يجب تحديد تاريخ ووقت الامتحان قبل تثبيت المادة.',
+            ]);
+        }
+
+        $this->ensureOfferingCanBePinned($offering);
+
+        $offering->update(['is_pinned' => true]);
+
+        return $offering->refresh();
+    }
+
+    public function unpinOffering(SubjectExamOffering $offering): SubjectExamOffering
+    {
+        $offering->update(['is_pinned' => false]);
+
+        return $offering->refresh();
+    }
+
+    public function ensureOfferingCanBePinned(SubjectExamOffering $offering): void
+    {
+        $offering->loadMissing('subject');
+
+        $conflictingOffering = SubjectExamOffering::query()
+            ->with('subject')
+            ->whereKeyNot($offering->getKey())
+            ->where('is_pinned', true)
+            ->where('academic_year_id', $offering->academic_year_id)
+            ->where('semester_id', $offering->semester_id)
+            ->whereDate('exam_date', $offering->exam_date?->toDateString())
+            ->whereTime('exam_start_time', $this->timeString($offering->exam_start_time))
+            ->whereHas('subject', fn (Builder $query): Builder => $query->where('college_id', $offering->subject?->college_id))
+            ->get()
+            ->first(fn (SubjectExamOffering $candidate): bool => $this->pinnedOfferingsConflict($offering, $candidate));
+
+        if ($conflictingOffering) {
+            throw ValidationException::withMessages([
+                'is_pinned' => 'لا يمكن تثبيت هذه المادة في هذا الموعد لوجود تعارض مع مادة مثبتة أخرى.',
+            ]);
+        }
+    }
+
+    protected function pinnedOfferingsConflict(SubjectExamOffering $offering, SubjectExamOffering $candidate): bool
+    {
+        $sameAcademicGroup = (int) $offering->subject?->department_id === (int) $candidate->subject?->department_id
+            && (int) $offering->subject?->study_level_id === (int) $candidate->subject?->study_level_id;
+
+        if ($sameAcademicGroup) {
+            return true;
+        }
+
+        $offeringStudents = $this->studentNumbersForOffering($offering);
+        $candidateStudents = $this->studentNumbersForOffering($candidate);
+
+        return $offeringStudents !== []
+            && $candidateStudents !== []
+            && array_intersect($offeringStudents, $candidateStudents) !== [];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function studentNumbersForOffering(SubjectExamOffering $offering): array
+    {
+        $offering->loadMissing('examStudents');
+
+        $examStudentNumbers = $offering->examStudents
+            ->pluck('student_number')
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values();
+
+        if ($examStudentNumbers->isNotEmpty()) {
+            return $examStudentNumbers->all();
+        }
+
+        $roster = $this->matchingReadyRosterForOffering($offering, [
+            'faculty_id' => $offering->subject?->college_id,
+            'academic_year_id' => $offering->academic_year_id,
+            'semester_id' => $offering->semester_id,
+            'department_id' => null,
+            'study_level_id' => null,
+        ]);
+
+        if (! $roster) {
+            return [];
+        }
+
+        return $roster->eligibleRosterStudents()
+            ->pluck('student_number')
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    protected function syncDraftItemToOffering(ExamScheduleDraftItem $item): ?SubjectExamOffering
+    {
+        $draft = $item->draft;
+
+        if (! $draft || ! $item->exam_date || blank($item->start_time)) {
+            return null;
+        }
+
+        $offering = $item->subjectExamOffering
+            ?: SubjectExamOffering::query()
+                ->where('exam_schedule_draft_id', $draft->id)
+                ->where('subject_id', $item->subject_id)
+                ->where('academic_year_id', $draft->academic_year_id)
+                ->where('semester_id', $draft->semester_id)
+                ->first()
+            ?: new SubjectExamOffering([
+                'subject_id' => $item->subject_id,
+                'academic_year_id' => $draft->academic_year_id,
+                'semester_id' => $draft->semester_id,
+                'status' => ExamOfferingStatus::Draft->value,
+            ]);
+
+        $offering->fill([
+            'exam_schedule_draft_id' => $draft->id,
+            'exam_date' => $item->exam_date->toDateString(),
+            'exam_start_time' => $this->timeString($item->start_time),
+            'status' => $offering->exists ? $offering->status : ExamOfferingStatus::Draft->value,
+            'notes' => $offering->notes ?: 'تم توليده من مسودة البرنامج الامتحاني رقم '.$draft->id,
+        ]);
+
+        $offering->save();
+
+        if ((int) $item->subject_exam_offering_id !== (int) $offering->id) {
+            $item->update(['subject_exam_offering_id' => $offering->id]);
+        }
+
+        return $offering;
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $period
+     */
+    protected function syncOfferingToDraftItem(SubjectExamOffering $offering, ?array $period = null): void
+    {
+        $item = $offering->examScheduleDraftItem;
+
+        if (! $item) {
+            return;
+        }
+
+        $period ??= $this->periodForOfferingData($offering, [
+            'exam_start_time' => $offering->exam_start_time,
+        ]);
+
+        $metadata = $item->metadata ?? [];
+
+        if ($period) {
+            $metadata['period_name'] = $period['name'] ?? $metadata['period_name'] ?? null;
+        }
+
+        $item->update([
+            'exam_date' => $offering->exam_date?->toDateString(),
+            'start_time' => $this->timeString($offering->exam_start_time),
+            'end_time' => $period['end_time'] ?? $item->end_time,
+            'period_type' => $period['period_type'] ?? $item->period_type,
+            'status' => $item->status === 'unscheduled' ? 'scheduled' : 'manually_adjusted',
+            'metadata' => array_merge($metadata, [
+                'manually_adjusted_at' => now()->toDateTimeString(),
+                'manually_adjusted_by' => auth()->id(),
+            ]),
+        ]);
+
+        $draft = $item->draft;
+
+        if ($draft) {
+            $validation = $this->validateDraft($draft->refresh());
+            $this->syncValidationToDraft($draft, $validation);
+            $draft->update(['summary_json' => $validation['summary']]);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>|null
+     */
+    protected function periodForOfferingData(SubjectExamOffering $offering, array $data): ?array
+    {
+        $draft = $offering->examScheduleDraft ?: $offering->examScheduleDraftItem?->draft;
+        $periods = collect($draft?->settings_json['periods'] ?? []);
+
+        if ($periods->isEmpty()) {
+            return null;
+        }
+
+        if (filled($data['period_key'] ?? null)) {
+            $period = $periods->first(fn (array $period, int $index): bool => (string) ($period['key'] ?? $index) === (string) $data['period_key']);
+
+            if ($period) {
+                return $period;
+            }
+        }
+
+        $startTime = $this->timeString($data['exam_start_time'] ?? $offering->exam_start_time);
+
+        return $periods->first(fn (array $period): bool => $this->timeString($period['start_time'] ?? null) === $startTime);
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array<string, mixed>|null
+     */
+    protected function periodFromSettings(array $settings, mixed $startTime): ?array
+    {
+        $normalizedStartTime = $this->timeString($startTime);
+
+        return collect($settings['periods'] ?? [])
+            ->first(fn (array $period): bool => $this->timeString($period['start_time'] ?? null) === $normalizedStartTime);
     }
 
     /**
@@ -914,6 +1198,156 @@ class ExamScheduleGeneratorService
     }
 
     /**
+     * @param  array<string, mixed>  $settings
+     * @param  array<string, int>  $slotLoads
+     * @param  array<string, int>  $dayLoads
+     * @param  array<string, array<int, array<string, mixed>>>  $academicAssignments
+     * @param  array<string, array<int, array<string, mixed>>>  $studentAssignments
+     * @return array<int>
+     */
+    protected function copyPinnedItemsFromOfferings(
+        ExamScheduleDraft $draft,
+        array $settings,
+        array &$slotLoads,
+        array &$dayLoads,
+        array &$academicAssignments,
+        array &$studentAssignments,
+    ): array {
+        $pinnedRosterIds = [];
+
+        foreach ($this->pinnedOfferingsForSettings($settings)->get() as $offering) {
+            $roster = $this->matchingReadyRosterForOffering($offering, $settings);
+            $payload = $roster ? $this->subjectPayload($roster, $settings) : $this->subjectPayloadFromOffering($offering);
+            $period = $this->periodFromSettings($settings, $offering->exam_start_time);
+            $metadata = [
+                'pinned' => true,
+                'pinned_from_offering_id' => $offering->id,
+                'period_name' => $period['name'] ?? null,
+                'academic_group_key' => $payload['academic_group_key'],
+                'shared_subject_scheduling_mode' => 'single',
+                'student_numbers' => $payload['student_numbers_for_metadata'],
+                'student_numbers_truncated' => $payload['student_numbers_truncated'],
+                'student_numbers_count' => $payload['student_count'],
+                'student_examples' => $payload['student_examples'],
+                'preferred_exam_period' => $payload['preferred_exam_period'],
+                'core_subject_priority' => $payload['core_subject_priority'],
+            ];
+
+            $item = $draft->items()->create([
+                'source_roster_id' => $roster?->id,
+                'subject_id' => $offering->subject_id,
+                'department_id' => $payload['department_id'],
+                'subject_exam_offering_id' => $offering->id,
+                'exam_date' => $offering->exam_date?->toDateString(),
+                'start_time' => $this->timeString($offering->exam_start_time),
+                'end_time' => $period['end_time'] ?? null,
+                'period_type' => $period['period_type'] ?? null,
+                'student_count' => $payload['student_count'],
+                'regular_count' => $payload['regular_count'],
+                'carry_count' => $payload['carry_count'],
+                'is_shared_subject' => (bool) $offering->subject?->is_shared_subject,
+                'is_core_subject' => (bool) $offering->subject?->is_core_subject,
+                'shared_group_key' => (bool) $offering->subject?->is_shared_subject ? $this->sharedGroupKey($offering->subject) : null,
+                'status' => 'manually_adjusted',
+                'metadata' => $metadata,
+            ]);
+
+            $offering->update(['exam_schedule_draft_id' => $draft->id]);
+
+            if ($roster) {
+                $pinnedRosterIds[] = (int) $roster->id;
+            }
+
+            $this->reservePinnedItemSlot($item, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments);
+        }
+
+        return array_values(array_unique($pinnedRosterIds));
+    }
+
+    protected function hasPinnedOfferingsForSettings(array $settings): bool
+    {
+        return $this->pinnedOfferingsForSettings($settings)->exists();
+    }
+
+    protected function pinnedOfferingsForSettings(array $settings): Builder
+    {
+        return SubjectExamOffering::query()
+            ->with(['subject.department', 'subject.studyLevel', 'examStudents'])
+            ->where('is_pinned', true)
+            ->where('academic_year_id', $settings['academic_year_id'])
+            ->where('semester_id', $settings['semester_id'])
+            ->whereHas('subject', function (Builder $query) use ($settings): Builder {
+                return $query
+                    ->where('college_id', $settings['faculty_id'])
+                    ->when($settings['department_id'], fn (Builder $query): Builder => $query->where('department_id', $settings['department_id']))
+                    ->when($settings['study_level_id'], fn (Builder $query): Builder => $query->where('study_level_id', $settings['study_level_id']));
+            })
+            ->orderBy('exam_date')
+            ->orderBy('exam_start_time')
+            ->orderBy('subject_id');
+    }
+
+    protected function matchingReadyRosterForOffering(SubjectExamOffering $offering, array $settings): ?SubjectExamRoster
+    {
+        return SubjectExamRoster::query()
+            ->with(['subject.department', 'subject.studyLevel', 'department', 'studyLevel'])
+            ->withCount([
+                'eligibleRosterStudents as eligible_students_count',
+                'eligibleRosterStudents as regular_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Regular->value),
+                'eligibleRosterStudents as carry_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Carry->value),
+            ])
+            ->where('college_id', $settings['faculty_id'] ?? $offering->subject?->college_id)
+            ->where('status', 'ready')
+            ->where('subject_id', $offering->subject_id)
+            ->where('academic_year_id', $settings['academic_year_id'] ?? $offering->academic_year_id)
+            ->where('semester_id', $settings['semester_id'] ?? $offering->semester_id)
+            ->when($settings['department_id'] ?? null, fn (Builder $query, int $departmentId): Builder => $query->where('department_id', $departmentId))
+            ->when($settings['study_level_id'] ?? null, fn (Builder $query, int $studyLevelId): Builder => $query->where('study_level_id', $studyLevelId))
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function subjectPayloadFromOffering(SubjectExamOffering $offering): array
+    {
+        $offering->loadMissing(['subject.department', 'subject.studyLevel', 'examStudents']);
+        $studentNumbers = $offering->examStudents
+            ->pluck('student_number')
+            ->filter()
+            ->map(fn ($number): string => (string) $number)
+            ->unique()
+            ->values();
+        $studentCount = $studentNumbers->count();
+        $storeStudentNumbers = $studentCount <= self::STUDENT_NUMBER_METADATA_LIMIT;
+
+        return [
+            'subject' => $offering->subject,
+            'department_id' => $offering->subject?->department_id,
+            'study_level_id' => $offering->subject?->study_level_id,
+            'academic_group_key' => implode('|', [
+                'department:'.($offering->subject?->department_id ?: 'none'),
+                'level:'.($offering->subject?->study_level_id ?: 'none'),
+            ]),
+            'student_count' => $studentCount,
+            'regular_count' => $offering->examStudents->where('student_type', ExamStudentType::Regular->value)->count(),
+            'carry_count' => $offering->examStudents->where('student_type', ExamStudentType::Carry->value)->count(),
+            'student_numbers' => $studentNumbers->all(),
+            'student_numbers_for_metadata' => $storeStudentNumbers ? $studentNumbers->all() : [],
+            'student_numbers_truncated' => ! $storeStudentNumbers,
+            'student_examples' => $offering->examStudents
+                ->take(5)
+                ->map(fn (ExamStudent $student): string => $student->student_number.' - '.$student->full_name)
+                ->values()
+                ->all(),
+            'is_core_subject' => (bool) $offering->subject?->is_core_subject,
+            'preferred_exam_period' => (string) ($offering->subject?->preferred_exam_period ?: ((bool) $offering->subject?->is_core_subject ? 'morning' : 'none')),
+            'core_subject_priority' => (string) ($offering->subject?->core_subject_priority ?: 'preference'),
+        ];
+    }
+
+    /**
      * @param  array<string, int>  $slotLoads
      * @param  array<string, int>  $dayLoads
      * @param  array<string, array<int, array<string, mixed>>>  $academicAssignments
@@ -1029,7 +1463,7 @@ class ExamScheduleGeneratorService
                 'eligible_students_count' => (int) $rosters->sum('eligible_students_count'),
             ]);
 
-            if ($rosters->isEmpty()) {
+            if ($rosters->isEmpty() && ! $this->hasPinnedOfferingsForSettings($settings)) {
                 throw ValidationException::withMessages([
                     'rosters' => 'لا توجد قوائم مواد جاهزة ضمن الكلية والعام والفصل المحددين.',
                 ]);
@@ -1304,6 +1738,7 @@ class ExamScheduleGeneratorService
 
             if ($isBlocked) {
                 $diagnostics['blocked_slots_count']++;
+
                 continue;
             }
 

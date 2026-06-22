@@ -209,7 +209,7 @@ class ExamScheduleGenerator extends Page
 
             Notification::make()
                 ->title('تم توليد مسودة البرنامج')
-                ->body($this->summaryText($draft->summary_json ?? []))
+                ->body('تم توليد مسودة البرنامج الامتحاني، يمكنك مراجعتها وتعديلها قبل الاعتماد. '.$this->summaryText($draft->summary_json ?? []))
                 ->success()
                 ->send();
         } catch (ValidationException $exception) {

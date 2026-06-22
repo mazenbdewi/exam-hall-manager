@@ -90,7 +90,7 @@ class SubjectExamOfferingResource extends Resource
             parent::getEloquentQuery()
                 ->withSameSlotOfferingsCount()
                 ->withCount(['examStudents', 'studentHallAssignments'])
-                ->with(['subject.department', 'subject.college', 'academicYear', 'semester']),
+                ->with(['subject.department', 'subject.college', 'academicYear', 'semester', 'examScheduleDraft', 'examScheduleDraftItem.draft']),
             'subject',
         );
     }

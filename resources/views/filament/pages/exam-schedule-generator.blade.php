@@ -183,6 +183,7 @@
                 <div class="mb-4 rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-900 dark:border-info-500/20 dark:bg-info-500/10 dark:text-info-100">
                     <strong>ملاحظة:</strong>
                     يجب تجهيز قوائم طلاب المواد وتحديدها كجاهزة قبل التوليد. سيستخدم المولد أرقام الطلاب الفعلية لتجنب التعارضات قبل إنشاء البرامج الامتحانية الرسمية.
+                    سيتم الحفاظ على مواعيد المواد المثبتة وتوزيع باقي المواد تلقائيًا.
                 </div>
                 <div class="mb-2 text-sm font-medium text-gray-700 dark:text-gray-200">أيام العطل الأسبوعية</div>
                 <div class="grid gap-2 sm:grid-cols-4">
@@ -325,7 +326,7 @@
 
                 <div class="mt-5 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 dark:border-white/10 dark:bg-white/5 dark:text-gray-200">
                     <div class="font-medium">مصدر الطلاب قبل الجدولة</div>
-                    <p class="mt-1">يعتمد التوليد الآلي على قوائم طلاب المواد الجاهزة فقط، ولا يقرأ طلاب البرامج الامتحانية القديمة أو السابقة.</p>
+                    <p class="mt-1">يعتمد التوليد الآلي على قوائم طلاب المواد الجاهزة، ويحترم مواعيد المواد المثبتة يدويًا في صفحة البرامج الامتحانية.</p>
                 </div>
             </div>
         </div>

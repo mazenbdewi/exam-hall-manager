@@ -11,13 +11,14 @@ use App\Enums\StaffCategory;
 use App\Exports\SubjectExamRosterStudentsTemplateExport;
 use App\Filament\Pages\ComprehensiveStudentDistribution;
 use App\Filament\Pages\ExamScheduleGenerator;
-use App\Filament\Resources\Subjects\Pages\EditSubject;
-use App\Filament\Resources\Subjects\SubjectResource;
+use App\Filament\Resources\SubjectExamOfferings\Pages\ListSubjectExamOfferings;
+use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Filament\Resources\SubjectExamRosters\Pages\EditSubjectExamRoster;
 use App\Filament\Resources\SubjectExamRosters\Pages\ListSubjectExamRosters;
 use App\Filament\Resources\SubjectExamRosters\RelationManagers\RosterStudentsRelationManager;
-use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Filament\Resources\SubjectExamRosters\SubjectExamRosterResource;
+use App\Filament\Resources\Subjects\Pages\EditSubject;
+use App\Filament\Resources\Subjects\SubjectResource;
 use App\Imports\SubjectExamRosterStudentsImport;
 use App\Models\AcademicYear;
 use App\Models\College;
@@ -41,13 +42,13 @@ use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Livewire\Livewire;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Facades\Excel;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
-use Livewire\Livewire;
 
 class AutomaticExamWorkflowEndToEndTest extends TestCase
 {
@@ -156,9 +157,11 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         $approval = app(ExamScheduleGeneratorService::class)->approveDraft($draft);
 
         $this->assertSame('success', $approval['status']);
-        $this->assertSame(8, $approval['created_count']);
+        $this->assertSame(0, $approval['created_count']);
+        $this->assertSame(8, $approval['updated_count']);
         $this->assertSame(0, $approval['skipped_existing_count']);
         $this->assertSame(8, SubjectExamOffering::query()->where('exam_schedule_draft_id', $draft->id)->count());
+        $this->assertSame(0, SubjectExamOffering::query()->where('exam_schedule_draft_id', $draft->id)->where('status', ExamOfferingStatus::Draft->value)->count());
         $this->assertSame(9, ExamStudent::query()->whereHas('subjectExamOffering', fn ($query) => $query->where('exam_schedule_draft_id', $draft->id))->count());
         $this->assertSame(8, SubjectExamRoster::query()->where('status', 'used')->count());
 
@@ -297,6 +300,10 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
             ->assertSee('جاهزية قوائم طلاب المواد')
             ->assertSee('يجب استيراد الطلاب وتحديد القوائم كجاهزة قبل توليد البرنامج.')
             ->assertSee('لم يتم توليد مسودة بعد.');
+
+        Livewire::actingAs($user)
+            ->test(ListSubjectExamOfferings::class)
+            ->assertSee('مسودة البرنامج الامتحاني');
 
         Livewire::actingAs($user)
             ->test(ComprehensiveStudentDistribution::class)

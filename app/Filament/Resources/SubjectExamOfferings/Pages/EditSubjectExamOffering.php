@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\SubjectExamOfferings\Pages;
 
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Services\ExamScheduleGeneratorService;
 use App\Support\ExamCollegeScope;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
@@ -32,10 +33,15 @@ class EditSubjectExamOffering extends EditRecord
     {
         ExamCollegeScope::ensureSubjectBelongsToAccessibleCollege($data['subject_id'] ?? null);
 
+        if ((bool) ($data['is_pinned'] ?? false)) {
+            $offering = $this->getRecord()->fill($data);
+            app(ExamScheduleGeneratorService::class)->ensureOfferingCanBePinned($offering);
+        }
+
         return $data;
     }
 
-    public function getSubheading(): string | Htmlable | null
+    public function getSubheading(): string|Htmlable|null
     {
         return __('exam.helpers.edit_offering_students');
     }

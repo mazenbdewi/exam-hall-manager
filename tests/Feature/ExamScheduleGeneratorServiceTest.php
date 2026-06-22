@@ -19,6 +19,7 @@ use App\Services\ExamScheduleGeneratorService;
 use App\Services\RosterStudentNumberPrefixService;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
@@ -46,6 +47,167 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->assertSame(1, $item->regular_count);
         $this->assertSame(1, $item->carry_count);
         $this->assertSame(['S-001', 'S-002'], $item->metadata['student_numbers']);
+    }
+
+    #[Test]
+    public function generated_draft_is_materialized_as_visible_draft_offerings(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'تحليل مرئي');
+        $this->createRoster($context, $subject, [
+            ['S-001', 'طالب أول', 'regular'],
+        ]);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+        $item = $draft->items()->firstOrFail();
+        $offering = SubjectExamOffering::query()->where('exam_schedule_draft_id', $draft->id)->firstOrFail();
+
+        $this->assertSame($subject->id, $offering->subject_id);
+        $this->assertSame(ExamOfferingStatus::Draft, $offering->status);
+        $this->assertSame($item->exam_date?->toDateString(), $offering->exam_date?->toDateString());
+        $this->assertSame(substr((string) $item->start_time, 0, 8), substr((string) $offering->exam_start_time, 0, 8));
+        $this->assertSame($offering->id, $item->subject_exam_offering_id);
+    }
+
+    #[Test]
+    public function editing_visible_draft_offering_schedule_updates_the_linked_draft_item(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'موعد قابل للتعديل');
+        $this->createRoster($context, $subject, [
+            ['S-001', 'طالب أول', 'regular'],
+        ]);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+        $offering = SubjectExamOffering::query()->where('exam_schedule_draft_id', $draft->id)->firstOrFail();
+
+        app(ExamScheduleGeneratorService::class)->updateOfferingSchedule($offering, [
+            'exam_date' => '2026-05-06',
+            'period_key' => '1',
+        ]);
+
+        $item = $draft->items()->firstOrFail()->refresh();
+        $offering = $offering->refresh();
+
+        $this->assertSame('2026-05-06', $offering->exam_date?->toDateString());
+        $this->assertSame('12:00:00', substr((string) $offering->exam_start_time, 0, 8));
+        $this->assertSame('2026-05-06', $item->exam_date?->toDateString());
+        $this->assertSame('12:00:00', substr((string) $item->start_time, 0, 8));
+        $this->assertSame('14:00:00', substr((string) $item->end_time, 0, 8));
+        $this->assertSame('manually_adjusted', $item->status);
+    }
+
+    #[Test]
+    public function pinned_offering_keeps_its_slot_and_other_subjects_are_scheduled_around_it(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $pinnedSubject = $this->createSubject($context, 'مادة مثبتة');
+        $otherSubject = $this->createSubject($context, 'مادة حول التثبيت');
+        $this->createRoster($context, $pinnedSubject, [['S-001', 'طالب أول', 'regular']]);
+        $this->createRoster($context, $otherSubject, [['S-002', 'طالب ثان', 'regular']]);
+        $pinnedOffering = SubjectExamOffering::query()->create([
+            'subject_id' => $pinnedSubject->id,
+            'academic_year_id' => $context['academic_year']->id,
+            'semester_id' => $context['semester']->id,
+            'exam_date' => '2026-05-03',
+            'exam_start_time' => '09:00:00',
+            'is_pinned' => true,
+            'status' => ExamOfferingStatus::Draft->value,
+        ]);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-03',
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ['name' => 'وسطى', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
+            ],
+        ]));
+
+        $pinnedItem = $draft->items()->where('subject_id', $pinnedSubject->id)->firstOrFail();
+        $otherItem = $draft->items()->where('subject_id', $otherSubject->id)->firstOrFail();
+
+        $this->assertSame($pinnedOffering->id, $pinnedItem->subject_exam_offering_id);
+        $this->assertTrue((bool) ($pinnedItem->metadata['pinned'] ?? false));
+        $this->assertSame('2026-05-03', $pinnedItem->exam_date?->toDateString());
+        $this->assertSame('09:00:00', substr((string) $pinnedItem->start_time, 0, 8));
+        $this->assertSame('12:00:00', substr((string) $otherItem->start_time, 0, 8));
+        $this->assertTrue($pinnedOffering->refresh()->is_pinned);
+    }
+
+    #[Test]
+    public function pinning_conflicting_offerings_is_rejected(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $firstSubject = $this->createSubject($context, 'تثبيت أول');
+        $secondSubject = $this->createSubject($context, 'تثبيت متعارض');
+        $firstOffering = SubjectExamOffering::query()->create([
+            'subject_id' => $firstSubject->id,
+            'academic_year_id' => $context['academic_year']->id,
+            'semester_id' => $context['semester']->id,
+            'exam_date' => '2026-05-03',
+            'exam_start_time' => '09:00:00',
+            'is_pinned' => true,
+            'status' => ExamOfferingStatus::Draft->value,
+        ]);
+        $secondOffering = SubjectExamOffering::query()->create([
+            'subject_id' => $secondSubject->id,
+            'academic_year_id' => $context['academic_year']->id,
+            'semester_id' => $context['semester']->id,
+            'exam_date' => '2026-05-03',
+            'exam_start_time' => '09:00:00',
+            'status' => ExamOfferingStatus::Draft->value,
+        ]);
+
+        $this->assertTrue($firstOffering->is_pinned);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->pinOffering($secondOffering);
+            $this->fail('Expected pinning the conflicting offering to fail.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                'لا يمكن تثبيت هذه المادة في هذا الموعد لوجود تعارض مع مادة مثبتة أخرى.',
+                $exception->errors()['is_pinned'][0] ?? null,
+            );
+        }
+    }
+
+    #[Test]
+    public function unpinned_offering_can_be_rescheduled_by_new_generation(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'إلغاء تثبيت');
+        $this->createRoster($context, $subject, [['S-001', 'طالب أول', 'regular']]);
+        $offering = SubjectExamOffering::query()->create([
+            'subject_id' => $subject->id,
+            'academic_year_id' => $context['academic_year']->id,
+            'semester_id' => $context['semester']->id,
+            'exam_date' => '2026-05-03',
+            'exam_start_time' => '12:00:00',
+            'is_pinned' => true,
+            'status' => ExamOfferingStatus::Draft->value,
+        ]);
+
+        app(ExamScheduleGeneratorService::class)->unpinOffering($offering);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-03',
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ['name' => 'وسطى', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
+            ],
+        ]));
+        $item = $draft->items()->where('subject_id', $subject->id)->firstOrFail();
+
+        $this->assertFalse($offering->refresh()->is_pinned);
+        $this->assertFalse((bool) ($item->metadata['pinned'] ?? false));
+        $this->assertSame('09:00:00', substr((string) $item->start_time, 0, 8));
     }
 
     #[Test]
@@ -501,7 +663,10 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $offering = SubjectExamOffering::query()->where('exam_schedule_draft_id', $draft->id)->firstOrFail();
 
         $this->assertSame('success', $result['status']);
-        $this->assertSame(1, $result['created_count']);
+        $this->assertSame(0, $result['created_count']);
+        $this->assertSame(1, $result['updated_count']);
+        $this->assertSame(ExamOfferingStatus::Ready, $offering->status);
+        $this->assertSame(0, SubjectExamOffering::query()->where('exam_schedule_draft_id', $draft->id)->where('status', ExamOfferingStatus::Draft->value)->count());
         $this->assertSame(2, $offering->examStudents()->count());
         $this->assertSame(1, $offering->carryStudents()->count());
     }

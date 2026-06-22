@@ -30,6 +30,7 @@ class SubjectExamOffering extends Model
         'exam_schedule_draft_id',
         'exam_date',
         'exam_start_time',
+        'is_pinned',
         'notes',
         'status',
     ];
@@ -38,6 +39,7 @@ class SubjectExamOffering extends Model
     {
         return [
             'exam_date' => 'date',
+            'is_pinned' => 'boolean',
             'status' => ExamOfferingStatus::class,
         ];
     }
