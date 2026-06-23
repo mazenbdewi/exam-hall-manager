@@ -22,6 +22,8 @@ use App\Services\ExamScheduleGeneratorService;
 use App\Services\RosterStudentNumberPrefixService;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\Test;
@@ -138,6 +140,105 @@ class ExamScheduleGeneratorServiceTest extends TestCase
 
         $this->assertSame(0, ExamScheduleDraft::query()->count());
         $this->assertSame(0, ExamScheduleDraftItem::query()->count());
+    }
+
+    #[Test]
+    public function successful_generation_logs_before_and_after_draft_validation(): void
+    {
+        Log::spy();
+
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $this->createRoster($context, $this->createSubject($context, 'تحليل سجلات'), [['S-001', 'طالب', 'regular']]);
+
+        app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+
+        Log::shouldHaveReceived('info')
+            ->with('Exam schedule draft generation: before validating draft.', \Mockery::type('array'))
+            ->once();
+
+        Log::shouldHaveReceived('info')
+            ->with('Exam schedule draft generation: after validating draft.', \Mockery::on(
+                fn (array $context): bool => ($context['hard_conflicts_count'] ?? null) === 0
+                    && array_key_exists('duration_ms', $context)
+            ))
+            ->once();
+
+        Log::shouldHaveReceived('info')
+            ->with('Draft validation completed.', \Mockery::type('array'))
+            ->once();
+    }
+
+    #[Test]
+    public function validation_exception_during_generation_is_wrapped_logged_and_rolls_back_draft(): void
+    {
+        Log::spy();
+
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $this->createRoster($context, $this->createSubject($context, 'تحقق يفشل'), [['S-001', 'طالب', 'regular']]);
+
+        app()->instance(ExamScheduleGeneratorService::class, new class extends ExamScheduleGeneratorService
+        {
+            public function validateDraft(ExamScheduleDraft $draft): array
+            {
+                throw new \RuntimeException('Forced validation failure.');
+            }
+        });
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+            $this->fail('Expected validation failure to be wrapped for the UI.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('draft_validation_failed', $exception->reasonCode);
+            $this->assertStringContainsString('فشل التحقق', $exception->userMessage);
+            $this->assertInstanceOf(\RuntimeException::class, $exception->getPrevious());
+        }
+
+        Log::shouldHaveReceived('error')
+            ->with('Exam schedule draft validation failed.', \Mockery::on(
+                fn (array $context): bool => ($context['reason_code'] ?? null) === 'draft_validation_failed'
+                    && ($context['message'] ?? null) === 'Forced validation failure.'
+            ))
+            ->once();
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
+        $this->assertSame(0, SubjectExamOffering::query()->whereNotNull('exam_schedule_draft_id')->count());
+    }
+
+    #[Test]
+    public function validation_preloads_large_roster_student_numbers_without_per_item_queries(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        foreach (range(1, 3) as $subjectIndex) {
+            $students = collect(range(1, 501))
+                ->map(fn (int $studentIndex): array => [
+                    'S'.$subjectIndex.'-'.$studentIndex,
+                    'طالب '.$subjectIndex.'-'.$studentIndex,
+                    'regular',
+                ])
+                ->all();
+
+            $this->createRoster($context, $this->createSubject($context, 'مادة كبيرة '.$subjectIndex), $students);
+        }
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        app(ExamScheduleGeneratorService::class)->validateDraft($draft->refresh());
+
+        $rosterStudentQueries = collect(DB::getQueryLog())
+            ->filter(fn (array $query): bool => str_contains($query['query'] ?? '', 'subject_exam_roster_students'))
+            ->count();
+
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual(1, $rosterStudentQueries);
     }
 
     #[Test]

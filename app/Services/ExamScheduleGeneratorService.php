@@ -10,6 +10,7 @@ use App\Models\ExamScheduleDraftItem;
 use App\Models\ExamStudent;
 use App\Models\SubjectExamOffering;
 use App\Models\SubjectExamRoster;
+use App\Models\SubjectExamRosterStudent;
 use App\Support\ExamCollegeScope;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -220,13 +221,55 @@ class ExamScheduleGeneratorService
                 }
             }
 
+            $itemsCount = $draft->items()->count();
+            $validationStartedAt = microtime(true);
+
             Log::info('Exam schedule draft generation: before validating draft.', [
                 'user_id' => auth()->id(),
                 'draft_id' => $draft->id,
-                'items_count' => $draft->items()->count(),
+                'items_count' => $itemsCount,
             ]);
 
-            $validation = $this->validateDraft($draft->refresh());
+            try {
+                $validation = $this->validateDraft($draft->refresh());
+
+                Log::info('Exam schedule draft generation: after validating draft.', [
+                    'user_id' => auth()->id(),
+                    'draft_id' => $draft->id,
+                    'items_count' => $itemsCount,
+                    'duration_ms' => (int) round((microtime(true) - $validationStartedAt) * 1000),
+                    'hard_conflicts_count' => $validation['hard_conflicts_count'] ?? null,
+                    'warnings_count' => $validation['warnings_count'] ?? null,
+                ]);
+            } catch (\Throwable $exception) {
+                Log::error('Exam schedule draft validation failed.', [
+                    'user_id' => auth()->id(),
+                    'college_id' => $settings['faculty_id'] ?? null,
+                    'academic_year_id' => $settings['academic_year_id'] ?? null,
+                    'semester_id' => $settings['semester_id'] ?? null,
+                    'draft_id' => $draft->id,
+                    'items_count' => $itemsCount,
+                    'reason_code' => 'draft_validation_failed',
+                    'message' => $exception->getMessage(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                    'duration_ms' => (int) round((microtime(true) - $validationStartedAt) * 1000),
+                ]);
+
+                $this->throwGenerationFailure(
+                    reasonCode: 'draft_validation_failed',
+                    settings: $settings,
+                    details: [],
+                    draftId: $draft->id,
+                    technicalDetails: [
+                        'exception_class' => $exception::class,
+                        'message' => $exception->getMessage(),
+                        'file' => $exception->getFile(),
+                        'line' => $exception->getLine(),
+                    ],
+                    previous: $exception,
+                );
+            }
 
             if (($validation['hard_conflicts_count'] ?? 0) > 0) {
                 $this->throwGenerationFailureForValidation($settings, $draft, $validation);
@@ -265,7 +308,27 @@ class ExamScheduleGeneratorService
      */
     public function validateDraft(ExamScheduleDraft $draft): array
     {
+        $startedAt = microtime(true);
+
+        Log::info('Draft validation started.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+        ]);
+
+        Log::info('Draft validation: loading items relations.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+        ]);
+
         $draft->loadMissing(['items.department', 'items.subject.department', 'items.subject.studyLevel', 'college']);
+        $items = $draft->items;
+
+        Log::info('Draft validation: items relations loaded.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'items_count' => $items->count(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
 
         $settings = $this->normalizeSettings($draft->settings_json ?? [], requireExamPeriods: false);
         $settings['faculty_id'] = $draft->faculty_id;
@@ -274,6 +337,22 @@ class ExamScheduleGeneratorService
         $settings['start_date'] = $draft->start_date?->toDateString();
         $settings['end_date'] = $draft->end_date?->toDateString();
 
+        Log::info('Draft validation: preloading student numbers.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'items_count' => $items->count(),
+        ]);
+
+        $studentNumbersByItem = $this->studentNumbersByItemForValidation($items);
+
+        Log::info('Draft validation: student numbers preloaded.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'items_with_students_count' => collect($studentNumbersByItem)->filter(fn (array $numbers): bool => $numbers !== [])->count(),
+            'student_number_links_count' => collect($studentNumbersByItem)->sum(fn (array $numbers): int => count($numbers)),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
         $slotAcademicGroups = [];
         $dayAcademicGroups = [];
         $slotStudents = [];
@@ -281,7 +360,12 @@ class ExamScheduleGeneratorService
         $slotLoads = [];
         $conflicts = [];
 
-        foreach ($draft->items as $item) {
+        Log::info('Draft validation: indexing items by slot, day, academic group, and students.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+        ]);
+
+        foreach ($items as $item) {
             $date = $item->exam_date?->toDateString();
             $time = $this->timeString($item->start_time);
 
@@ -320,7 +404,7 @@ class ExamScheduleGeneratorService
             $dayAcademicGroups[$date][$academicGroupKey][$groupKey][] = $item;
             $slotLoads[$slotKey] = ($slotLoads[$slotKey] ?? 0) + 1;
 
-            foreach ($this->studentNumbersForItem($item) as $studentNumber) {
+            foreach ($studentNumbersByItem[$item->id] ?? [] as $studentNumber) {
                 $slotStudents[$slotKey][$studentNumber][] = $item;
                 $dayStudents[$date][$studentNumber][] = $item;
             }
@@ -339,15 +423,23 @@ class ExamScheduleGeneratorService
             }
         }
 
+        Log::info('Draft validation: checking student conflicts.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'slot_groups_count' => count($slotStudents),
+            'day_groups_count' => count($dayStudents),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
         foreach ($slotStudents as $students) {
             $conflictsByItem = [];
 
-            foreach ($students as $studentNumber => $items) {
-                if (count($items) <= 1) {
+            foreach ($students as $studentNumber => $conflictItems) {
+                if (count($conflictItems) <= 1) {
                     continue;
                 }
 
-                foreach ($items as $item) {
+                foreach ($conflictItems as $item) {
                     $conflictsByItem[$item->id]['item'] = $item;
                     $conflictsByItem[$item->id]['student_numbers'][] = (string) $studentNumber;
                 }
@@ -374,6 +466,13 @@ class ExamScheduleGeneratorService
             }
         }
 
+        Log::info('Draft validation: checking academic conflicts.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'slot_academic_groups_count' => count($slotAcademicGroups),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
         foreach ($slotAcademicGroups as $academicGroups) {
             foreach ($academicGroups as $groupedItems) {
                 if (count($groupedItems) <= 1) {
@@ -387,15 +486,23 @@ class ExamScheduleGeneratorService
         }
 
         if ((bool) ($settings['prevent_same_day'] ?? false)) {
+            Log::info('Draft validation: checking same-day conflicts.', [
+                'user_id' => auth()->id(),
+                'draft_id' => $draft->id,
+                'day_student_groups_count' => count($dayStudents),
+                'day_academic_groups_count' => count($dayAcademicGroups),
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            ]);
+
             foreach ($dayStudents as $students) {
                 $conflictsByItem = [];
 
-                foreach ($students as $studentNumber => $items) {
-                    if (count($items) <= 1) {
+                foreach ($students as $studentNumber => $conflictItems) {
+                    if (count($conflictItems) <= 1) {
                         continue;
                     }
 
-                    foreach ($items as $item) {
+                    foreach ($conflictItems as $item) {
                         $conflictsByItem[$item->id]['item'] = $item;
                         $conflictsByItem[$item->id]['student_numbers'][] = (string) $studentNumber;
                     }
@@ -435,8 +542,14 @@ class ExamScheduleGeneratorService
             }
         }
 
-        foreach ($draft->items->where('is_shared_subject', true)->groupBy('shared_group_key') as $items) {
-            $requiresSeparateDays = $items->contains(
+        Log::info('Draft validation: checking shared subject rules.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
+        foreach ($items->where('is_shared_subject', true)->groupBy('shared_group_key') as $sharedItems) {
+            $requiresSeparateDays = $sharedItems->contains(
                 fn (ExamScheduleDraftItem $item): bool => $item->subject?->shared_subject_scheduling_mode === 'separate_departments',
             );
 
@@ -444,7 +557,7 @@ class ExamScheduleGeneratorService
                 continue;
             }
 
-            foreach ($items->whereNotNull('exam_date')->groupBy(fn (ExamScheduleDraftItem $item): string => $item->exam_date?->toDateString() ?? '') as $sameDateItems) {
+            foreach ($sharedItems->whereNotNull('exam_date')->groupBy(fn (ExamScheduleDraftItem $item): string => $item->exam_date?->toDateString() ?? '') as $sameDateItems) {
                 if ($sameDateItems->count() <= 1) {
                     continue;
                 }
@@ -463,6 +576,13 @@ class ExamScheduleGeneratorService
             }
         }
 
+        Log::info('Draft validation: building summary.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'conflicts_count' => count($conflicts),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
         $hardConflictTypes = ['unscheduled', 'outside_range', 'holiday', 'same_academic_group_time', 'same_student_time', 'core_subject_strict_period'];
 
         if ((bool) ($settings['prevent_same_day'] ?? false)) {
@@ -472,9 +592,9 @@ class ExamScheduleGeneratorService
 
         $hardConflictsCount = collect($conflicts)->whereIn('type', $hardConflictTypes)->count();
         $warningsCount = count($conflicts) - $hardConflictsCount;
-        $scheduledCount = $draft->items->whereIn('status', ['scheduled', 'manually_adjusted', 'conflict'])->whereNotNull('exam_date')->count();
-        $unscheduledCount = $draft->items->count() - $scheduledCount;
-        $usedDays = $draft->items->pluck('exam_date')->filter()->map(fn ($date) => $date->toDateString())->unique()->count();
+        $scheduledCount = $items->whereIn('status', ['scheduled', 'manually_adjusted', 'conflict'])->whereNotNull('exam_date')->count();
+        $unscheduledCount = $items->count() - $scheduledCount;
+        $usedDays = $items->pluck('exam_date')->filter()->map(fn ($date) => $date->toDateString())->unique()->count();
         $busiestDay = collect($slotLoads)
             ->mapToGroups(fn (int $count, string $slot): array => [explode('|', $slot)[0] => $count])
             ->map(fn (Collection $counts): int => $counts->sum())
@@ -484,7 +604,7 @@ class ExamScheduleGeneratorService
 
         $summary = [
             'status' => $hardConflictsCount > 0 ? 'failed' : ($warningsCount > 0 ? 'warning' : 'success'),
-            'subjects_count' => $draft->items->count(),
+            'subjects_count' => $items->count(),
             'scheduled_subjects_count' => $scheduledCount,
             'unscheduled_subjects_count' => $unscheduledCount,
             'conflicts_count' => $hardConflictsCount,
@@ -495,10 +615,19 @@ class ExamScheduleGeneratorService
             'core_subject_notes_count' => collect($conflicts)->whereIn('type', ['core_subject_not_preferred_period', 'core_subject_strict_period'])->count(),
         ];
 
+        Log::info('Draft validation completed.', [
+            'user_id' => auth()->id(),
+            'draft_id' => $draft->id,
+            'items_count' => $items->count(),
+            'hard_conflicts_count' => $hardConflictsCount,
+            'warnings_count' => $warningsCount,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
         return [
             'summary' => $summary,
             'conflicts' => $conflicts,
-            'unscheduled_items' => $draft->items
+            'unscheduled_items' => $items
                 ->filter(fn (ExamScheduleDraftItem $item): bool => $item->status === 'unscheduled' || blank($item->exam_date) || blank($item->start_time))
                 ->map(fn (ExamScheduleDraftItem $item): array => $this->unscheduledItemSummary($item))
                 ->values()
@@ -2270,6 +2399,7 @@ class ExamScheduleGeneratorService
         array $details = [],
         ?int $draftId = null,
         array $technicalDetails = [],
+        ?\Throwable $previous = null,
     ): never {
         $message = $this->generationFailureUserMessage($reasonCode);
         $logContext = [
@@ -2292,6 +2422,7 @@ class ExamScheduleGeneratorService
             details: $details,
             logContext: $logContext,
             technicalMessage: 'Exam schedule generation failed: '.$reasonCode,
+            previous: $previous,
         );
     }
 
@@ -2303,6 +2434,7 @@ class ExamScheduleGeneratorService
             'pinned_conflict' => 'توجد مادة مثبتة تتعارض مع مادة أخرى في نفس الموعد.',
             'missing_exam_periods' => 'لا توجد فترات امتحانية معرفة في الإعدادات.',
             'missing_exam_days' => 'لا توجد أيام امتحانية متاحة للتوليد.',
+            'draft_validation_failed' => 'تم توليد المسودة مبدئيًا، لكن فشل التحقق من صحتها. لم يتم حفظ أي مسودة ناقصة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم الفني.',
             'student_conflict', 'same_student_time', 'same_student_day' => 'تعذر توليد البرنامج الامتحاني لأن بعض الطلاب لديهم تعارض في جميع المواعيد المتاحة.',
             'academic_group_conflict', 'same_academic_group_time', 'same_academic_group_day' => 'تعذر توليد البرنامج الامتحاني بسبب تعارض مواد من نفس القسم أو السنة في المواعيد المتاحة.',
             'preferred_period_constraint', 'core_subject_strict_period' => 'تعذر توليد البرنامج الامتحاني لأن بعض المواد مقيدة بفترة محددة ولا توجد فترة مناسبة لها.',
@@ -2628,6 +2760,73 @@ class ExamScheduleGeneratorService
             1 => 'mid_day',
             default => 'evening',
         };
+    }
+
+    /**
+     * @return array<int, array<int, string>>
+     */
+    protected function studentNumbersByItemForValidation(Collection $items): array
+    {
+        $numbersByItemId = [];
+        $fallbackRosterIdsByItemId = [];
+
+        foreach ($items as $item) {
+            if (! $item instanceof ExamScheduleDraftItem) {
+                continue;
+            }
+
+            $metadata = $item->metadata ?? [];
+            $metadataNumbers = collect($metadata['student_numbers'] ?? [])
+                ->filter()
+                ->map(fn ($number): string => (string) $number)
+                ->unique()
+                ->values()
+                ->all();
+
+            if ($metadataNumbers !== [] && ! (bool) ($metadata['student_numbers_truncated'] ?? false)) {
+                $numbersByItemId[$item->id] = $metadataNumbers;
+
+                continue;
+            }
+
+            if (! $item->source_roster_id) {
+                $numbersByItemId[$item->id] = $metadataNumbers;
+
+                continue;
+            }
+
+            $fallbackRosterIdsByItemId[$item->id] = (int) $item->source_roster_id;
+        }
+
+        if ($fallbackRosterIdsByItemId === []) {
+            return $numbersByItemId;
+        }
+
+        $numbersByRosterId = [];
+
+        SubjectExamRosterStudent::query()
+            ->whereIn('subject_exam_roster_id', array_values(array_unique($fallbackRosterIdsByItemId)))
+            ->where('is_eligible', true)
+            ->orderBy('subject_exam_roster_id')
+            ->orderBy('student_number')
+            ->get(['subject_exam_roster_id', 'student_number'])
+            ->each(function (SubjectExamRosterStudent $student) use (&$numbersByRosterId): void {
+                if (blank($student->student_number)) {
+                    return;
+                }
+
+                $numbersByRosterId[(int) $student->subject_exam_roster_id][] = (string) $student->student_number;
+            });
+
+        foreach ($numbersByRosterId as $rosterId => $numbers) {
+            $numbersByRosterId[$rosterId] = array_values(array_unique($numbers));
+        }
+
+        foreach ($fallbackRosterIdsByItemId as $itemId => $rosterId) {
+            $numbersByItemId[$itemId] = $numbersByRosterId[$rosterId] ?? [];
+        }
+
+        return $numbersByItemId;
     }
 
     /**

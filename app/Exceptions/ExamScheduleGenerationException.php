@@ -17,7 +17,8 @@ class ExamScheduleGenerationException extends RuntimeException
         public readonly array $details = [],
         public readonly array $logContext = [],
         ?string $technicalMessage = null,
+        ?\Throwable $previous = null,
     ) {
-        parent::__construct($technicalMessage ?: $userMessage);
+        parent::__construct($technicalMessage ?: $userMessage, 0, $previous);
     }
 }
