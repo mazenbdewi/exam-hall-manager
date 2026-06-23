@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use App\Exceptions\ExamScheduleGenerationException;
 use App\Filament\Pages\ExamScheduleGenerator;
 use App\Models\AcademicYear;
 use App\Models\College;
@@ -68,6 +69,75 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->assertSame(0, ExamScheduleDraft::query()->count());
         $this->assertSame(0, ExamScheduleDraftItem::query()->count());
         $this->assertSame(0, SubjectExamOffering::query()->whereNotNull('exam_schedule_draft_id')->count());
+    }
+
+    #[Test]
+    public function generation_failure_for_subject_without_students_has_actionable_details_and_no_draft(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'آلات خاصة');
+        $roster = $this->createRoster($context, $subject, []);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+            $this->fail('Expected generation to fail for a subject roster without students.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('missing_student_data', $exception->reasonCode);
+            $this->assertStringContainsString('بدون طلاب', $exception->userMessage);
+            $this->assertSame('آلات خاصة', $exception->details[0]['subject']);
+            $this->assertSame($context['college']->name, $exception->details[0]['college']);
+            $this->assertSame($context['department']->name, $exception->details[0]['department']);
+            $this->assertSame($roster->id, $exception->details[0]['roster_id']);
+        }
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
+        $this->assertSame(0, SubjectExamOffering::query()->whereNotNull('exam_schedule_draft_id')->count());
+    }
+
+    #[Test]
+    public function generation_failure_for_missing_exam_periods_has_clear_reason_and_no_draft(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $this->createRoster($context, $this->createSubject($context, 'تحليل'), [['S-001', 'طالب', 'regular']]);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'periods' => [],
+            ]));
+            $this->fail('Expected generation to fail without exam periods.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('missing_exam_periods', $exception->reasonCode);
+            $this->assertStringContainsString('لا توجد فترات امتحانية', $exception->userMessage);
+        }
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
+    }
+
+    #[Test]
+    public function generation_failure_for_missing_exam_days_has_clear_reason_and_no_draft(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $this->createRoster($context, $this->createSubject($context, 'فيزياء'), [['S-001', 'طالب', 'regular']]);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'excluded_weekdays' => [0],
+            ]));
+            $this->fail('Expected generation to fail without available exam days.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('missing_exam_days', $exception->reasonCode);
+            $this->assertStringContainsString('لا توجد أيام امتحانية', $exception->userMessage);
+        }
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
     }
 
     #[Test]
@@ -295,31 +365,23 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->createRoster($context, $this->createSubject($context, 'تحليل 1'), [['S-001', 'طالب مشترك', 'regular']]);
         $this->createRoster($context, $this->createSubject($context, 'فيزياء 1'), [['S-001', 'طالب مشترك', 'carry']]);
 
-        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'start_date' => '2026-05-03',
-            'end_date' => '2026-05-03',
-            'periods' => [
-                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
-            ],
-        ]));
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ],
+            ]));
+            $this->fail('Expected generation to fail because the student has two exams in the only available slot.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('student_conflict', $exception->reasonCode);
+            $this->assertStringContainsString('تعارض', $exception->userMessage);
+            $this->assertSame(['S-001'], $exception->details[0]['conflicting_student_numbers']);
+        }
 
-        $this->assertSame(1, $draft->items()->where('status', 'unscheduled')->count());
-
-        $unscheduledItem = $draft->items()->where('status', 'unscheduled')->firstOrFail();
-        $this->assertSame('student_conflict', $unscheduledItem->metadata['unscheduled_reason_code']);
-        $this->assertStringContainsString('تعذر إيجاد موعد لا يسبب تعارضاً للطلاب', $unscheduledItem->metadata['unscheduled_reason']);
-        $this->assertSame(1, $unscheduledItem->metadata['attempted_slots_count']);
-        $this->assertSame(1, $unscheduledItem->metadata['student_conflict_slots_count']);
-        $this->assertSame(['S-001'], $unscheduledItem->metadata['sample_conflicting_student_numbers']);
-        $this->assertStringContainsString('S-001', $unscheduledItem->conflict_notes);
-
-        $validation = app(ExamScheduleGeneratorService::class)->validateDraft($draft->refresh());
-        $unscheduledConflict = collect($validation['conflicts'])->firstWhere('type', 'unscheduled');
-        $this->assertNotNull($unscheduledConflict);
-        $this->assertSame(['S-001'], $unscheduledConflict['conflicting_student_numbers']);
-        $this->assertStringContainsString('عدد الفترات المجربة: 1', $unscheduledConflict['details']);
-        $this->assertSame(1, count($validation['unscheduled_items']));
-        $this->assertSame('student_conflict', $validation['unscheduled_items'][0]['reason_code']);
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
     }
 
     #[Test]
@@ -522,17 +584,23 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->createRoster($context, $this->createSubject($context, 'تحليل 2'), [['S-001', 'طالب مشترك', 'regular']]);
         $this->createRoster($context, $this->createSubject($context, 'فيزياء 2'), [['S-001', 'طالب مشترك', 'carry']]);
 
-        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'start_date' => '2026-05-03',
-            'end_date' => '2026-05-03',
-            'prevent_same_day' => true,
-            'periods' => [
-                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
-                ['name' => 'وسطى', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
-            ],
-        ]));
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'prevent_same_day' => true,
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                    ['name' => 'وسطى', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
+                ],
+            ]));
+            $this->fail('Expected generation to fail because same-day exams are prevented.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('student_conflict', $exception->reasonCode);
+        }
 
-        $this->assertSame(1, $draft->items()->where('status', 'unscheduled')->count());
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
     }
 
     #[Test]
@@ -546,15 +614,21 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->createRoster($context, $regular, [['S-777', 'طالب حملة', 'regular']]);
         $this->createRoster($context, $carry, [['S-777', 'طالب حملة', 'carry']], ['study_level_id' => $secondLevel->id]);
 
-        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'start_date' => '2026-05-03',
-            'end_date' => '2026-05-03',
-            'periods' => [
-                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
-            ],
-        ]));
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ],
+            ]));
+            $this->fail('Expected generation to fail because the carry student has two exams in the only available slot.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('student_conflict', $exception->reasonCode);
+        }
 
-        $this->assertSame(1, $draft->items()->where('status', 'unscheduled')->count());
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
     }
 
     #[Test]
@@ -590,13 +664,19 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         ]);
         $this->createRoster($context, $subject, [['S-001', 'طالب', 'regular']]);
 
-        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'periods' => [
-                ['name' => 'مسائية', 'start_time' => '15:00', 'end_time' => '17:00', 'period_type' => 'evening'],
-            ],
-        ]));
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'periods' => [
+                    ['name' => 'مسائية', 'start_time' => '15:00', 'end_time' => '17:00', 'period_type' => 'evening'],
+                ],
+            ]));
+            $this->fail('Expected strict core subject generation to fail without a matching period.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('preferred_period_constraint', $exception->reasonCode);
+        }
 
-        $this->assertSame('unscheduled', $draft->items()->firstOrFail()->status);
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, ExamScheduleDraftItem::query()->count());
     }
 
     #[Test]

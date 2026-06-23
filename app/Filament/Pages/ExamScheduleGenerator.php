@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Exceptions\ExamScheduleGenerationException;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\AcademicYear;
@@ -212,9 +213,27 @@ class ExamScheduleGenerator extends Page
                 ->body('تم توليد مسودة البرنامج الامتحاني، يمكنك مراجعتها وتعديلها قبل الاعتماد. '.$this->summaryText($draft->summary_json ?? []))
                 ->success()
                 ->send();
+        } catch (ExamScheduleGenerationException $exception) {
+            Log::warning('Exam schedule draft generation failed with a user-facing reason.', $exception->logContext + [
+                'exception_message' => $exception->getMessage(),
+            ]);
+
+            $this->refreshDraftState();
+
+            Notification::make()
+                ->title($exception->userTitle)
+                ->body($this->generationFailureNotificationBody($exception))
+                ->danger()
+                ->persistent()
+                ->send();
         } catch (ValidationException $exception) {
             Log::warning('Exam schedule draft generation validation failed.', [
                 'user_id' => auth()->id(),
+                'college_id' => $this->college_id,
+                'academic_year_id' => $this->academic_year_id,
+                'semester_id' => $this->semester_id,
+                'draft_id' => $this->draft_id,
+                'reason_code' => 'validation_error',
                 'errors' => $exception->errors(),
                 'message' => $exception->getMessage(),
                 'file' => $exception->getFile(),
@@ -230,6 +249,11 @@ class ExamScheduleGenerator extends Page
         } catch (\Throwable $exception) {
             Log::error('Exam schedule draft generation failed.', [
                 'user_id' => auth()->id(),
+                'college_id' => $this->college_id,
+                'academic_year_id' => $this->academic_year_id,
+                'semester_id' => $this->semester_id,
+                'draft_id' => $this->draft_id,
+                'reason_code' => 'unexpected_error',
                 'message' => $exception->getMessage(),
                 'file' => $exception->getFile(),
                 'line' => $exception->getLine(),
@@ -238,7 +262,7 @@ class ExamScheduleGenerator extends Page
 
             Notification::make()
                 ->title('فشل توليد المسودة')
-                ->body('حدث خطأ غير متوقع أثناء توليد مسودة البرنامج. تم تسجيل التفاصيل في سجل النظام للمراجعة.')
+                ->body('حدث خطأ غير متوقع أثناء توليد البرنامج الامتحاني. لم يتم حفظ أي مسودة ناقصة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم الفني.')
                 ->danger()
                 ->persistent()
                 ->send();
@@ -1106,6 +1130,55 @@ class ExamScheduleGenerator extends Page
             'التعارضات: '.($summary['conflicts_count'] ?? 0),
             'التحذيرات: '.($summary['warnings_count'] ?? 0),
         ])->implode(' | ');
+    }
+
+    protected function generationFailureNotificationBody(ExamScheduleGenerationException $exception): string
+    {
+        $details = collect($exception->details)
+            ->take(5)
+            ->map(fn (array $detail): string => $this->generationFailureDetailLine($exception->reasonCode, $detail))
+            ->filter()
+            ->values();
+
+        if ($details->isEmpty()) {
+            return $exception->userMessage;
+        }
+
+        return collect([$exception->userMessage])
+            ->merge($details)
+            ->implode("\n");
+    }
+
+    protected function generationFailureDetailLine(string $reasonCode, array $detail): string
+    {
+        $subject = $detail['subject'] ?? null;
+        $college = $detail['college'] ?? null;
+        $department = $detail['department'] ?? null;
+        $rosterId = $detail['roster_id'] ?? null;
+        $rosterName = $detail['roster_name'] ?? null;
+        $rosterLabel = filled($rosterName) ? $rosterName : (filled($rosterId) ? 'رقم '.$rosterId : null);
+
+        if ($reasonCode === 'pinned_conflict') {
+            $first = $detail['first_subject'] ?? $subject;
+            $second = $detail['second_subject'] ?? null;
+            $date = $detail['date'] ?? null;
+            $time = $detail['time'] ?? null;
+
+            return collect([
+                filled($first) && filled($second) ? "المادتان: {$first} و {$second}" : (filled($first) ? "المادة: {$first}" : null),
+                filled($date) ? "التاريخ: {$date}" : null,
+                filled($time) ? "الوقت: {$time}" : null,
+                'راجِع المواد المثبتة وعدّل موعد إحدى المواد.',
+            ])->filter()->implode(' — ');
+        }
+
+        return collect([
+            filled($subject) ? "المادة: {$subject}" : null,
+            filled($college) ? "الكلية: {$college}" : null,
+            filled($department) ? "القسم: {$department}" : null,
+            filled($rosterLabel) ? "القائمة: {$rosterLabel}" : null,
+            $reasonCode === 'missing_student_data' ? 'لا تحتوي على طلاب، لذلك لا يمكن إدخالها في البرنامج الامتحاني.' : null,
+        ])->filter()->implode(' — ');
     }
 
     protected function validationExceptionMessage(ValidationException $exception): string

@@ -8,6 +8,7 @@ use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
 use App\Enums\InvigilationRole;
 use App\Enums\StaffCategory;
+use App\Exceptions\ExamScheduleGenerationException;
 use App\Exports\SubjectExamRosterStudentsTemplateExport;
 use App\Filament\Pages\ComprehensiveStudentDistribution;
 use App\Filament\Pages\ExamScheduleGenerator;
@@ -24,6 +25,7 @@ use App\Models\AcademicYear;
 use App\Models\College;
 use App\Models\Department;
 use App\Models\ExamHall;
+use App\Models\ExamScheduleDraft;
 use App\Models\ExamStudent;
 use App\Models\Invigilator;
 use App\Models\InvigilatorHallRequirement;
@@ -235,30 +237,46 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         $sameTimeB = $this->createSubject($context, 'تعارض وقت 2');
         $this->createRoster($context, $sameTimeA, [['SAME-1', 'طالب متعارض', 'regular']]);
         $this->createRoster($context, $sameTimeB, [['SAME-1', 'طالب متعارض', 'carry']]);
-        $sameTimeDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'start_date' => '2026-05-03',
-            'end_date' => '2026-05-03',
-            'periods' => [
-                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
-            ],
-        ]));
-        $this->assertSame(1, $sameTimeDraft->items()->where('status', 'unscheduled')->count());
+        $draftsBeforeFailure = ExamScheduleDraft::query()->count();
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ],
+            ]));
+            $this->fail('Expected same-time student conflict to stop generation.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('student_conflict', $exception->reasonCode);
+        }
+
+        $this->assertSame($draftsBeforeFailure, ExamScheduleDraft::query()->count());
 
         SubjectExamRoster::query()->delete();
         $sameDayA = $this->createSubject($context, 'تعارض يوم 1');
         $sameDayB = $this->createSubject($context, 'تعارض يوم 2');
         $this->createRoster($context, $sameDayA, [['SAME-DAY', 'طالب نفس اليوم', 'regular']]);
         $this->createRoster($context, $sameDayB, [['SAME-DAY', 'طالب نفس اليوم', 'carry']]);
-        $sameDayDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'start_date' => '2026-05-03',
-            'end_date' => '2026-05-03',
-            'prevent_same_day' => true,
-            'periods' => [
-                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
-                ['name' => 'وسطى', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
-            ],
-        ]));
-        $this->assertSame(1, $sameDayDraft->items()->where('status', 'unscheduled')->count());
+        $draftsBeforeFailure = ExamScheduleDraft::query()->count();
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'prevent_same_day' => true,
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                    ['name' => 'وسطى', 'start_time' => '12:00', 'end_time' => '14:00', 'period_type' => 'mid_day'],
+                ],
+            ]));
+            $this->fail('Expected same-day student conflict to stop generation.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('student_conflict', $exception->reasonCode);
+        }
+
+        $this->assertSame($draftsBeforeFailure, ExamScheduleDraft::query()->count());
 
         SubjectExamRoster::query()->delete();
         $secondLevel = StudyLevel::query()->create(['name' => 'السنة الرابعة', 'is_active' => true]);
@@ -266,14 +284,22 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         $carryB = $this->createSubject($context, 'تعارض حملة 2', ['study_level_id' => $secondLevel->id]);
         $this->createRoster($context, $carryA, [['CARRY-1', 'طالب حملة', 'regular']]);
         $this->createRoster($context, $carryB, [['CARRY-1', 'طالب حملة', 'carry']], ['study_level_id' => $secondLevel->id]);
-        $carryDraft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
-            'start_date' => '2026-05-03',
-            'end_date' => '2026-05-03',
-            'periods' => [
-                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
-            ],
-        ]));
-        $this->assertSame(1, $carryDraft->items()->where('status', 'unscheduled')->count());
+        $draftsBeforeFailure = ExamScheduleDraft::query()->count();
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ],
+            ]));
+            $this->fail('Expected carry student conflict to stop generation.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('student_conflict', $exception->reasonCode);
+        }
+
+        $this->assertSame($draftsBeforeFailure, ExamScheduleDraft::query()->count());
     }
 
     #[Test]

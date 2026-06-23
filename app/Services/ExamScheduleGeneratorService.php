@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use App\Exceptions\ExamScheduleGenerationException;
 use App\Models\ExamScheduleDraft;
 use App\Models\ExamScheduleDraftItem;
 use App\Models\ExamStudent;
@@ -50,6 +51,21 @@ class ExamScheduleGeneratorService
             ]);
         }
 
+        if ($this->availableExamDays($settings) === []) {
+            $this->throwGenerationFailure(
+                reasonCode: 'missing_exam_days',
+                settings: $settings,
+                details: [],
+                draftId: null,
+                technicalDetails: [
+                    'start_date' => $settings['start_date'],
+                    'end_date' => $settings['end_date'],
+                    'excluded_weekdays' => $settings['excluded_weekdays'],
+                    'holidays' => $settings['holidays'],
+                ],
+            );
+        }
+
         $slots = $this->availableSlots($settings);
         Log::info('Exam schedule draft generation: available slots built.', [
             'user_id' => auth()->id(),
@@ -67,6 +83,7 @@ class ExamScheduleGeneratorService
         ]);
 
         $units = $this->buildSchedulingUnits($settings);
+        $this->ensureUnitsHaveStudents($units, $settings);
         Log::info('Exam schedule draft generation: scheduling units built.', [
             'user_id' => auth()->id(),
             'college_id' => $collegeId,
@@ -122,6 +139,7 @@ class ExamScheduleGeneratorService
                     studentAssignments: $studentAssignments,
                 ),
             )));
+            $this->ensurePinnedItemsDoNotConflict($draft, $settings);
             $this->deleteReplaceableDraftsForScope($settings, $draft->id);
             $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
 
@@ -148,9 +166,7 @@ class ExamScheduleGeneratorService
                         'diagnostics' => $choiceResult['diagnostics'] ?? [],
                     ]);
 
-                    $this->createUnscheduledItems($draft, $unit, $choiceResult);
-
-                    continue;
+                    $this->throwGenerationFailureForUnit($settings, $draft, $unit, $choiceResult);
                 }
 
                 foreach ($unit['subjects'] as $subjectPayload) {
@@ -211,6 +227,11 @@ class ExamScheduleGeneratorService
             ]);
 
             $validation = $this->validateDraft($draft->refresh());
+
+            if (($validation['hard_conflicts_count'] ?? 0) > 0) {
+                $this->throwGenerationFailureForValidation($settings, $draft, $validation);
+            }
+
             $this->syncValidationToDraft($draft, $validation);
             Log::info('Exam schedule draft generation: validation synced to draft.', [
                 'user_id' => auth()->id(),
@@ -246,7 +267,7 @@ class ExamScheduleGeneratorService
     {
         $draft->loadMissing(['items.department', 'items.subject.department', 'items.subject.studyLevel', 'college']);
 
-        $settings = $this->normalizeSettings($draft->settings_json ?? []);
+        $settings = $this->normalizeSettings($draft->settings_json ?? [], requireExamPeriods: false);
         $settings['faculty_id'] = $draft->faculty_id;
         $settings['academic_year_id'] = $draft->academic_year_id;
         $settings['semester_id'] = $draft->semester_id;
@@ -494,7 +515,7 @@ class ExamScheduleGeneratorService
     {
         $draft->loadMissing(['items.department', 'items.subject.department']);
 
-        $settings = $this->normalizeSettings($draft->settings_json ?? []);
+        $settings = $this->normalizeSettings($draft->settings_json ?? [], requireExamPeriods: false);
         $settings['faculty_id'] = $draft->faculty_id;
         $settings['academic_year_id'] = $draft->academic_year_id;
         $settings['semester_id'] = $draft->semester_id;
@@ -949,7 +970,7 @@ class ExamScheduleGeneratorService
      * @param  array<string, mixed>  $settings
      * @return array<string, mixed>
      */
-    protected function normalizeSettings(array $settings): array
+    protected function normalizeSettings(array $settings, bool $requireExamPeriods = true): array
     {
         $periods = collect($settings['periods'] ?? [])
             ->filter(fn (array $period): bool => filled($period['start_time'] ?? null) && filled($period['end_time'] ?? null))
@@ -964,9 +985,16 @@ class ExamScheduleGeneratorService
             ->all();
 
         if ($periods === []) {
-            $periods = [
-                ['key' => '0', 'name' => 'الفترة الأولى', 'start_time' => '09:00:00', 'end_time' => '11:00:00', 'period_type' => 'morning'],
-            ];
+            if (! $requireExamPeriods) {
+                $periods = [
+                    ['key' => '0', 'name' => 'الفترة الأولى', 'start_time' => '09:00:00', 'end_time' => '11:00:00', 'period_type' => 'morning'],
+                ];
+            } else {
+                $this->throwGenerationFailure(
+                    reasonCode: 'missing_exam_periods',
+                    settings: $settings,
+                );
+            }
         }
 
         $this->validatePeriods($periods);
@@ -1100,25 +1128,34 @@ class ExamScheduleGeneratorService
     {
         $slots = [];
 
-        foreach (CarbonPeriod::create($settings['start_date'], $settings['end_date']) as $date) {
-            if ($this->isExcludedDate($date, $settings)) {
-                continue;
-            }
-
+        foreach ($this->availableExamDays($settings) as $date) {
             foreach ($settings['periods'] as $period) {
                 $slots[] = [
-                    'key' => $date->toDateString().'|'.$period['start_time'],
-                    'date' => $date->toDateString(),
+                    'key' => $date.'|'.$period['start_time'],
+                    'date' => $date,
                     'start_time' => $period['start_time'],
                     'end_time' => $period['end_time'],
                     'period_type' => $period['period_type'],
                     'period_name' => $period['name'],
-                    'date_time' => Carbon::parse($date->toDateString().' '.$period['start_time']),
+                    'date_time' => Carbon::parse($date.' '.$period['start_time']),
                 ];
             }
         }
 
         return $slots;
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array<int, string>
+     */
+    protected function availableExamDays(array $settings): array
+    {
+        return collect(CarbonPeriod::create($settings['start_date'], $settings['end_date']))
+            ->reject(fn (CarbonInterface $date): bool => $this->isExcludedDate($date, $settings))
+            ->map(fn (CarbonInterface $date): string => $date->toDateString())
+            ->values()
+            ->all();
     }
 
     /**
@@ -1298,7 +1335,7 @@ class ExamScheduleGeneratorService
     protected function pinnedOfferingsForSettings(array $settings): Builder
     {
         return SubjectExamOffering::query()
-            ->with(['subject.department', 'subject.studyLevel', 'examStudents'])
+            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'examStudents'])
             ->where('is_pinned', true)
             ->where('academic_year_id', $settings['academic_year_id'])
             ->where('semester_id', $settings['semester_id'])
@@ -1316,7 +1353,7 @@ class ExamScheduleGeneratorService
     protected function matchingReadyRosterForOffering(SubjectExamOffering $offering, array $settings): ?SubjectExamRoster
     {
         return SubjectExamRoster::query()
-            ->with(['subject.department', 'subject.studyLevel', 'department', 'studyLevel'])
+            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'college', 'department', 'studyLevel'])
             ->withCount([
                 'eligibleRosterStudents as eligible_students_count',
                 'eligibleRosterStudents as regular_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Regular->value),
@@ -1338,7 +1375,7 @@ class ExamScheduleGeneratorService
      */
     protected function subjectPayloadFromOffering(SubjectExamOffering $offering): array
     {
-        $offering->loadMissing(['subject.department', 'subject.studyLevel', 'examStudents']);
+        $offering->loadMissing(['subject.college', 'subject.department', 'subject.studyLevel', 'examStudents']);
         $studentNumbers = $offering->examStudents
             ->pluck('student_number')
             ->filter()
@@ -1444,6 +1481,94 @@ class ExamScheduleGeneratorService
     }
 
     /**
+     * @param  Collection<int, array<string, mixed>>  $units
+     */
+    protected function ensureUnitsHaveStudents(Collection $units, array $settings): void
+    {
+        $emptySubjects = $units
+            ->flatMap(fn (array $unit): array => $unit['subjects'] ?? [])
+            ->filter(fn (array $payload): bool => (int) ($payload['student_count'] ?? 0) <= 0)
+            ->map(fn (array $payload): array => $this->subjectFailureDetailFromPayload($payload))
+            ->values()
+            ->all();
+
+        if ($emptySubjects === []) {
+            return;
+        }
+
+        $this->throwGenerationFailure(
+            reasonCode: 'missing_student_data',
+            settings: $settings,
+            details: $emptySubjects,
+            technicalDetails: ['empty_subjects_count' => count($emptySubjects)],
+        );
+    }
+
+    protected function ensurePinnedItemsDoNotConflict(ExamScheduleDraft $draft, array $settings): void
+    {
+        $items = $draft->items()
+            ->with(['subject.college', 'subject.department', 'department'])
+            ->get()
+            ->filter(fn (ExamScheduleDraftItem $item): bool => (bool) (($item->metadata ?? [])['pinned'] ?? false))
+            ->values();
+
+        $conflicts = [];
+
+        for ($firstIndex = 0; $firstIndex < $items->count(); $firstIndex++) {
+            for ($secondIndex = $firstIndex + 1; $secondIndex < $items->count(); $secondIndex++) {
+                /** @var ExamScheduleDraftItem $first */
+                $first = $items->get($firstIndex);
+                /** @var ExamScheduleDraftItem $second */
+                $second = $items->get($secondIndex);
+
+                $firstDate = $first->exam_date?->toDateString();
+                $secondDate = $second->exam_date?->toDateString();
+                $firstTime = $this->timeString($first->start_time);
+                $secondTime = $this->timeString($second->start_time);
+
+                if (blank($firstDate) || blank($firstTime) || $firstDate !== $secondDate || $firstTime !== $secondTime) {
+                    continue;
+                }
+
+                $sameAcademicGroup = $this->academicGroupKeyForItem($first) === $this->academicGroupKeyForItem($second);
+                $sharedStudents = array_values(array_intersect(
+                    $this->studentNumbersForItem($first),
+                    $this->studentNumbersForItem($second),
+                ));
+
+                if (! $sameAcademicGroup && $sharedStudents === []) {
+                    continue;
+                }
+
+                $conflicts[] = [
+                    'first_subject' => $first->subject?->name,
+                    'second_subject' => $second->subject?->name,
+                    'subject' => $first->subject?->name,
+                    'college' => $first->subject?->college?->name,
+                    'department' => $first->department?->name ?? $first->subject?->department?->name,
+                    'date' => $firstDate,
+                    'time' => substr((string) $firstTime, 0, 5),
+                    'reason' => $sameAcademicGroup ? 'same_academic_group_time' : 'same_student_time',
+                    'conflicting_student_numbers' => $this->mergeLimitedStudentNumbers([], $sharedStudents, 20),
+                    'conflicting_student_numbers_count' => count($sharedStudents),
+                ];
+            }
+        }
+
+        if ($conflicts === []) {
+            return;
+        }
+
+        $this->throwGenerationFailure(
+            reasonCode: 'pinned_conflict',
+            settings: $settings,
+            details: $conflicts,
+            draftId: $draft->id,
+            technicalDetails: ['conflicts' => $conflicts],
+        );
+    }
+
+    /**
      * @param  array<string, mixed>  $settings
      * @return Collection<int, array<string, mixed>>
      */
@@ -1465,7 +1590,7 @@ class ExamScheduleGeneratorService
             ]);
 
             $rosters = SubjectExamRoster::query()
-                ->with(['subject.department', 'subject.studyLevel', 'department', 'studyLevel'])
+                ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'college', 'department', 'studyLevel'])
                 ->withCount([
                     'eligibleRosterStudents as eligible_students_count',
                     'eligibleRosterStudents as regular_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Regular->value),
@@ -2081,6 +2206,131 @@ class ExamScheduleGeneratorService
                 ],
             ]);
         }
+    }
+
+    protected function throwGenerationFailureForUnit(array $settings, ExamScheduleDraft $draft, array $unit, array $choiceResult): never
+    {
+        $reasonCode = (string) ($choiceResult['failure_reason_code'] ?? 'unknown');
+        $details = collect($unit['subjects'] ?? [])
+            ->map(function (array $payload) use ($choiceResult, $reasonCode): array {
+                return $this->subjectFailureDetailFromPayload($payload) + [
+                    'reason_code' => $reasonCode,
+                    'attempted_slots_count' => $choiceResult['diagnostics']['attempted_slots_count'] ?? null,
+                    'blocked_slots_count' => $choiceResult['diagnostics']['blocked_slots_count'] ?? null,
+                    'student_conflict_slots_count' => $choiceResult['diagnostics']['student_conflict_slots_count'] ?? null,
+                    'academic_conflict_slots_count' => $choiceResult['diagnostics']['academic_conflict_slots_count'] ?? null,
+                    'conflicting_student_numbers' => $choiceResult['diagnostics']['sample_conflicting_student_numbers'] ?? [],
+                    'conflicting_student_numbers_count' => $choiceResult['diagnostics']['conflicting_student_numbers_count'] ?? null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $this->throwGenerationFailure(
+            reasonCode: $reasonCode,
+            settings: $settings,
+            details: $details,
+            draftId: $draft->id,
+            technicalDetails: [
+                'unit_key' => $unit['shared_group_key'] ?? null,
+                'diagnostics' => $choiceResult['diagnostics'] ?? [],
+            ],
+        );
+    }
+
+    protected function throwGenerationFailureForValidation(array $settings, ExamScheduleDraft $draft, array $validation): never
+    {
+        $conflicts = collect($validation['conflicts'] ?? [])
+            ->where('hard', true)
+            ->values();
+        $reasonCode = $conflicts->contains(fn (array $conflict): bool => (bool) ($conflict['pinned'] ?? false))
+            ? 'pinned_conflict'
+            : (string) ($conflicts->first()['type'] ?? 'unknown');
+
+        $this->throwGenerationFailure(
+            reasonCode: $reasonCode,
+            settings: $settings,
+            details: $conflicts->take(10)->all(),
+            draftId: $draft->id,
+            technicalDetails: [
+                'summary' => $validation['summary'] ?? [],
+                'hard_conflicts_count' => $validation['hard_conflicts_count'] ?? null,
+                'conflicts' => $conflicts->all(),
+            ],
+        );
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $details
+     * @param  array<string, mixed>  $technicalDetails
+     */
+    protected function throwGenerationFailure(
+        string $reasonCode,
+        array $settings,
+        array $details = [],
+        ?int $draftId = null,
+        array $technicalDetails = [],
+    ): never {
+        $message = $this->generationFailureUserMessage($reasonCode);
+        $logContext = [
+            'user_id' => auth()->id(),
+            'college_id' => $settings['faculty_id'] ?? null,
+            'academic_year_id' => $settings['academic_year_id'] ?? null,
+            'semester_id' => $settings['semester_id'] ?? null,
+            'draft_id' => $draftId,
+            'reason_code' => $reasonCode,
+            'details' => $details,
+            'technical_details' => $technicalDetails,
+        ];
+
+        Log::warning('Exam schedule draft generation stopped with user-facing failure.', $logContext);
+
+        throw new ExamScheduleGenerationException(
+            reasonCode: $reasonCode,
+            userTitle: 'تعذر توليد البرنامج الامتحاني',
+            userMessage: $message,
+            details: $details,
+            logContext: $logContext,
+            technicalMessage: 'Exam schedule generation failed: '.$reasonCode,
+        );
+    }
+
+    protected function generationFailureUserMessage(string $reasonCode): string
+    {
+        return match ($reasonCode) {
+            'missing_student_data' => 'توجد مادة امتحانية بدون طلاب. يرجى إضافة الطلاب أو حذف المادة من البرنامج.',
+            'no_available_slots' => 'لا توجد أيام أو فترات كافية لتوزيع جميع المواد.',
+            'pinned_conflict' => 'توجد مادة مثبتة تتعارض مع مادة أخرى في نفس الموعد.',
+            'missing_exam_periods' => 'لا توجد فترات امتحانية معرفة في الإعدادات.',
+            'missing_exam_days' => 'لا توجد أيام امتحانية متاحة للتوليد.',
+            'student_conflict', 'same_student_time', 'same_student_day' => 'تعذر توليد البرنامج الامتحاني لأن بعض الطلاب لديهم تعارض في جميع المواعيد المتاحة.',
+            'academic_group_conflict', 'same_academic_group_time', 'same_academic_group_day' => 'تعذر توليد البرنامج الامتحاني بسبب تعارض مواد من نفس القسم أو السنة في المواعيد المتاحة.',
+            'preferred_period_constraint', 'core_subject_strict_period' => 'تعذر توليد البرنامج الامتحاني لأن بعض المواد مقيدة بفترة محددة ولا توجد فترة مناسبة لها.',
+            default => 'حدث خطأ غير متوقع أثناء توليد البرنامج الامتحاني. لم يتم حفظ أي مسودة ناقصة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم الفني.',
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    protected function subjectFailureDetailFromPayload(array $payload): array
+    {
+        /** @var SubjectExamRoster|null $roster */
+        $roster = $payload['roster'] ?? null;
+        $subject = $payload['subject'] ?? null;
+
+        return [
+            'subject_id' => $subject?->id,
+            'subject' => $subject?->name,
+            'college' => $subject?->college?->name ?? $roster?->college?->name,
+            'college_id' => $subject?->college_id ?? $roster?->college_id,
+            'department' => $roster?->department?->name ?? $subject?->department?->name,
+            'department_id' => $payload['department_id'] ?? $roster?->department_id ?? $subject?->department_id,
+            'roster_id' => $roster?->id,
+            'roster_name' => $roster?->name,
+            'student_count' => (int) ($payload['student_count'] ?? 0),
+        ];
     }
 
     protected function isExcludedDate(CarbonInterface $date, array $settings): bool
