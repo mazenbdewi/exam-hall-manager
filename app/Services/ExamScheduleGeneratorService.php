@@ -140,6 +140,7 @@ class ExamScheduleGeneratorService
                     studentAssignments: $studentAssignments,
                 ),
             )));
+            $this->ensurePinnedItemsAreSchedulable($draft, $settings);
             $this->ensurePinnedItemsDoNotConflict($draft, $settings);
             $this->deleteReplaceableDraftsForScope($settings, $draft->id);
             $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
@@ -1633,6 +1634,74 @@ class ExamScheduleGeneratorService
         );
     }
 
+    protected function ensurePinnedItemsAreSchedulable(ExamScheduleDraft $draft, array $settings): void
+    {
+        $items = $draft->items()
+            ->with(['subject.college', 'subject.department', 'department'])
+            ->get()
+            ->filter(fn (ExamScheduleDraftItem $item): bool => (bool) (($item->metadata ?? [])['pinned'] ?? false))
+            ->values();
+
+        if ($items->isEmpty()) {
+            return;
+        }
+
+        $holidayItems = $items
+            ->filter(fn (ExamScheduleDraftItem $item): bool => filled($item->exam_date) && $this->isExcludedDate($item->exam_date, $settings))
+            ->map(fn (ExamScheduleDraftItem $item): array => $this->draftItemFailureDetail($item) + [
+                'reason' => 'holiday',
+                'pinned' => true,
+            ])
+            ->values()
+            ->all();
+
+        if ($holidayItems !== []) {
+            $this->throwGenerationFailure(
+                reasonCode: 'holiday',
+                settings: $settings,
+                details: $holidayItems,
+                draftId: $draft->id,
+                technicalDetails: [
+                    'pinned_items_on_excluded_dates' => $holidayItems,
+                    'excluded_weekdays' => $settings['excluded_weekdays'] ?? [],
+                    'holidays' => $settings['holidays'] ?? [],
+                ],
+            );
+        }
+
+        $outsideRangeItems = $items
+            ->filter(function (ExamScheduleDraftItem $item) use ($settings): bool {
+                if (blank($item->exam_date)) {
+                    return false;
+                }
+
+                return $item->exam_date->lt(Carbon::parse($settings['start_date']))
+                    || $item->exam_date->gt(Carbon::parse($settings['end_date']));
+            })
+            ->map(fn (ExamScheduleDraftItem $item): array => $this->draftItemFailureDetail($item) + [
+                'reason' => 'outside_range',
+                'pinned' => true,
+            ])
+            ->values()
+            ->all();
+
+        if ($outsideRangeItems === []) {
+            return;
+        }
+
+        $this->throwGenerationFailure(
+            reasonCode: 'outside_range',
+            settings: $settings,
+            details: $outsideRangeItems,
+            draftId: $draft->id,
+            technicalDetails: [
+                'pinned_items_outside_range' => $outsideRangeItems,
+                'start_date' => $settings['start_date'] ?? null,
+                'end_date' => $settings['end_date'] ?? null,
+            ],
+        );
+    }
+
     protected function ensurePinnedItemsDoNotConflict(ExamScheduleDraft $draft, array $settings): void
     {
         $items = $draft->items()
@@ -2432,6 +2501,8 @@ class ExamScheduleGeneratorService
             'missing_student_data' => 'توجد مادة امتحانية بدون طلاب. يرجى إضافة الطلاب أو حذف المادة من البرنامج.',
             'no_available_slots' => 'لا توجد أيام أو فترات كافية لتوزيع جميع المواد.',
             'pinned_conflict' => 'توجد مادة مثبتة تتعارض مع مادة أخرى في نفس الموعد.',
+            'holiday' => 'تعذر توليد البرنامج لأن هناك مواد موضوعة في يوم عطلة أو يوم مستبعد.',
+            'outside_range' => 'تعذر توليد البرنامج لأن هناك مواد موضوعة خارج فترة الامتحانات المحددة.',
             'missing_exam_periods' => 'لا توجد فترات امتحانية معرفة في الإعدادات.',
             'missing_exam_days' => 'لا توجد أيام امتحانية متاحة للتوليد.',
             'draft_validation_failed' => 'تم توليد المسودة مبدئيًا، لكن فشل التحقق من صحتها. لم يتم حفظ أي مسودة ناقصة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم الفني.',
@@ -2440,6 +2511,25 @@ class ExamScheduleGeneratorService
             'preferred_period_constraint', 'core_subject_strict_period' => 'تعذر توليد البرنامج الامتحاني لأن بعض المواد مقيدة بفترة محددة ولا توجد فترة مناسبة لها.',
             default => 'حدث خطأ غير متوقع أثناء توليد البرنامج الامتحاني. لم يتم حفظ أي مسودة ناقصة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم الفني.',
         };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function draftItemFailureDetail(ExamScheduleDraftItem $item): array
+    {
+        return [
+            'item_id' => $item->id,
+            'subject_id' => $item->subject_id,
+            'subject' => $item->subject?->name,
+            'college' => $item->subject?->college?->name,
+            'college_id' => $item->subject?->college_id,
+            'department' => $item->department?->name ?? $item->subject?->department?->name,
+            'department_id' => $item->department_id ?: $item->subject?->department_id,
+            'date' => $item->exam_date?->toDateString(),
+            'time' => substr((string) $item->start_time, 0, 5),
+            'roster_id' => $item->source_roster_id,
+        ];
     }
 
     /**

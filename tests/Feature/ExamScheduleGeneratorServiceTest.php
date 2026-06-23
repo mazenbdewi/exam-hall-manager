@@ -143,6 +143,118 @@ class ExamScheduleGeneratorServiceTest extends TestCase
     }
 
     #[Test]
+    public function generator_never_schedules_subjects_on_excluded_friday(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $this->createRoster($context, $this->createSubject($context, 'رسم هندسي 1'), [['S-001', 'طالب', 'regular']]);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-07-09',
+            'end_date' => '2026-07-12',
+            'excluded_weekdays' => [5],
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+        ]));
+
+        $this->assertSame(0, $draft->items()->whereDate('exam_date', '2026-07-10')->count());
+        $this->assertNotSame('2026-07-10', $draft->items()->firstOrFail()->exam_date?->toDateString());
+    }
+
+    #[Test]
+    public function pinned_subject_on_excluded_day_stops_generation_with_clear_holiday_reason(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'رسم هندسي 1');
+        $roster = $this->createRoster($context, $subject, [['S-001', 'طالب', 'regular']]);
+
+        SubjectExamOffering::query()->create([
+            'subject_id' => $subject->id,
+            'academic_year_id' => $context['academic_year']->id,
+            'semester_id' => $context['semester']->id,
+            'exam_date' => '2026-07-10',
+            'exam_start_time' => '09:00:00',
+            'is_pinned' => true,
+            'status' => ExamOfferingStatus::Draft->value,
+        ]);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-07-09',
+                'end_date' => '2026-07-12',
+                'excluded_weekdays' => [5],
+                'periods' => [
+                    ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ],
+            ]));
+            $this->fail('Expected pinned subject on excluded Friday to stop generation.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('holiday', $exception->reasonCode);
+            $this->assertStringContainsString('يوم عطلة', $exception->userMessage);
+            $this->assertSame('رسم هندسي 1', $exception->details[0]['subject']);
+            $this->assertSame($context['department']->name, $exception->details[0]['department']);
+            $this->assertSame('2026-07-10', $exception->details[0]['date']);
+            $this->assertSame('09:00', $exception->details[0]['time']);
+            $this->assertTrue($exception->details[0]['pinned']);
+            $this->assertSame($roster->id, $exception->details[0]['roster_id']);
+        }
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+        $this->assertSame(0, SubjectExamOffering::query()->whereNotNull('exam_schedule_draft_id')->count());
+    }
+
+    #[Test]
+    public function holiday_conflict_from_validation_is_user_facing_not_unexpected(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'التمثيل والرسم الهندسي');
+        $this->createRoster($context, $subject, [['S-001', 'طالب', 'regular']]);
+
+        app()->instance(ExamScheduleGeneratorService::class, new class extends ExamScheduleGeneratorService
+        {
+            public function validateDraft(ExamScheduleDraft $draft): array
+            {
+                $item = $draft->items()->with(['subject.department', 'department'])->firstOrFail();
+
+                return [
+                    'summary' => ['status' => 'failed'],
+                    'conflicts' => [[
+                        'item_id' => $item->id,
+                        'subject' => $item->subject?->name,
+                        'department' => $item->department?->name ?? $item->subject?->department?->name,
+                        'date' => '2026-07-10',
+                        'time' => '09:00',
+                        'type' => 'holiday',
+                        'type_label' => 'يوم عطلة',
+                        'impact' => 'تاريخ مستبعد',
+                        'details' => 'تاريخ مستبعد',
+                        'suggested_action' => 'انقل المادة إلى يوم غير مستبعد.',
+                        'hard' => true,
+                    ]],
+                    'unscheduled_items' => [],
+                    'hard_conflicts_count' => 1,
+                    'warnings_count' => 0,
+                ];
+            }
+        });
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+            $this->fail('Expected validation holiday conflict to stop generation.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('holiday', $exception->reasonCode);
+            $this->assertStringContainsString('يوم عطلة', $exception->userMessage);
+            $this->assertStringNotContainsString('غير متوقع', $exception->userMessage);
+            $this->assertSame('التمثيل والرسم الهندسي', $exception->details[0]['subject']);
+        }
+
+        $this->assertSame(0, ExamScheduleDraft::query()->count());
+    }
+
+    #[Test]
     public function successful_generation_logs_before_and_after_draft_validation(): void
     {
         Log::spy();

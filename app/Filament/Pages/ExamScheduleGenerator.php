@@ -1172,12 +1172,18 @@ class ExamScheduleGenerator extends Page
             ])->filter()->implode(' — ');
         }
 
+        $date = $detail['date'] ?? null;
+        $time = $detail['time'] ?? null;
+
         return collect([
             filled($subject) ? "المادة: {$subject}" : null,
             filled($college) ? "الكلية: {$college}" : null,
             filled($department) ? "القسم: {$department}" : null,
+            filled($date) ? "التاريخ: {$date}" : null,
+            filled($time) ? "الوقت: {$time}" : null,
             filled($rosterLabel) ? "القائمة: {$rosterLabel}" : null,
             $reasonCode === 'missing_student_data' ? 'لا تحتوي على طلاب، لذلك لا يمكن إدخالها في البرنامج الامتحاني.' : null,
+            $reasonCode === 'holiday' && (bool) ($detail['pinned'] ?? false) ? 'المادة مثبتة في يوم عطلة، يرجى نقلها إلى يوم غير مستبعد.' : null,
         ])->filter()->implode(' — ');
     }
 
