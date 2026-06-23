@@ -145,8 +145,10 @@ class ExamScheduleGeneratorService
             $this->deleteReplaceableDraftsForScope($settings, $draft->id);
             $units = $this->withoutPinnedSubjects($units, $pinnedRosterIds);
 
+            $academicGroupTotals = $this->academicGroupTotals($units, $academicAssignments);
+
             foreach ($units->sortByDesc(fn (array $unit): int => count($unit['subjects']))->values() as $unit) {
-                $choiceResult = $this->chooseSlot($unit, $slots, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments, $settings);
+                $choiceResult = $this->chooseSlot($unit, $slots, $slotLoads, $dayLoads, $academicAssignments, $studentAssignments, $settings, $academicGroupTotals);
                 $choice = $choiceResult['slot'] ?? null;
 
                 if (! $choice) {
@@ -321,7 +323,7 @@ class ExamScheduleGeneratorService
             'draft_id' => $draft->id,
         ]);
 
-        $draft->loadMissing(['items.department', 'items.subject.department', 'items.subject.studyLevel', 'college']);
+        $draft->loadMissing(['items.department', 'items.subject.college', 'items.subject.department', 'items.subject.studyLevel', 'college']);
         $items = $draft->items;
 
         Log::info('Draft validation: items relations loaded.', [
@@ -577,6 +579,9 @@ class ExamScheduleGeneratorService
             }
         }
 
+        $spreadSummary = $this->academicGroupSpreadSummary($items, $settings);
+        $conflicts = array_merge($conflicts, $spreadSummary['warnings']);
+
         Log::info('Draft validation: building summary.', [
             'user_id' => auth()->id(),
             'draft_id' => $draft->id,
@@ -614,6 +619,9 @@ class ExamScheduleGeneratorService
             'busiest_day' => $busiestDay,
             'shared_subject_notes_count' => collect($conflicts)->where('type', 'shared_subject_not_separated')->count(),
             'core_subject_notes_count' => collect($conflicts)->whereIn('type', ['core_subject_not_preferred_period', 'core_subject_strict_period'])->count(),
+            'academic_group_spread' => $spreadSummary['groups'],
+            'most_compressed_academic_group' => $spreadSummary['most_compressed_group'],
+            'same_level_consecutive_warnings_count' => collect($spreadSummary['warnings'])->where('type', 'same_level_gap_warning')->count(),
         ];
 
         Log::info('Draft validation completed.', [
@@ -722,6 +730,105 @@ class ExamScheduleGeneratorService
             ])
             ->values()
             ->all();
+    }
+
+    /**
+     * @param  Collection<int, ExamScheduleDraftItem>  $items
+     * @param  array<string, mixed>  $settings
+     * @return array{groups: array<int, array<string, mixed>>, warnings: array<int, array<string, mixed>>, most_compressed_group: ?array<string, mixed>}
+     */
+    protected function academicGroupSpreadSummary(Collection $items, array $settings): array
+    {
+        $minimumGapDays = (int) ($settings['minimum_gap_days_between_same_level_exams'] ?? 1);
+        $avoidConsecutive = (bool) ($settings['avoid_consecutive_same_level_exams'] ?? true);
+        $warnings = [];
+
+        $groups = $items
+            ->filter(fn (ExamScheduleDraftItem $item): bool => $item->status !== 'unscheduled' && filled($item->exam_date))
+            ->groupBy(fn (ExamScheduleDraftItem $item): string => $this->academicGroupKeyForItem($item))
+            ->map(function (Collection $groupItems, string $groupKey) use ($minimumGapDays, $avoidConsecutive, &$warnings): array {
+                $orderedItems = $groupItems
+                    ->sortBy([
+                        ['exam_date', 'asc'],
+                        ['start_time', 'asc'],
+                    ])
+                    ->values();
+                $dates = $orderedItems
+                    ->pluck('exam_date')
+                    ->filter()
+                    ->map(fn (CarbonInterface $date): string => $date->toDateString())
+                    ->unique()
+                    ->values();
+
+                $shortestRestDays = null;
+                $hasWarning = false;
+
+                for ($index = 1; $index < $dates->count(); $index++) {
+                    $previousDate = Carbon::parse($dates->get($index - 1));
+                    $currentDate = Carbon::parse($dates->get($index));
+                    $dateDistance = (int) $previousDate->diffInDays($currentDate);
+                    $restDays = max(0, $dateDistance - 1);
+                    $shortestRestDays = $shortestRestDays === null ? $restDays : min($shortestRestDays, $restDays);
+
+                    $violatesMinimumGap = $minimumGapDays > 0 && $restDays < $minimumGapDays;
+                    $isConsecutive = $dateDistance === 1;
+
+                    if (! $violatesMinimumGap && ! ($avoidConsecutive && $isConsecutive)) {
+                        continue;
+                    }
+
+                    $hasWarning = true;
+                    $warningItem = $orderedItems
+                        ->first(fn (ExamScheduleDraftItem $item): bool => $item->exam_date?->toDateString() === $currentDate->toDateString())
+                        ?? $orderedItems->first();
+
+                    if (! $warningItem) {
+                        continue;
+                    }
+
+                    $warnings[] = $this->conflictRow(
+                        $warningItem,
+                        'same_level_gap_warning',
+                        'امتحانات متقاربة لنفس السنة',
+                        'فاصل الراحة بين امتحانين لنفس القسم والسنة أقل من المطلوب',
+                        'راجع التاريخين أو زد الفترة الامتحانية إن كان ذلك ممكنًا.',
+                        'لدى '.$this->academicGroupLabel($warningItem).' امتحانان متقاربان بتاريخ '.$previousDate->toDateString().' و '.$currentDate->toDateString().'. فاصل الراحة: '.$restDays.' يوم.',
+                        false,
+                    );
+                }
+
+                /** @var ExamScheduleDraftItem|null $firstItem */
+                $firstItem = $orderedItems->first();
+
+                return [
+                    'key' => $groupKey,
+                    'college' => $firstItem?->subject?->college?->name,
+                    'department' => $firstItem?->department?->name ?? $firstItem?->subject?->department?->name,
+                    'study_level' => $firstItem?->subject?->studyLevel?->name,
+                    'subjects_count' => $groupItems->count(),
+                    'first_exam_date' => $dates->first(),
+                    'last_exam_date' => $dates->last(),
+                    'used_exam_days_count' => $dates->count(),
+                    'shortest_rest_days_between_exams' => $shortestRestDays,
+                    'has_gap_warning' => $hasWarning,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $mostCompressedGroup = collect($groups)
+            ->filter(fn (array $group): bool => $group['shortest_rest_days_between_exams'] !== null)
+            ->sortBy([
+                ['shortest_rest_days_between_exams', 'asc'],
+                ['subjects_count', 'desc'],
+            ])
+            ->first();
+
+        return [
+            'groups' => $groups,
+            'warnings' => $warnings,
+            'most_compressed_group' => $mostCompressedGroup ?: null,
+        ];
     }
 
     /**
@@ -1152,6 +1259,10 @@ class ExamScheduleGeneratorService
                 ->all(),
             'periods' => $periods,
             'prevent_same_day' => (bool) ($settings['prevent_same_day'] ?? false),
+            'balanced_schedule_spread' => (bool) ($settings['balanced_schedule_spread'] ?? true),
+            'minimum_gap_days_between_same_level_exams' => max(0, (int) ($settings['minimum_gap_days_between_same_level_exams'] ?? 1)),
+            'avoid_consecutive_same_level_exams' => (bool) ($settings['avoid_consecutive_same_level_exams'] ?? true),
+            'spread_same_level_exams_by_week' => (bool) ($settings['spread_same_level_exams_by_week'] ?? true),
         ];
     }
 
@@ -1174,6 +1285,10 @@ class ExamScheduleGeneratorService
             'holidays_count' => count($settings['holidays'] ?? []),
             'periods_count' => count($settings['periods'] ?? []),
             'prevent_same_day' => (bool) ($settings['prevent_same_day'] ?? false),
+            'balanced_schedule_spread' => (bool) ($settings['balanced_schedule_spread'] ?? true),
+            'minimum_gap_days_between_same_level_exams' => (int) ($settings['minimum_gap_days_between_same_level_exams'] ?? 1),
+            'avoid_consecutive_same_level_exams' => (bool) ($settings['avoid_consecutive_same_level_exams'] ?? true),
+            'spread_same_level_exams_by_week' => (bool) ($settings['spread_same_level_exams_by_week'] ?? true),
         ];
     }
 
@@ -2039,10 +2154,11 @@ class ExamScheduleGeneratorService
         ];
     }
 
-    protected function chooseSlot(array $unit, array $slots, array $slotLoads, array $dayLoads, array $academicAssignments, array $studentAssignments, array $settings): array
+    protected function chooseSlot(array $unit, array $slots, array $slotLoads, array $dayLoads, array $academicAssignments, array $studentAssignments, array $settings, array $academicGroupTotals = []): array
     {
         $candidates = [];
         $diagnostics = $this->initialSlotDiagnostics($slots);
+        $academicSpreadContext = $this->academicSpreadContext($settings);
 
         if ($slots === []) {
             return $this->slotFailureResult('no_available_slots', $diagnostics);
@@ -2094,7 +2210,10 @@ class ExamScheduleGeneratorService
             $score = ($slotLoads[$slot['key']] ?? 0) * 2
                 + ($dayLoads[$slot['date']] ?? 0)
                 + $this->sharedSubjectSeparationPenalty($unit, $slot, $academicAssignments)
-                + $this->coreSubjectPeriodPenalty($unit, $slot);
+                + $this->coreSubjectPeriodPenalty($unit, $slot)
+                + $this->academicGroupSpacingPenalty($unit, $slot, $academicAssignments, $settings)
+                + $this->academicGroupSpreadPenalty($unit, $slot, $academicAssignments, $settings, $academicGroupTotals, $academicSpreadContext)
+                + $this->academicGroupWeeklyPressurePenalty($unit, $slot, $academicAssignments, $settings);
 
             $candidates[] = $slot + [
                 'score' => $score,
@@ -2113,6 +2232,140 @@ class ExamScheduleGeneratorService
             'failure_reason' => null,
             'diagnostics' => $this->publicSlotDiagnostics($diagnostics),
         ];
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $units
+     * @param  array<string, array<int, array<string, mixed>>>  $academicAssignments
+     * @return array<string, int>
+     */
+    protected function academicGroupTotals(Collection $units, array $academicAssignments): array
+    {
+        $totals = collect($academicAssignments)
+            ->map(fn (array $assignments): int => count($assignments))
+            ->all();
+
+        foreach ($units as $unit) {
+            foreach ($unit['academic_group_keys'] ?? [] as $academicGroupKey) {
+                $totals[$academicGroupKey] = ($totals[$academicGroupKey] ?? 0) + 1;
+            }
+        }
+
+        return $totals;
+    }
+
+    /**
+     * @return array{day_indexes: array<string, int>, days_count: int}
+     */
+    protected function academicSpreadContext(array $settings): array
+    {
+        $availableDays = $this->availableExamDays($settings);
+
+        return [
+            'day_indexes' => array_flip($availableDays),
+            'days_count' => count($availableDays),
+        ];
+    }
+
+    protected function academicGroupSpacingPenalty(array $unit, array $slot, array $academicAssignments, array $settings): int
+    {
+        $minimumGapDays = (int) ($settings['minimum_gap_days_between_same_level_exams'] ?? 1);
+        $avoidConsecutive = (bool) ($settings['avoid_consecutive_same_level_exams'] ?? true);
+
+        if ($minimumGapDays <= 0 && ! $avoidConsecutive) {
+            return 0;
+        }
+
+        $penalty = 0;
+        $candidateDate = Carbon::parse($slot['date']);
+
+        foreach ($unit['academic_group_keys'] ?? [] as $academicGroupKey) {
+            foreach ($academicAssignments[$academicGroupKey] ?? [] as $assignment) {
+                $distance = abs($candidateDate->diffInDays(Carbon::parse($assignment['date'])));
+
+                if ($minimumGapDays > 0 && $distance <= $minimumGapDays) {
+                    $penalty += (int) (900 + (($minimumGapDays - $distance + 1) * 250));
+                }
+
+                if ($avoidConsecutive && $distance === 1) {
+                    $penalty += 900;
+                }
+            }
+        }
+
+        return $penalty;
+    }
+
+    protected function academicGroupSpreadPenalty(array $unit, array $slot, array $academicAssignments, array $settings, array $academicGroupTotals, array $academicSpreadContext): int
+    {
+        if (! (bool) ($settings['balanced_schedule_spread'] ?? true)) {
+            return 0;
+        }
+
+        $availableDayIndexes = $academicSpreadContext['day_indexes'] ?? [];
+        $availableDaysCount = (int) ($academicSpreadContext['days_count'] ?? 0);
+
+        if ($availableDaysCount <= 1 || ! isset($availableDayIndexes[$slot['date']])) {
+            return 0;
+        }
+
+        $candidateIndex = (int) $availableDayIndexes[$slot['date']];
+        $penalty = 0;
+
+        foreach ($unit['academic_group_keys'] ?? [] as $academicGroupKey) {
+            $totalExams = max(1, (int) ($academicGroupTotals[$academicGroupKey] ?? 1));
+
+            if ($totalExams <= 1) {
+                continue;
+            }
+
+            $scheduledDates = collect($academicAssignments[$academicGroupKey] ?? [])
+                ->pluck('date')
+                ->filter()
+                ->unique()
+                ->values();
+            $scheduledCount = $scheduledDates->count();
+            $idealStep = ($availableDaysCount - 1) / max(1, $totalExams - 1);
+            $targetIndex = (int) round(min($availableDaysCount - 1, $scheduledCount * $idealStep));
+            $distanceFromTarget = abs($candidateIndex - $targetIndex);
+
+            $penalty += (int) round($distanceFromTarget * 45);
+
+            if ($candidateIndex < $targetIndex) {
+                $penalty += (int) round(($targetIndex - $candidateIndex) * 35);
+            }
+
+            foreach ($scheduledDates as $scheduledDate) {
+                if (! isset($availableDayIndexes[$scheduledDate])) {
+                    continue;
+                }
+
+                $actualGap = abs($candidateIndex - (int) $availableDayIndexes[$scheduledDate]);
+                $penalty += (int) round(max(0, $idealStep - $actualGap) * 35);
+            }
+        }
+
+        return $penalty;
+    }
+
+    protected function academicGroupWeeklyPressurePenalty(array $unit, array $slot, array $academicAssignments, array $settings): int
+    {
+        if (! (bool) ($settings['spread_same_level_exams_by_week'] ?? true)) {
+            return 0;
+        }
+
+        $candidateWeek = Carbon::parse($slot['date'])->startOfWeek(Carbon::SUNDAY)->toDateString();
+        $penalty = 0;
+
+        foreach ($unit['academic_group_keys'] ?? [] as $academicGroupKey) {
+            $sameWeekCount = collect($academicAssignments[$academicGroupKey] ?? [])
+                ->filter(fn (array $assignment): bool => Carbon::parse($assignment['date'])->startOfWeek(Carbon::SUNDAY)->toDateString() === $candidateWeek)
+                ->count();
+
+            $penalty += $sameWeekCount * 80;
+        }
+
+        return $penalty;
     }
 
     /**
@@ -2808,6 +3061,16 @@ class ExamScheduleGeneratorService
             'department:'.($item->department_id ?: $item->subject?->department_id ?: 'none'),
             'level:'.($item->subject?->study_level_id ?: 'none'),
         ]);
+    }
+
+    protected function academicGroupLabel(ExamScheduleDraftItem $item): string
+    {
+        return collect([
+            $item->department?->name ?? $item->subject?->department?->name,
+            $item->subject?->studyLevel?->name,
+        ])
+            ->filter()
+            ->implode(' - ') ?: 'هذه المجموعة الأكاديمية';
     }
 
     protected function syncValidationToDraft(ExamScheduleDraft $draft, array $validation): void

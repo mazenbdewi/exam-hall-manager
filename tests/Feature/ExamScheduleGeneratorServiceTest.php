@@ -1030,6 +1030,111 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->assertSame(1, $offering->examStudents()->count());
     }
 
+    #[Test]
+    public function same_level_subjects_are_spread_across_the_available_exam_range(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        foreach (range(1, 10) as $index) {
+            $subject = $this->createSubject($context, 'مادة توزيع '.$index);
+            $this->createRoster($context, $subject, [['S-'.$index, 'طالب '.$index, 'regular']]);
+        }
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-07-08',
+            'end_date' => '2026-08-13',
+            'excluded_weekdays' => [5, 6],
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+        ]));
+
+        $dates = $draft->items()->orderBy('exam_date')->pluck('exam_date')->map(fn ($date) => $date->toDateString())->values();
+
+        $this->assertGreaterThanOrEqual(24, \Carbon\Carbon::parse($dates->first())->diffInDays(\Carbon\Carbon::parse($dates->last())));
+        $this->assertLessThan(10, $dates->filter(fn (string $date): bool => \Carbon\Carbon::parse($date)->lte(\Carbon\Carbon::parse('2026-07-19')))->count());
+    }
+
+    #[Test]
+    public function same_level_minimum_gap_is_respected_when_the_period_has_enough_room(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        foreach (range(1, 4) as $index) {
+            $subject = $this->createSubject($context, 'مادة فاصل '.$index);
+            $this->createRoster($context, $subject, [['G-'.$index, 'طالب '.$index, 'regular']]);
+        }
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-14',
+            'excluded_weekdays' => [5, 6],
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+            'minimum_gap_days_between_same_level_exams' => 1,
+        ]));
+
+        $restDays = $this->restDaysBetweenScheduledItems($draft);
+
+        $this->assertNotEmpty($restDays);
+        $this->assertGreaterThanOrEqual(1, min($restDays));
+        $this->assertSame(0, $draft->summary_json['same_level_consecutive_warnings_count'] ?? 0);
+    }
+
+    #[Test]
+    public function same_level_consecutive_exams_are_avoided_when_there_is_enough_room(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        foreach (range(1, 5) as $index) {
+            $subject = $this->createSubject($context, 'مادة غير متتالية '.$index);
+            $this->createRoster($context, $subject, [['C-'.$index, 'طالب '.$index, 'regular']]);
+        }
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-20',
+            'excluded_weekdays' => [5, 6],
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+            'avoid_consecutive_same_level_exams' => true,
+        ]));
+
+        $this->assertGreaterThanOrEqual(1, min($this->restDaysBetweenScheduledItems($draft)));
+    }
+
+    #[Test]
+    public function tight_period_generates_with_soft_gap_warnings_instead_of_failing(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        foreach (range(1, 3) as $index) {
+            $subject = $this->createSubject($context, 'مادة ضيقة '.$index);
+            $this->createRoster($context, $subject, [['T-'.$index, 'طالب '.$index, 'regular']]);
+        }
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-05',
+            'excluded_weekdays' => [5, 6],
+            'periods' => [
+                ['name' => 'صباحية', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+            'minimum_gap_days_between_same_level_exams' => 1,
+            'avoid_consecutive_same_level_exams' => true,
+        ]));
+
+        $this->assertSame(ExamScheduleDraft::STATUS_COMPLETED, $draft->status);
+        $this->assertSame('warning', $draft->summary_json['status'] ?? null);
+        $this->assertGreaterThan(0, $draft->summary_json['same_level_consecutive_warnings_count'] ?? 0);
+    }
+
     protected function createAcademicContext(): array
     {
         $college = College::query()->create([
@@ -1126,5 +1231,23 @@ class ExamScheduleGeneratorServiceTest extends TestCase
             ],
             'prevent_same_day' => false,
         ], $overrides);
+    }
+
+    protected function restDaysBetweenScheduledItems(ExamScheduleDraft $draft): array
+    {
+        $dates = $draft->items()
+            ->orderBy('exam_date')
+            ->pluck('exam_date')
+            ->map(fn ($date) => $date->toDateString())
+            ->unique()
+            ->values();
+
+        $restDays = [];
+
+        for ($index = 1; $index < $dates->count(); $index++) {
+            $restDays[] = max(0, \Carbon\Carbon::parse($dates->get($index - 1))->diffInDays(\Carbon\Carbon::parse($dates->get($index))) - 1);
+        }
+
+        return $restDays;
     }
 }

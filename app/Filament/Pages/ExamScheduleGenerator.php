@@ -78,6 +78,14 @@ class ExamScheduleGenerator extends Page
 
     public bool $prevent_same_day = false;
 
+    public bool $balanced_schedule_spread = true;
+
+    public int $minimum_gap_days_between_same_level_exams = 1;
+
+    public bool $avoid_consecutive_same_level_exams = true;
+
+    public bool $spread_same_level_exams_by_week = true;
+
     public string $approval_existing_strategy = 'create_missing';
 
     public ?int $draft_id = null;
@@ -579,17 +587,35 @@ class ExamScheduleGenerator extends Page
     public function summaryCards(): array
     {
         $summary = $this->currentDraft()?->summary_json ?: $this->validationData()['summary'];
+        $mostCompressed = $summary['most_compressed_academic_group'] ?? null;
 
         return [
             'عدد المواد' => $summary['subjects_count'] ?? 0,
             'عدد المواد المجدولة' => $summary['scheduled_subjects_count'] ?? 0,
             'عدد المواد غير المجدولة' => $summary['unscheduled_subjects_count'] ?? 0,
             'عدد التعارضات' => $summary['conflicts_count'] ?? 0,
+            'تحذيرات التقارب' => $summary['same_level_consecutive_warnings_count'] ?? 0,
             'عدد الأيام المستخدمة' => $summary['used_days_count'] ?? 0,
             'أكثر يوم ازدحامًا' => $summary['busiest_day'] ?? '-',
+            'أكثر سنة مضغوطة' => is_array($mostCompressed)
+                ? collect([$mostCompressed['department'] ?? null, $mostCompressed['study_level'] ?? null])->filter()->implode(' - ')
+                : '-',
             'ملاحظات المواد المشتركة' => $summary['shared_subject_notes_count'] ?? 0,
             'تحذيرات المواد الأساسية' => $summary['core_subject_notes_count'] ?? 0,
         ];
+    }
+
+    public function academicGroupSpreadRows(): array
+    {
+        $summary = $this->currentDraft()?->summary_json ?: $this->validationData()['summary'];
+
+        return collect($summary['academic_group_spread'] ?? [])
+            ->sortBy([
+                ['department', 'asc'],
+                ['study_level', 'asc'],
+            ])
+            ->values()
+            ->all();
     }
 
     public function readinessSummary(): array
@@ -799,6 +825,10 @@ class ExamScheduleGenerator extends Page
             'periods' => $this->activePeriods(),
             'previous_draft_id' => $this->draft_id,
             'prevent_same_day' => $this->prevent_same_day,
+            'balanced_schedule_spread' => $this->balanced_schedule_spread,
+            'minimum_gap_days_between_same_level_exams' => max(0, $this->minimum_gap_days_between_same_level_exams),
+            'avoid_consecutive_same_level_exams' => $this->avoid_consecutive_same_level_exams,
+            'spread_same_level_exams_by_week' => $this->spread_same_level_exams_by_week,
         ];
     }
 

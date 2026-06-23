@@ -322,6 +322,22 @@
                         <input type="checkbox" wire:model.live="prevent_same_day" class="rounded border-gray-300 text-primary-600">
                         <span>منع مادتين في نفس اليوم لنفس الطالب</span>
                     </label>
+                    <label class="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/10">
+                        <input type="checkbox" wire:model.live="balanced_schedule_spread" class="rounded border-gray-300 text-primary-600">
+                        <span>توزيع متوازن على كامل الفترة</span>
+                    </label>
+                    <label class="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/10">
+                        <input type="checkbox" wire:model.live="avoid_consecutive_same_level_exams" class="rounded border-gray-300 text-primary-600">
+                        <span>تجنب الامتحانات المتتالية لنفس السنة</span>
+                    </label>
+                    <label class="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/10">
+                        <input type="checkbox" wire:model.live="spread_same_level_exams_by_week" class="rounded border-gray-300 text-primary-600">
+                        <span>توزيع مواد السنة على الأسابيع قدر الإمكان</span>
+                    </label>
+                    <label class="space-y-1 rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/10">
+                        <span class="block text-sm font-medium text-gray-700 dark:text-gray-200">الحد الأدنى للفاصل بين امتحانات نفس السنة</span>
+                        <input type="number" min="0" step="1" wire:model.live="minimum_gap_days_between_same_level_exams" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
+                    </label>
                 </div>
 
                 <div class="mt-5 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 dark:border-white/10 dark:bg-white/5 dark:text-gray-200">
@@ -403,6 +419,50 @@
                         <div class="mt-1 text-xl font-semibold text-gray-950 dark:text-white">{{ $value }}</div>
                     </div>
                 @endforeach
+            </div>
+
+            <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
+                <h2 class="mb-3 text-base font-semibold text-gray-950 dark:text-white">ملخص توزيع المواد حسب السنة والقسم</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-white/10">
+                        <thead>
+                            <tr class="text-gray-600 dark:text-gray-300">
+                                <th class="px-3 py-2 text-right">القسم</th>
+                                <th class="px-3 py-2 text-right">السنة</th>
+                                <th class="px-3 py-2 text-right">عدد المواد</th>
+                                <th class="px-3 py-2 text-right">أول امتحان</th>
+                                <th class="px-3 py-2 text-right">آخر امتحان</th>
+                                <th class="px-3 py-2 text-right">أقصر فاصل راحة</th>
+                                <th class="px-3 py-2 text-right">الحالة</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 dark:divide-white/5">
+                            @forelse ($this->academicGroupSpreadRows() as $group)
+                                <tr>
+                                    <td class="px-3 py-2">{{ $group['department'] ?? '—' }}</td>
+                                    <td class="px-3 py-2">{{ $group['study_level'] ?? '—' }}</td>
+                                    <td class="px-3 py-2">{{ $group['subjects_count'] ?? 0 }}</td>
+                                    <td class="px-3 py-2">{{ $group['first_exam_date'] ?? '—' }}</td>
+                                    <td class="px-3 py-2">{{ $group['last_exam_date'] ?? '—' }}</td>
+                                    <td class="px-3 py-2">
+                                        {{ ($group['shortest_rest_days_between_exams'] ?? null) === null ? '—' : ($group['shortest_rest_days_between_exams'].' يوم') }}
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        @if ($group['has_gap_warning'] ?? false)
+                                            <span class="rounded-full bg-warning-100 px-2 py-1 text-xs font-medium text-warning-800 dark:bg-warning-500/10 dark:text-warning-100">متقاربة</span>
+                                        @else
+                                            <span class="rounded-full bg-success-100 px-2 py-1 text-xs font-medium text-success-800 dark:bg-success-500/10 dark:text-success-100">جيد</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="7" class="px-3 py-6 text-center text-gray-500">لا توجد بيانات توزيع بعد.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <div class="grid gap-4 lg:grid-cols-3">
