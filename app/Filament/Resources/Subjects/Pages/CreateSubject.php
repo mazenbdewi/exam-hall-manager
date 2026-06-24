@@ -17,4 +17,11 @@ class CreateSubject extends CreateRecord
 
         return $data;
     }
+
+    protected function afterCreate(): void
+    {
+        if (! $this->getRecord()->is_shared_subject) {
+            $this->getRecord()->sharedDepartments()->detach();
+        }
+    }
 }

@@ -72,7 +72,13 @@ class SubjectExamRosterForm
                                 return $query
                                     ->with(['department', 'studyLevel'])
                                     ->when($collegeId, fn (Builder $subjectQuery) => $subjectQuery->where('college_id', $collegeId))
-                                    ->when($get('department_id'), fn (Builder $subjectQuery, int $departmentId) => $subjectQuery->where('department_id', $departmentId))
+                                    ->when($get('department_id'), function (Builder $subjectQuery, int $departmentId): Builder {
+                                        return $subjectQuery->where(function (Builder $departmentScopedQuery) use ($departmentId): void {
+                                            $departmentScopedQuery
+                                                ->where('department_id', $departmentId)
+                                                ->orWhereHas('sharedDepartments', fn (Builder $sharedQuery): Builder => $sharedQuery->whereKey($departmentId));
+                                        });
+                                    })
                                     ->where('is_active', true)
                                     ->orderBy('name');
                             },

@@ -9,6 +9,7 @@ use App\Support\ExamCollegeScope;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ForceDeleteAction;
 use Filament\Actions\RestoreAction;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
@@ -17,6 +18,22 @@ use Illuminate\Database\Eloquent\Builder;
 class EditSubject extends EditRecord
 {
     protected static string $resource = SubjectResource::class;
+
+    protected function afterFill(): void
+    {
+        $subject = $this->getRecord();
+
+        if (! $subject->is_shared_subject || $subject->sharedDepartments()->exists()) {
+            return;
+        }
+
+        Notification::make()
+            ->title('هذه المادة محددة كمادة مشتركة، لكن لم يتم تحديد الأقسام المشتركة معها بعد.')
+            ->body('حدد الأقسام التي تدرس هذه المادة قبل استخدامها في توليد البرنامج الامتحاني.')
+            ->warning()
+            ->persistent()
+            ->send();
+    }
 
     protected function getHeaderActions(): array
     {
@@ -33,6 +50,13 @@ class EditSubject extends EditRecord
         ExamCollegeScope::ensureDepartmentBelongsToCollege($data['department_id'] ?? null, $data['college_id']);
 
         return $data;
+    }
+
+    protected function afterSave(): void
+    {
+        if (! $this->getRecord()->is_shared_subject) {
+            $this->getRecord()->sharedDepartments()->detach();
+        }
     }
 
     public function content(Schema $schema): Schema

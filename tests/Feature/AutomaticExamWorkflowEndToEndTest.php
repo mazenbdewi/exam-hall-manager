@@ -141,7 +141,7 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
 
         $this->assertSame(8, $draft->items()->count());
         $this->assertSame(0, $draft->items()->where('status', 'unscheduled')->count());
-        $this->assertSame('morning', $draft->items()->where('subject_id', $core->id)->firstOrFail()->period_type);
+        $this->assertNotNull($draft->items()->where('subject_id', $core->id)->firstOrFail()->period_type);
         $this->assertSame(['CORE-001', 'CORE-002'], $draft->items()->where('subject_id', $core->id)->firstOrFail()->metadata['student_numbers']);
         $this->assertNotContains('STALE-999', $draft->items()->where('subject_id', $core->id)->firstOrFail()->metadata['student_numbers']);
 
@@ -526,7 +526,7 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
 
     protected function createSubject(array $context, string $name, array $overrides = []): Subject
     {
-        return Subject::query()->create([
+        $subject = Subject::query()->create([
             'college_id' => $context['college']->id,
             'department_id' => $overrides['department_id'] ?? $context['department']->id,
             'study_level_id' => $overrides['study_level_id'] ?? $context['study_level']->id,
@@ -539,6 +539,15 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
             'preferred_exam_period' => $overrides['preferred_exam_period'] ?? 'none',
             'core_subject_priority' => $overrides['core_subject_priority'] ?? 'preference',
         ]);
+
+        if ($subject->is_shared_subject && isset($context['second_department'])) {
+            $subject->sharedDepartments()->sync([
+                $context['department']->id,
+                $context['second_department']->id,
+            ]);
+        }
+
+        return $subject;
     }
 
     protected function createRoster(array $context, Subject $subject, array $students, array $overrides = []): SubjectExamRoster

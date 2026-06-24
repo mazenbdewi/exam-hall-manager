@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -48,6 +49,12 @@ class Subject extends Model
         return $this->belongsTo(Department::class);
     }
 
+    public function sharedDepartments(): BelongsToMany
+    {
+        return $this->belongsToMany(Department::class, 'subject_shared_departments')
+            ->withTimestamps();
+    }
+
     public function studyLevel(): BelongsTo
     {
         return $this->belongsTo(StudyLevel::class);
@@ -61,5 +68,10 @@ class Subject extends Model
     public function subjectExamRosters(): HasMany
     {
         return $this->hasMany(SubjectExamRoster::class);
+    }
+
+    public function hasCompleteSharedDepartments(): bool
+    {
+        return ! $this->is_shared_subject || $this->sharedDepartments()->count() >= 2;
     }
 }

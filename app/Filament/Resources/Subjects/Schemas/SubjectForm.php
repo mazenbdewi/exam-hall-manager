@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Subjects\Schemas;
 
+use App\Models\Department;
 use App\Support\ExamCollegeScope;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -33,7 +34,10 @@ class SubjectForm
                             ->required()
                             ->default(fn (): ?int => ExamCollegeScope::currentCollegeId())
                             ->live()
-                            ->afterStateUpdated(fn (Set $set) => $set('department_id', null))
+                            ->afterStateUpdated(function (Set $set): void {
+                                $set('department_id', null);
+                                $set('sharedDepartments', []);
+                            })
                             ->hidden(fn (): bool => ! ExamCollegeScope::isSuperAdmin()),
                         Select::make('department_id')
                             ->label(__('exam.fields.department'))
@@ -52,7 +56,13 @@ class SubjectForm
                             )
                             ->searchable()
                             ->preload()
-                            ->required(),
+                            ->required()
+                            ->live()
+                            ->afterStateUpdated(function (Set $set, Get $get, mixed $state): void {
+                                if ((bool) $get('is_shared_subject') && filled($state)) {
+                                    $set('sharedDepartments', [(string) $state]);
+                                }
+                            }),
                         Select::make('study_level_id')
                             ->label(__('exam.fields.study_level'))
                             ->relationship(
@@ -88,7 +98,74 @@ class SubjectForm
                             ->helperText('فعّل هذا الخيار إذا كانت المادة مشتركة بين أكثر من قسم أو يدرسها طلاب من عدة أقسام.')
                             ->default(false)
                             ->live()
+                            ->afterStateUpdated(function (Set $set, Get $get, bool $state): void {
+                                if (! $state) {
+                                    $set('sharedDepartments', []);
+
+                                    return;
+                                }
+
+                                if (filled($get('department_id'))) {
+                                    $set('sharedDepartments', [(string) $get('department_id')]);
+                                }
+                            })
                             ->inline(false),
+                        Select::make('sharedDepartments')
+                            ->label('الأقسام المشتركة في هذه المادة')
+                            ->relationship(
+                                name: 'sharedDepartments',
+                                titleAttribute: 'name',
+                                modifyQueryUsing: function (Builder $query, Get $get): Builder {
+                                    $collegeId = ExamCollegeScope::isSuperAdmin()
+                                        ? $get('college_id')
+                                        : ExamCollegeScope::currentCollegeId();
+
+                                    return $query
+                                        ->when($collegeId, fn (Builder $departmentQuery) => $departmentQuery->where('college_id', $collegeId))
+                                        ->where('is_active', true)
+                                        ->orderBy('name');
+                                },
+                            )
+                            ->multiple()
+                            ->searchable()
+                            ->preload()
+                            ->live()
+                            ->visible(fn (Get $get): bool => (bool) $get('is_shared_subject'))
+                            ->required(fn (Get $get): bool => (bool) $get('is_shared_subject'))
+                            ->minItems(fn (Get $get): ?int => (bool) $get('is_shared_subject') ? 2 : null)
+                            ->helperText('اختر فقط الأقسام التي تدرس هذه المادة فعليًا حتى لا يتم إنشاء تعارضات غير صحيحة أثناء توليد البرنامج.')
+                            ->rule(function (Get $get): \Closure {
+                                return function (string $attribute, mixed $value, \Closure $fail) use ($get): void {
+                                    if (! (bool) $get('is_shared_subject')) {
+                                        return;
+                                    }
+
+                                    $departmentIds = collect($value)
+                                        ->filter()
+                                        ->map(fn (mixed $departmentId): int => (int) $departmentId)
+                                        ->unique()
+                                        ->values();
+
+                                    if ($departmentIds->count() < 2) {
+                                        $fail('يجب اختيار قسمين على الأقل للمادة المشتركة.');
+
+                                        return;
+                                    }
+
+                                    $collegeId = ExamCollegeScope::isSuperAdmin()
+                                        ? $get('college_id')
+                                        : ExamCollegeScope::currentCollegeId();
+
+                                    $validCount = Department::query()
+                                        ->whereIn('id', $departmentIds)
+                                        ->when($collegeId, fn (Builder $query): Builder => $query->where('college_id', $collegeId))
+                                        ->count();
+
+                                    if ($validCount !== $departmentIds->count()) {
+                                        $fail('كل الأقسام المشتركة يجب أن تكون من نفس كلية المادة.');
+                                    }
+                                };
+                            }),
                         Select::make('shared_subject_scheduling_mode')
                             ->label('طريقة جدولة المادة المشتركة')
                             ->options([

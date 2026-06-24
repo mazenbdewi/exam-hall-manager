@@ -965,12 +965,14 @@ class ExamScheduleGeneratorServiceTest extends TestCase
             'is_shared_subject' => true,
             'shared_subject_scheduling_mode' => 'all_departments_together',
         ]);
+        $first->sharedDepartments()->sync([$context['department']->id, $secondDepartment->id]);
         $second = $this->createSubject($context, 'ثقافة', [
             'department_id' => $secondDepartment->id,
             'code' => 'SHARED-101',
             'is_shared_subject' => true,
             'shared_subject_scheduling_mode' => 'all_departments_together',
         ]);
+        $second->sharedDepartments()->sync([$context['department']->id, $secondDepartment->id]);
         $this->createRoster($context, $first, [['S-001', 'طالب أول', 'regular']]);
         $this->createRoster($context, $second, [['S-002', 'طالب ثان', 'regular']], ['department_id' => $secondDepartment->id]);
 
@@ -981,6 +983,149 @@ class ExamScheduleGeneratorServiceTest extends TestCase
         $this->assertSame(1, $items->pluck('shared_group_key')->unique()->count());
         $this->assertSame(1, $items->pluck('exam_date')->unique()->count());
         $this->assertSame(1, $items->pluck('start_time')->unique()->count());
+    }
+
+    #[Test]
+    public function subject_form_defines_conditional_shared_departments_select(): void
+    {
+        $form = file_get_contents(app_path('Filament/Resources/Subjects/Schemas/SubjectForm.php'));
+
+        $this->assertStringContainsString("Select::make('sharedDepartments')", $form);
+        $this->assertStringContainsString("->visible(fn (Get \$get): bool => (bool) \$get('is_shared_subject'))", $form);
+        $this->assertStringContainsString("->minItems(fn (Get \$get): ?int => (bool) \$get('is_shared_subject') ? 2 : null)", $form);
+        $this->assertStringContainsString('اختر فقط الأقسام التي تدرس هذه المادة فعليًا', $form);
+    }
+
+    #[Test]
+    public function shared_subject_with_department_from_another_college_stops_generation(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $otherCollege = College::query()->create(['name' => 'كلية أخرى', 'is_active' => true]);
+        $otherDepartment = Department::query()->create([
+            'college_id' => $otherCollege->id,
+            'name' => 'قسم خارجي',
+            'is_active' => true,
+        ]);
+        $subject = $this->createSubject($context, 'مادة مشتركة بكلية خاطئة', [
+            'is_shared_subject' => true,
+            'shared_subject_scheduling_mode' => 'auto',
+        ]);
+        $subject->sharedDepartments()->sync([$context['department']->id, $otherDepartment->id]);
+        $this->createRoster($context, $subject, [['S-001', 'طالب', 'regular']]);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+            $this->fail('Expected shared subject with cross-college department to fail.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('من نفس الكلية', collect($exception->errors())->flatten()->first());
+        }
+    }
+
+    #[Test]
+    public function shared_subject_affects_only_selected_departments_when_generating_schedule(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $secondDepartment = Department::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قسم الاتصالات',
+            'is_active' => true,
+        ]);
+        $thirdDepartment = Department::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قسم الميكانيك',
+            'is_active' => true,
+        ]);
+
+        $shared = $this->createSubject($context, 'رسم هندسي 1', [
+            'is_shared_subject' => true,
+            'shared_subject_scheduling_mode' => 'all_departments_together',
+        ]);
+        $shared->sharedDepartments()->sync([$context['department']->id, $secondDepartment->id]);
+        $thirdDepartmentSubject = $this->createSubject($context, 'مادة الميكانيك', [
+            'department_id' => $thirdDepartment->id,
+        ]);
+
+        $this->createRoster($context, $shared, [['S-001', 'طالب مشترك', 'regular']]);
+        $this->createRoster($context, $thirdDepartmentSubject, [['M-001', 'طالب ميكانيك', 'regular']], ['department_id' => $thirdDepartment->id]);
+
+        $draft = app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+            'start_date' => '2026-05-03',
+            'end_date' => '2026-05-03',
+            'periods' => [
+                ['name' => 'الفترة الوحيدة', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+            ],
+        ]));
+
+        $items = $draft->items()->with('subject')->get();
+        $sharedItem = $items->firstWhere('subject_id', $shared->id);
+
+        $this->assertCount(2, $items);
+        $this->assertSame(1, $items->pluck('start_time')->unique()->count());
+        $this->assertContains('department:'.$context['department']->id.'|level:'.$context['study_level']->id, $sharedItem->metadata['academic_group_keys']);
+        $this->assertContains('department:'.$secondDepartment->id.'|level:'.$context['study_level']->id, $sharedItem->metadata['academic_group_keys']);
+        $this->assertNotContains('department:'.$thirdDepartment->id.'|level:'.$context['study_level']->id, $sharedItem->metadata['academic_group_keys']);
+        $this->assertSame([], collect(app(ExamScheduleGeneratorService::class)->validateDraft($draft)['conflicts'])
+            ->where('type', 'same_academic_group_time')
+            ->values()
+            ->all());
+    }
+
+    #[Test]
+    public function shared_subject_conflicts_with_only_its_selected_departments(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $secondDepartment = Department::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قسم الاتصالات',
+            'is_active' => true,
+        ]);
+
+        $shared = $this->createSubject($context, 'رسم هندسي 1', [
+            'is_shared_subject' => true,
+            'shared_subject_scheduling_mode' => 'all_departments_together',
+        ]);
+        $shared->sharedDepartments()->sync([$context['department']->id, $secondDepartment->id]);
+        $secondDepartmentSubject = $this->createSubject($context, 'مادة الاتصالات', [
+            'department_id' => $secondDepartment->id,
+        ]);
+
+        $this->createRoster($context, $shared, [['S-001', 'طالب مشترك', 'regular']]);
+        $this->createRoster($context, $secondDepartmentSubject, [['C-001', 'طالب اتصالات', 'regular']], ['department_id' => $secondDepartment->id]);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context, [
+                'start_date' => '2026-05-03',
+                'end_date' => '2026-05-03',
+                'periods' => [
+                    ['name' => 'الفترة الوحيدة', 'start_time' => '09:00', 'end_time' => '11:00', 'period_type' => 'morning'],
+                ],
+            ]));
+            $this->fail('Expected selected shared department conflict to stop generation.');
+        } catch (ExamScheduleGenerationException $exception) {
+            $this->assertSame('academic_group_conflict', $exception->reasonCode);
+        }
+    }
+
+    #[Test]
+    public function legacy_shared_subject_without_departments_stops_generation_with_clear_message(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+        $subject = $this->createSubject($context, 'مادة مشتركة قديمة', [
+            'is_shared_subject' => true,
+            'shared_subject_scheduling_mode' => 'auto',
+        ]);
+        $this->createRoster($context, $subject, [['S-001', 'طالب', 'regular']]);
+
+        try {
+            app(ExamScheduleGeneratorService::class)->generateDraft($this->settings($context));
+            $this->fail('Expected legacy shared subject without departments to fail.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('دون تحديد قسمين', collect($exception->errors())->flatten()->first());
+        }
     }
 
     #[Test]

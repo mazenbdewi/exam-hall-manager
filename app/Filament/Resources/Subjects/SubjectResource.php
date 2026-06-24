@@ -70,6 +70,8 @@ class SubjectResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return ExamCollegeScope::applyCollegeScope(parent::getEloquentQuery());
+        return ExamCollegeScope::applyCollegeScope(
+            parent::getEloquentQuery()->with('sharedDepartments'),
+        );
     }
 }

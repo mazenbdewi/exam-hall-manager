@@ -8,6 +8,7 @@ use App\Exceptions\ExamScheduleGenerationException;
 use App\Models\ExamScheduleDraft;
 use App\Models\ExamScheduleDraftItem;
 use App\Models\ExamStudent;
+use App\Models\Subject;
 use App\Models\SubjectExamOffering;
 use App\Models\SubjectExamRoster;
 use App\Models\SubjectExamRosterStudent;
@@ -193,6 +194,7 @@ class ExamScheduleGeneratorService
                         'metadata' => [
                             'period_name' => $choice['period_name'],
                             'academic_group_key' => $subjectPayload['academic_group_key'],
+                            'academic_group_keys' => $subjectPayload['academic_group_keys'],
                             'shared_subject_scheduling_mode' => $unit['shared_subject_scheduling_mode'],
                             'student_numbers' => $subjectPayload['student_numbers_for_metadata'],
                             'student_numbers_truncated' => $subjectPayload['student_numbers_truncated'],
@@ -400,11 +402,12 @@ class ExamScheduleGeneratorService
             }
 
             $slotKey = $date.'|'.$time;
-            $academicGroupKey = $this->academicGroupKeyForItem($item);
             $groupKey = $item->shared_group_key ?: 'item-'.$item->id;
 
-            $slotAcademicGroups[$slotKey][$academicGroupKey][$groupKey][] = $item;
-            $dayAcademicGroups[$date][$academicGroupKey][$groupKey][] = $item;
+            foreach ($this->academicGroupKeysForItem($item) as $academicGroupKey) {
+                $slotAcademicGroups[$slotKey][$academicGroupKey][$groupKey][] = $item;
+                $dayAcademicGroups[$date][$academicGroupKey][$groupKey][] = $item;
+            }
             $slotLoads[$slotKey] = ($slotLoads[$slotKey] ?? 0) + 1;
 
             foreach ($studentNumbersByItem[$item->id] ?? [] as $studentNumber) {
@@ -745,8 +748,17 @@ class ExamScheduleGeneratorService
 
         $groups = $items
             ->filter(fn (ExamScheduleDraftItem $item): bool => $item->status !== 'unscheduled' && filled($item->exam_date))
-            ->groupBy(fn (ExamScheduleDraftItem $item): string => $this->academicGroupKeyForItem($item))
-            ->map(function (Collection $groupItems, string $groupKey) use ($minimumGapDays, $avoidConsecutive, &$warnings): array {
+            ->flatMap(function (ExamScheduleDraftItem $item): array {
+                return collect($this->academicGroupKeysForItem($item))
+                    ->map(fn (string $groupKey): array => [
+                        'group_key' => $groupKey,
+                        'item' => $item,
+                    ])
+                    ->all();
+            })
+            ->groupBy('group_key')
+            ->map(function (Collection $groupRows, string $groupKey) use ($minimumGapDays, $avoidConsecutive, &$warnings): array {
+                $groupItems = $groupRows->pluck('item');
                 $orderedItems = $groupItems
                     ->sortBy([
                         ['exam_date', 'asc'],
@@ -1030,8 +1042,10 @@ class ExamScheduleGeneratorService
 
     protected function pinnedOfferingsConflict(SubjectExamOffering $offering, SubjectExamOffering $candidate): bool
     {
-        $sameAcademicGroup = (int) $offering->subject?->department_id === (int) $candidate->subject?->department_id
-            && (int) $offering->subject?->study_level_id === (int) $candidate->subject?->study_level_id;
+        $sameAcademicGroup = array_intersect(
+            $this->academicGroupKeysForSubject($offering->subject),
+            $this->academicGroupKeysForSubject($candidate->subject),
+        ) !== [];
 
         if ($sameAcademicGroup) {
             return true;
@@ -1524,6 +1538,10 @@ class ExamScheduleGeneratorService
         $pinnedRosterIds = [];
 
         foreach ($this->pinnedOfferingsForSettings($settings)->get() as $offering) {
+            if ($offering->subject?->is_shared_subject) {
+                $this->ensureSharedSubjectCanBeScheduled($offering->subject);
+            }
+
             $roster = $this->matchingReadyRosterForOffering($offering, $settings);
             $payload = $roster ? $this->subjectPayload($roster, $settings) : $this->subjectPayloadFromOffering($offering);
             $period = $this->periodFromSettings($settings, $offering->exam_start_time);
@@ -1532,6 +1550,7 @@ class ExamScheduleGeneratorService
                 'pinned_from_offering_id' => $offering->id,
                 'period_name' => $period['name'] ?? null,
                 'academic_group_key' => $payload['academic_group_key'],
+                'academic_group_keys' => $payload['academic_group_keys'],
                 'shared_subject_scheduling_mode' => 'single',
                 'student_numbers' => $payload['student_numbers_for_metadata'],
                 'student_numbers_truncated' => $payload['student_numbers_truncated'],
@@ -1580,7 +1599,7 @@ class ExamScheduleGeneratorService
     protected function pinnedOfferingsForSettings(array $settings): Builder
     {
         return SubjectExamOffering::query()
-            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'examStudents'])
+            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'subject.sharedDepartments', 'examStudents'])
             ->where('is_pinned', true)
             ->where('academic_year_id', $settings['academic_year_id'])
             ->where('semester_id', $settings['semester_id'])
@@ -1598,7 +1617,7 @@ class ExamScheduleGeneratorService
     protected function matchingReadyRosterForOffering(SubjectExamOffering $offering, array $settings): ?SubjectExamRoster
     {
         return SubjectExamRoster::query()
-            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'college', 'department', 'studyLevel'])
+            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'subject.sharedDepartments', 'college', 'department', 'studyLevel'])
             ->withCount([
                 'eligibleRosterStudents as eligible_students_count',
                 'eligibleRosterStudents as regular_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Regular->value),
@@ -1634,10 +1653,8 @@ class ExamScheduleGeneratorService
             'subject' => $offering->subject,
             'department_id' => $offering->subject?->department_id,
             'study_level_id' => $offering->subject?->study_level_id,
-            'academic_group_key' => implode('|', [
-                'department:'.($offering->subject?->department_id ?: 'none'),
-                'level:'.($offering->subject?->study_level_id ?: 'none'),
-            ]),
+            'academic_group_key' => $this->academicGroupKeysForSubject($offering->subject)[0] ?? $this->academicGroupKeyForSubject($offering->subject),
+            'academic_group_keys' => $this->academicGroupKeysForSubject($offering->subject),
             'student_count' => $studentCount,
             'regular_count' => $offering->examStudents->where('student_type', ExamStudentType::Regular->value)->count(),
             'carry_count' => $offering->examStudents->where('student_type', ExamStudentType::Carry->value)->count(),
@@ -1679,11 +1696,13 @@ class ExamScheduleGeneratorService
         $slotLoads[$slotKey] = ($slotLoads[$slotKey] ?? 0) + 1;
         $dayLoads[$date] = ($dayLoads[$date] ?? 0) + 1;
 
-        $academicAssignments[$this->academicGroupKeyForItem($item)][] = [
-            'date' => $date,
-            'start_time' => $startTime,
-            'shared_group_key' => $item->shared_group_key,
-        ];
+        foreach ($this->academicGroupKeysForItem($item) as $academicGroupKey) {
+            $academicAssignments[$academicGroupKey][] = [
+                'date' => $date,
+                'start_time' => $startTime,
+                'shared_group_key' => $item->shared_group_key,
+            ];
+        }
 
         foreach ($this->studentNumbersForItem($item) as $studentNumber) {
             $studentAssignments[$studentNumber][] = [
@@ -1843,7 +1862,10 @@ class ExamScheduleGeneratorService
                     continue;
                 }
 
-                $sameAcademicGroup = $this->academicGroupKeyForItem($first) === $this->academicGroupKeyForItem($second);
+                $sameAcademicGroup = array_intersect(
+                    $this->academicGroupKeysForItem($first),
+                    $this->academicGroupKeysForItem($second),
+                ) !== [];
                 $sharedStudents = array_values(array_intersect(
                     $this->studentNumbersForItem($first),
                     $this->studentNumbersForItem($second),
@@ -1903,7 +1925,7 @@ class ExamScheduleGeneratorService
             ]);
 
             $rosters = SubjectExamRoster::query()
-                ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'college', 'department', 'studyLevel'])
+                ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'subject.sharedDepartments', 'college', 'department', 'studyLevel'])
                 ->withCount([
                     'eligibleRosterStudents as eligible_students_count',
                     'eligibleRosterStudents as regular_students_count' => fn (Builder $query) => $query->where('student_type', ExamStudentType::Regular->value),
@@ -1950,6 +1972,7 @@ class ExamScheduleGeneratorService
             $this->validateRosterRelations($rosters);
 
             $subjectPayloads = $rosters->map(fn (SubjectExamRoster $roster): array => $this->subjectPayload($roster, $settings));
+            $this->validateSharedSubjectDepartments($subjectPayloads);
             $units = collect();
             $handledSubjectIds = [];
 
@@ -2052,6 +2075,80 @@ class ExamScheduleGeneratorService
     }
 
     /**
+     * @param  Collection<int, array<string, mixed>>  $subjectPayloads
+     */
+    protected function validateSharedSubjectDepartments(Collection $subjectPayloads): void
+    {
+        $invalidSubjects = $subjectPayloads
+            ->pluck('subject')
+            ->filter(fn (?Subject $subject): bool => $subject?->is_shared_subject)
+            ->unique('id')
+            ->filter(function (Subject $subject): bool {
+                return ! $this->sharedSubjectCanBeScheduled($subject);
+            })
+            ->map(fn (Subject $subject): array => [
+                'subject_id' => $subject->id,
+                'subject' => $subject->name,
+                'selected_departments_count' => $subject->sharedDepartments->count(),
+            ])
+            ->values()
+            ->all();
+
+        if ($invalidSubjects !== []) {
+            throw ValidationException::withMessages([
+                'shared_departments' => 'توجد مواد محددة كمشتركة دون تحديد قسمين من نفس الكلية على الأقل. افتح صفحة المادة وحدد الأقسام المشتركة قبل توليد البرنامج.',
+            ]);
+        }
+
+        $invalidRosters = $subjectPayloads
+            ->filter(function (array $payload): bool {
+                /** @var Subject|null $subject */
+                $subject = $payload['subject'] ?? null;
+
+                if (! $subject?->is_shared_subject) {
+                    return false;
+                }
+
+                $subject->loadMissing('sharedDepartments');
+                $departmentId = (int) ($payload['department_id'] ?? 0);
+
+                return ! $subject->sharedDepartments->pluck('id')->contains($departmentId);
+            })
+            ->map(fn (array $payload): array => $this->subjectFailureDetailFromPayload($payload) + [
+                'reason' => 'department_not_shared',
+            ])
+            ->values()
+            ->all();
+
+        if ($invalidRosters === []) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'shared_departments' => 'توجد قوائم طلاب لأقسام غير محددة ضمن الأقسام المشتركة للمادة. راجع صفحة المادة وحدد الأقسام التي تدرسها فعليًا.',
+        ]);
+    }
+
+    protected function ensureSharedSubjectCanBeScheduled(Subject $subject): void
+    {
+        if ($this->sharedSubjectCanBeScheduled($subject)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'shared_departments' => 'توجد مواد محددة كمشتركة دون تحديد قسمين من نفس الكلية على الأقل. افتح صفحة المادة وحدد الأقسام المشتركة قبل توليد البرنامج.',
+        ]);
+    }
+
+    protected function sharedSubjectCanBeScheduled(Subject $subject): bool
+    {
+        $subject->loadMissing('sharedDepartments');
+
+        return $subject->sharedDepartments->count() >= 2
+            && ! $subject->sharedDepartments->contains(fn ($department): bool => (int) $department->college_id !== (int) $subject->college_id);
+    }
+
+    /**
      * @param  array<string, mixed>  $settings
      * @return array<string, mixed>
      */
@@ -2088,7 +2185,8 @@ class ExamScheduleGeneratorService
             'subject' => $subject,
             'department_id' => $roster->department_id ?: $subject->department_id,
             'study_level_id' => $roster->study_level_id ?: $subject->study_level_id,
-            'academic_group_key' => $this->academicGroupKeyForRoster($roster),
+            'academic_group_key' => $this->academicGroupKeysForRoster($roster)[0] ?? $this->academicGroupKeyForRoster($roster),
+            'academic_group_keys' => $this->academicGroupKeysForRoster($roster),
             'student_count' => $studentCount,
             'regular_count' => (int) ($roster->regular_students_count ?? 0),
             'carry_count' => (int) ($roster->carry_students_count ?? 0),
@@ -2138,7 +2236,10 @@ class ExamScheduleGeneratorService
     protected function unitFromPayloads(Collection $payloads, ?string $groupKey, string $sharedSubjectSchedulingMode): array
     {
         $isShared = $payloads->contains(fn (array $payload): bool => (bool) $payload['subject']->is_shared_subject);
-        $academicGroupKeys = $payloads->pluck('academic_group_key')->unique()->values();
+        $academicGroupKeys = $payloads
+            ->flatMap(fn (array $payload): array => $payload['academic_group_keys'] ?? [$payload['academic_group_key']])
+            ->unique()
+            ->values();
         $studentNumbers = $payloads
             ->flatMap(fn (array $payload): array => $payload['student_numbers'])
             ->unique()
@@ -2636,6 +2737,7 @@ class ExamScheduleGeneratorService
                 'conflict_notes' => $conflictNotes,
                 'metadata' => [
                     'academic_group_key' => $subjectPayload['academic_group_key'],
+                    'academic_group_keys' => $subjectPayload['academic_group_keys'],
                     'shared_subject_scheduling_mode' => $unit['shared_subject_scheduling_mode'],
                     'student_numbers' => $subjectPayload['student_numbers_for_metadata'],
                     'student_numbers_truncated' => $subjectPayload['student_numbers_truncated'],
@@ -3047,6 +3149,90 @@ class ExamScheduleGeneratorService
             'department:'.($roster->department_id ?: $roster->subject?->department_id ?: 'none'),
             'level:'.($roster->study_level_id ?: $roster->subject?->study_level_id ?: 'none'),
         ]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function academicGroupKeysForRoster(SubjectExamRoster $roster): array
+    {
+        $subject = $roster->subject;
+
+        if (! $subject?->is_shared_subject) {
+            return [$this->academicGroupKeyForRoster($roster)];
+        }
+
+        $subject->loadMissing('sharedDepartments');
+        $levelId = $roster->study_level_id ?: $subject->study_level_id ?: 'none';
+
+        return $subject->sharedDepartments
+            ->pluck('id')
+            ->map(fn (mixed $departmentId): string => $this->academicGroupKeyForDepartmentAndLevel($departmentId, $levelId))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function academicGroupKeysForSubject(?Subject $subject): array
+    {
+        if (! $subject) {
+            return [$this->academicGroupKeyForSubject($subject)];
+        }
+
+        if (! $subject->is_shared_subject) {
+            return [$this->academicGroupKeyForSubject($subject)];
+        }
+
+        $subject->loadMissing('sharedDepartments');
+
+        if ($subject->sharedDepartments->isEmpty()) {
+            return [$this->academicGroupKeyForSubject($subject)];
+        }
+
+        return $subject->sharedDepartments
+            ->pluck('id')
+            ->map(fn (mixed $departmentId): string => $this->academicGroupKeyForDepartmentAndLevel($departmentId, $subject->study_level_id ?: 'none'))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    protected function academicGroupKeyForSubject(?Subject $subject): string
+    {
+        return $this->academicGroupKeyForDepartmentAndLevel(
+            $subject?->department_id ?: 'none',
+            $subject?->study_level_id ?: 'none',
+        );
+    }
+
+    protected function academicGroupKeyForDepartmentAndLevel(mixed $departmentId, mixed $studyLevelId): string
+    {
+        return implode('|', [
+            'department:'.($departmentId ?: 'none'),
+            'level:'.($studyLevelId ?: 'none'),
+        ]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function academicGroupKeysForItem(ExamScheduleDraftItem $item): array
+    {
+        $metadata = $item->metadata ?? [];
+
+        if (filled($metadata['academic_group_keys'] ?? null) && is_array($metadata['academic_group_keys'])) {
+            return collect($metadata['academic_group_keys'])
+                ->filter()
+                ->map(fn (mixed $groupKey): string => (string) $groupKey)
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        return [$this->academicGroupKeyForItem($item)];
     }
 
     protected function academicGroupKeyForItem(ExamScheduleDraftItem $item): string

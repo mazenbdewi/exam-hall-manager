@@ -56,6 +56,24 @@ class SubjectsTable
                     ->boolean()
                     ->sortable()
                     ->toggleable(),
+                TextColumn::make('shared_departments_status')
+                    ->label('حالة المشاركة')
+                    ->state(function (Subject $record): string {
+                        if (! $record->is_shared_subject) {
+                            return 'غير مشتركة';
+                        }
+
+                        $departments = $record->sharedDepartments
+                            ->pluck('name')
+                            ->filter()
+                            ->implode('، ');
+
+                        return filled($departments)
+                            ? 'مشتركة بين: '.$departments
+                            : 'مشتركة دون أقسام محددة';
+                    })
+                    ->badge()
+                    ->toggleable(),
                 IconColumn::make('is_core_subject')
                     ->label('مادة أساسية')
                     ->boolean()
