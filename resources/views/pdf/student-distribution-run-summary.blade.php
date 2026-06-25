@@ -28,6 +28,7 @@
         $problemSubjects = collect($summary['unassigned_by_subject'] ?? [])
             ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
             ->values();
+        $failureDetails = collect($summary['failure_details'] ?? []);
     @endphp
 
     @include('pdf.partials.report-header', [
@@ -40,8 +41,44 @@
     ])
 
     <div class="{{ $run->status === 'success' ? 'success' : ($run->status === 'partial' ? 'warning' : 'danger') }}">
-        {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message')) }}
+        {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message_detailed')) }}
     </div>
+
+    @if ($failureDetails->isNotEmpty())
+        <h3>{{ __('exam.global_hall_distribution.failure_details_title') }}</h3>
+        <table class="grid">
+            <thead>
+                <tr>
+                    <th>{{ __('exam.fields.subject') }}</th>
+                    <th>{{ __('exam.fields.department') }}</th>
+                    <th>{{ __('exam.fields.students_count') }}</th>
+                    <th>{{ __('exam.fields.period') }}</th>
+                    <th>{{ __('exam.global_hall_distribution.required_hall_type') }}</th>
+                    <th>{{ __('exam.fields.available_capacity') }}</th>
+                    <th>{{ __('exam.global_hall_distribution.required_capacity') }}</th>
+                    <th>{{ __('exam.global_hall_distribution.reason_code') }}</th>
+                    <th>{{ __('exam.fields.reason') }}</th>
+                    <th>{{ __('exam.global_hall_distribution.suggested_action') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach ($failureDetails as $detail)
+                    <tr>
+                        <td>{{ $detail['subject_name'] ?? '—' }}</td>
+                        <td>{{ $detail['department_name'] ?? '—' }}</td>
+                        <td>{{ $detail['students_count'] ?? 0 }}</td>
+                        <td>{{ ($detail['exam_date'] ?? '—').' '.substr((string) ($detail['start_time'] ?? ''), 0, 5) }}</td>
+                        <td>{{ $detail['required_hall_type'] ?? '—' }}</td>
+                        <td>{{ $detail['available_capacity'] ?? 0 }}</td>
+                        <td>{{ $detail['required_capacity'] ?? 0 }}</td>
+                        <td>{{ $detail['reason_code'] ?? 'unknown_distribution_error' }}</td>
+                        <td>{{ $detail['reason_message'] ?? '—' }}</td>
+                        <td>{{ $detail['suggested_action'] ?? '—' }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    @endif
 
     <table class="grid">
         <tbody>

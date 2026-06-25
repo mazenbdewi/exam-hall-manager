@@ -39,6 +39,7 @@ use Carbon\Carbon;
 use Database\Seeders\InvigilatorSeeder;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
@@ -977,9 +978,55 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertDatabaseHas('student_distribution_run_issues', [
             'student_distribution_run_id' => $run->id,
             'subject_exam_offering_id' => $context['offering']->id,
-            'issue_type' => 'capacity_shortage',
+            'issue_type' => 'insufficient_capacity',
             'affected_students_count' => 2,
         ]);
+    }
+
+    #[Test]
+    public function global_distribution_capacity_failure_stores_detailed_reason_and_logs_it(): void
+    {
+        Log::spy();
+        $context = $this->createSlotContext();
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة صغيرة',
+            'location' => 'المبنى الأول',
+            'capacity' => 3,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        for ($index = 1; $index <= 5; $index++) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $context['offering']->id,
+                'student_number' => 'CAP'.$index,
+                'full_name' => 'طالب سعة '.$index,
+                'student_type' => ExamStudentType::Regular->value,
+            ]);
+        }
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame('insufficient_capacity', $result['failure_details'][0]['reason_code']);
+        $this->assertSame(5, $result['failure_details'][0]['required_capacity']);
+        $this->assertSame(3, $result['failure_details'][0]['available_capacity']);
+        $this->assertSame(2, $result['failure_details'][0]['capacity_shortage']);
+        $this->assertStringContainsString('عدد الطلاب 5', $result['failure_details'][0]['reason_message']);
+
+        Log::shouldHaveReceived('warning')
+            ->with('Global hall distribution failed', \Mockery::on(fn (array $context): bool => $context['reason_code'] === 'insufficient_capacity'
+                && $context['students_count'] === 5
+                && $context['required_capacity'] === 5
+                && $context['available_capacity'] === 3))
+            ->once();
     }
 
     #[Test]
@@ -1022,6 +1069,117 @@ class InvigilatorDistributionTest extends TestCase
             'issue_type' => 'no_available_halls',
             'affected_students_count' => 4,
         ]);
+        $this->assertSame('no_available_halls', $run->fresh()->summary_json['failure_details'][0]['reason_code']);
+    }
+
+    #[Test]
+    public function global_distribution_reports_drawing_subject_without_suitable_studio(): void
+    {
+        $context = $this->createSlotContext();
+        $context['offering']->subject()->update(['is_drawing_subject' => true]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة عادية',
+            'location' => 'المبنى الأول',
+            'capacity' => 50,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+            'is_drawing_studio' => false,
+        ]);
+
+        for ($index = 1; $index <= 2; $index++) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $context['offering']->id,
+                'student_number' => 'DRAW'.$index,
+                'full_name' => 'طالب رسم '.$index,
+                'student_type' => ExamStudentType::Regular->value,
+            ]);
+        }
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame('hall_type_required_not_available', $result['failure_details'][0]['reason_code']);
+        $this->assertStringContainsString('مرسم', $result['failure_details'][0]['reason_message']);
+        $this->assertSame(0, $result['failure_details'][0]['available_halls_count']);
+    }
+
+    #[Test]
+    public function global_distribution_reports_missing_ready_roster_when_students_are_zero(): void
+    {
+        $context = $this->createSlotContext();
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة متاحة',
+            'location' => 'المبنى الأول',
+            'capacity' => 50,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $this->assertSame('failed', $result['status']);
+        $this->assertSame('missing_student_roster', $result['failure_details'][0]['reason_code']);
+        $this->assertStringContainsString('قائمة طلاب', $result['failure_details'][0]['reason_message']);
+    }
+
+    #[Test]
+    public function global_distribution_results_page_shows_saved_failure_details_after_refresh(): void
+    {
+        $context = $this->createSlotContext();
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة محدودة',
+            'location' => 'المبنى الأول',
+            'capacity' => 3,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        for ($index = 1; $index <= 5; $index++) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $context['offering']->id,
+                'student_number' => 'PAGE'.$index,
+                'full_name' => 'طالب صفحة '.$index,
+                'student_type' => ExamStudentType::Regular->value,
+            ]);
+        }
+
+        app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $run = StudentDistributionRun::query()->latest('id')->firstOrFail();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(GlobalDistributionResults::class, ['run' => $run])
+            ->assertSee('تفاصيل سبب فشل التوزيع')
+            ->assertSee('insufficient_capacity')
+            ->assertSee('عدد الطلاب 5')
+            ->assertSee('السعة المتاحة في القاعات المناسبة هي 3')
+            ->assertSee('النقص: 2')
+            ->assertSee('فتح المادة')
+            ->assertDontSee('فشل التوزيع بسبب مشكلة في البيانات أو القاعات');
     }
 
     #[Test]
