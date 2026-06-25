@@ -142,12 +142,17 @@
                     </div>
 
                     <div class="mt-4 overflow-x-auto">
-                        <table class="w-full min-w-[1180px] divide-y divide-gray-200 text-sm dark:divide-white/10">
+                        <table class="w-full min-w-[1480px] divide-y divide-gray-200 text-sm dark:divide-white/10">
                             <thead>
                                 <tr class="bg-gray-50 text-gray-600 dark:bg-white/5 dark:text-gray-300">
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.subject') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.college') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.department') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.roster_diagnostics.roster_id') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.roster_diagnostics.roster_status') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.roster_diagnostics.raw_students_count') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.roster_diagnostics.eligible_students_count') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.roster_diagnostics.after_filters_count') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.students_count') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.exam_date') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.period') }}</th>
@@ -167,6 +172,11 @@
                                         <td class="px-3 py-3 font-medium text-gray-950 dark:text-white">{{ $detail['subject_name'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ $detail['college_name'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ $detail['department_name'] ?? '—' }}</td>
+                                        <td class="px-3 py-3">{{ $detail['roster_id'] ?? '—' }}</td>
+                                        <td class="px-3 py-3">{{ $detail['roster_status'] ?? '—' }}</td>
+                                        <td class="px-3 py-3">{{ $detail['roster_students_count_raw'] ?? '—' }}</td>
+                                        <td class="px-3 py-3">{{ $detail['eligible_students_count'] ?? '—' }}</td>
+                                        <td class="px-3 py-3">{{ $detail['students_count_after_filters'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ $detail['students_count'] ?? 0 }}</td>
                                         <td class="px-3 py-3">{{ $detail['exam_date'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ substr((string) ($detail['start_time'] ?? ''), 0, 5) ?: '—' }}</td>
@@ -199,6 +209,16 @@
                                         <td class="px-3 py-3">{{ $detail['reason_message'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ $detail['suggested_action'] ?? '—' }}</td>
                                         <td class="px-3 py-3">
+                                            @if (filled($detail['student_resolution_diagnostic'] ?? null))
+                                                <div class="mb-2 max-w-sm text-xs leading-5 text-gray-600 dark:text-gray-300">
+                                                    {{ $detail['student_resolution_diagnostic'] }}
+                                                </div>
+                                            @endif
+                                            @if (! empty($detail['student_resolution_exclusion_reasons'] ?? []))
+                                                <div class="mb-2 max-w-sm text-xs leading-5 text-warning-700 dark:text-warning-300">
+                                                    {{ implode('، ', $detail['student_resolution_exclusion_reasons']) }}
+                                                </div>
+                                            @endif
                                             <div class="flex flex-wrap gap-2">
                                                 @if (filled($detail['subject_url'] ?? null))
                                                     <x-filament::button size="xs" color="gray" icon="heroicon-o-pencil-square" tag="a" :href="$detail['subject_url']">

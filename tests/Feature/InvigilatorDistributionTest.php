@@ -29,6 +29,7 @@ use App\Models\StudentDistributionRunIssue;
 use App\Models\StudyLevel;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
+use App\Models\SubjectExamRoster;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\ExamHallDistributionService;
@@ -1137,6 +1138,179 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function global_distribution_reads_students_from_ready_roster_when_exam_students_are_empty(): void
+    {
+        $context = $this->createSlotContext();
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة كافية للقائمة',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $roster = $this->createReadyRosterForOffering($context['offering'], [
+            ['SYNC1', 'طالب مزامنة 1', ExamStudentType::Regular->value, true],
+            ['SYNC2', 'طالب مزامنة 2', ExamStudentType::Carry->value, true],
+            ['SYNC3', 'طالب مزامنة 3', ExamStudentType::Regular->value, true],
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(3, $result['total_students']);
+        $this->assertSame(3, $result['distributed_students']);
+        $this->assertSame([], $result['failure_details']);
+        $this->assertSame(3, ExamStudent::query()->where('subject_exam_offering_id', $context['offering']->id)->count());
+        $this->assertSame(3, $roster->rosterStudents()->count());
+    }
+
+    #[Test]
+    public function global_distribution_reports_no_eligible_students_for_ready_roster_with_only_ineligible_students(): void
+    {
+        $context = $this->createSlotContext();
+        $user = User::factory()->create(['college_id' => $context['college']->id]);
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة متاحة',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $roster = $this->createReadyRosterForOffering($context['offering'], [
+            ['NOELIG1', 'طالب غير مؤهل 1', ExamStudentType::Regular->value, false],
+            ['NOELIG2', 'طالب غير مؤهل 2', ExamStudentType::Carry->value, false],
+            ['NOELIG3', 'طالب غير مؤهل 3', ExamStudentType::Regular->value, false],
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $detail = $result['failure_details'][0];
+
+        $this->assertSame('failed', $result['status']);
+        $this->assertSame('no_eligible_students', $detail['reason_code']);
+        $this->assertStringContainsString('لا يوجد طلاب مؤهلون', $detail['reason_message']);
+        $this->assertSame($roster->id, $detail['roster_id']);
+        $this->assertSame(3, $detail['roster_students_count_raw']);
+        $this->assertSame(0, $detail['eligible_students_count']);
+        $this->assertSame(0, $detail['students_count_after_filters']);
+        $this->assertNotSame('zero_students', $detail['reason_code']);
+
+        $run = StudentDistributionRun::query()->latest('id')->firstOrFail();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(GlobalDistributionResults::class, ['run' => $run])
+            ->assertSee('رقم القائمة')
+            ->assertSee((string) $roster->id)
+            ->assertSee('طلاب القائمة فعليًا')
+            ->assertSee('القائمة تحتوي 3 طالب')
+            ->assertSee('كل الطلاب داخل القائمة غير مؤهلين للتوزيع');
+    }
+
+    #[Test]
+    public function global_distribution_reports_roster_filter_mismatch_and_logs_student_resolution_context(): void
+    {
+        Log::spy();
+        $context = $this->createSlotContext();
+        $differentAcademicYear = AcademicYear::query()->create(['name' => '2024-2025', 'is_active' => true]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة متاحة',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $roster = $this->createReadyRosterForOffering($context['offering'], [
+            ['YEAR1', 'طالب سنة مختلفة 1', ExamStudentType::Regular->value, true],
+            ['YEAR2', 'طالب سنة مختلفة 2', ExamStudentType::Regular->value, true],
+        ], [
+            'academic_year_id' => $differentAcademicYear->id,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $detail = $result['failure_details'][0];
+
+        $this->assertSame('failed', $result['status']);
+        $this->assertSame('roster_filter_mismatch', $detail['reason_code']);
+        $this->assertStringContainsString('لا تطابق شروط التوزيع', $detail['reason_message']);
+        $this->assertSame($roster->id, $detail['roster_id']);
+        $this->assertSame(2, $detail['roster_students_count_raw']);
+        $this->assertSame(2, $detail['eligible_students_count']);
+        $this->assertSame(0, $detail['students_count_after_filters']);
+        $this->assertContains('القائمة تابعة لعام دراسي مختلف عن العرض الامتحاني.', $detail['student_resolution_exclusion_reasons']);
+
+        Log::shouldHaveReceived('warning')
+            ->with('Distribution failed because students were not resolved', \Mockery::on(fn (array $context): bool => ($context['roster_id'] ?? null) === $roster->id
+                && ($context['roster_students_count_raw'] ?? null) === 2
+                && ($context['eligible_students_count'] ?? null) === 2
+                && ($context['students_count_after_filters'] ?? null) === 0
+                && ($context['filters_applied']['academic_year_id'] ?? null) === $context['academic_year_id']))
+            ->once();
+    }
+
+    #[Test]
+    public function global_distribution_does_not_trust_stale_roster_metadata_student_counts(): void
+    {
+        $context = $this->createSlotContext();
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة متاحة',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $roster = $this->createReadyRosterForOffering($context['offering'], [], [
+            'metadata' => ['students_count' => 455],
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+        );
+
+        $detail = $result['failure_details'][0];
+
+        $this->assertSame('failed', $result['status']);
+        $this->assertSame('zero_students', $detail['reason_code']);
+        $this->assertSame($roster->id, $detail['roster_id']);
+        $this->assertSame(0, $detail['roster_students_count_raw']);
+        $this->assertSame(0, $detail['eligible_students_count']);
+        $this->assertSame(0, $detail['students_count_after_filters']);
+        $this->assertSame(0, ExamStudent::query()->where('subject_exam_offering_id', $context['offering']->id)->count());
+    }
+
+    #[Test]
     public function global_distribution_results_page_shows_saved_failure_details_after_refresh(): void
     {
         $context = $this->createSlotContext();
@@ -1581,6 +1755,36 @@ class InvigilatorDistributionTest extends TestCase
         ]);
 
         return compact('college', 'offering');
+    }
+
+    protected function createReadyRosterForOffering(SubjectExamOffering $offering, array $students, array $overrides = []): SubjectExamRoster
+    {
+        $offering->loadMissing('subject');
+
+        $roster = SubjectExamRoster::query()->create([
+            'college_id' => $offering->subject->college_id,
+            'department_id' => $offering->subject->department_id,
+            'subject_id' => $offering->subject_id,
+            'academic_year_id' => $offering->academic_year_id,
+            'semester_id' => $offering->semester_id,
+            'study_level_id' => $offering->subject->study_level_id,
+            'name' => 'قائمة اختبار التوزيع',
+            'status' => 'ready',
+            'source' => 'test',
+            ...$overrides,
+        ]);
+
+        foreach ($students as [$studentNumber, $fullName, $studentType, $isEligible]) {
+            $roster->rosterStudents()->create([
+                'student_number' => $studentNumber,
+                'original_student_number' => $studentNumber,
+                'full_name' => $fullName,
+                'student_type' => $studentType,
+                'is_eligible' => $isEligible,
+            ]);
+        }
+
+        return $roster;
     }
 
     protected function createUsedHall(College $college, string $name, ExamHallType $type): ExamHall

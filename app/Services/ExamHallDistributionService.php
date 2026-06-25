@@ -49,6 +49,9 @@ class ExamHallDistributionService
             ->orderBy('id')
             ->get();
 
+        $this->syncMissingExamStudentsFromReadyRosters($offerings);
+        $offerings->loadCount('examStudents');
+
         if ($offerings->isEmpty()) {
             return $this->persistGlobalDistributionResult($this->globalDistributionFailure(
                 collegeId: $collegeId,
@@ -1207,7 +1210,12 @@ class ExamHallDistributionService
             ->whereDate('exam_date', $examDate)
             ->whereTime('exam_start_time', $examStartTime)
             ->whereHas('subject', fn ($query) => $query->where('college_id', $collegeId))
-            ->get()
+            ->get();
+
+        $this->syncMissingExamStudentsFromReadyRosters($slotOfferings);
+        $slotOfferings->loadCount('examStudents');
+
+        $slotOfferings = $slotOfferings
             ->sort(function (SubjectExamOffering $first, SubjectExamOffering $second): int {
                 $studentsComparison = ($second->exam_students_count ?? 0) <=> ($first->exam_students_count ?? 0);
 
@@ -1658,6 +1666,7 @@ class ExamHallDistributionService
         $offering->loadMissing('subject.college', 'subject.department', 'academicYear', 'semester');
 
         $studentsCount = (int) ($offering->exam_students_count ?? $offering->examStudents()->count());
+        $rosterDiagnostics = $studentsCount === 0 ? $this->rosterDiagnosticsForOffering($offering) : [];
         $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
         $suitableHalls = $this->suitableHallsForOffering($offering, $slotOfferings, $activeHalls);
         $availableCapacity = (int) $suitableHalls->sum('capacity');
@@ -1685,6 +1694,7 @@ class ExamHallDistributionService
             invalidCapacityHallsCount: $invalidCapacityHallsCount,
             busyHallsCount: $busyHallsCount,
             fallbackReasonCode: $fallbackReasonCode,
+            rosterDiagnostics: $rosterDiagnostics,
         );
         $reasonMessage = $this->distributionFailureReasonMessage(
             reasonCode: $reasonCode,
@@ -1695,6 +1705,10 @@ class ExamHallDistributionService
             suitableHallsCount: $suitableHalls->count(),
             busyHallsCount: $busyHallsCount,
         );
+
+        if ($studentsCount === 0) {
+            $this->logStudentsNotResolved($offering, $rosterDiagnostics);
+        }
 
         return [
             'subject_exam_offering_id' => $offering->id,
@@ -1722,6 +1736,14 @@ class ExamHallDistributionService
             'suggested_action' => $this->distributionFailureSuggestedAction($reasonCode, $capacityShortage),
             'is_drawing_subject' => $this->isDrawingSubjectOffering($offering),
             'is_pinned' => (bool) $offering->is_pinned,
+            'roster_diagnostics' => $rosterDiagnostics,
+            'roster_id' => $rosterDiagnostics['roster_id'] ?? null,
+            'roster_status' => $rosterDiagnostics['roster_status'] ?? null,
+            'roster_students_count_raw' => $rosterDiagnostics['roster_students_count_raw'] ?? null,
+            'eligible_students_count' => $rosterDiagnostics['eligible_students_count'] ?? null,
+            'students_count_after_filters' => $rosterDiagnostics['students_count_after_filters'] ?? null,
+            'student_resolution_diagnostic' => $rosterDiagnostics['diagnostic_message'] ?? null,
+            'student_resolution_exclusion_reasons' => $rosterDiagnostics['exclusion_reasons'] ?? [],
         ];
     }
 
@@ -1773,12 +1795,28 @@ class ExamHallDistributionService
         int $invalidCapacityHallsCount,
         int $busyHallsCount,
         ?string $fallbackReasonCode = null,
+        ?array $rosterDiagnostics = null,
     ): string {
         if (! $offering->exam_date || blank($offering->exam_start_time)) {
             return 'missing_exam_slot';
         }
 
         if ($studentsCount === 0) {
+            if ((int) ($rosterDiagnostics['roster_students_count_raw'] ?? 0) > 0
+                && (int) ($rosterDiagnostics['eligible_students_count'] ?? 0) === 0) {
+                return 'no_eligible_students';
+            }
+
+            if ((bool) ($rosterDiagnostics['has_roster_filter_mismatch'] ?? false)) {
+                return 'roster_filter_mismatch';
+            }
+
+            if ((int) ($rosterDiagnostics['roster_students_count_raw'] ?? 0) > 0
+                && (int) ($rosterDiagnostics['eligible_students_count'] ?? 0) > 0
+                && (bool) ($rosterDiagnostics['has_matching_ready_roster'] ?? false)) {
+                return 'exam_students_not_synced';
+            }
+
             return $this->hasReadyRosterForOffering($offering) ? 'zero_students' : 'missing_student_roster';
         }
 
@@ -1827,6 +1865,9 @@ class ExamHallDistributionService
             ]),
             'missing_student_roster' => __('exam.global_hall_distribution.failure_reasons.missing_student_roster'),
             'zero_students' => __('exam.global_hall_distribution.failure_reasons.zero_students'),
+            'no_eligible_students' => __('exam.global_hall_distribution.failure_reasons.no_eligible_students'),
+            'exam_students_not_synced' => __('exam.global_hall_distribution.failure_reasons.exam_students_not_synced'),
+            'roster_filter_mismatch' => __('exam.global_hall_distribution.failure_reasons.roster_filter_mismatch'),
             'missing_exam_slot' => __('exam.global_hall_distribution.failure_reasons.missing_exam_slot'),
             'hall_type_required_not_available' => $suitableHallsCount === 0
                 ? __('exam.global_hall_distribution.failure_reasons.hall_type_required_not_available')
@@ -1859,6 +1900,9 @@ class ExamHallDistributionService
             ]),
             'missing_student_roster' => __('exam.global_hall_distribution.failure_actions.prepare_roster'),
             'zero_students' => __('exam.global_hall_distribution.failure_actions.import_students'),
+            'no_eligible_students' => __('exam.global_hall_distribution.failure_actions.review_eligibility'),
+            'exam_students_not_synced' => __('exam.global_hall_distribution.failure_actions.sync_exam_students'),
+            'roster_filter_mismatch' => __('exam.global_hall_distribution.failure_actions.review_roster_filters'),
             'missing_exam_slot' => __('exam.global_hall_distribution.failure_actions.set_exam_slot'),
             'hall_type_required_not_available' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
             'all_halls_busy' => __('exam.global_hall_distribution.failure_actions.move_exam_or_free_halls'),
@@ -1884,12 +1928,208 @@ class ExamHallDistributionService
 
     protected function hasReadyRosterForOffering(SubjectExamOffering $offering): bool
     {
+        return (bool) $this->matchingReadyRosterForOffering($offering);
+    }
+
+    /**
+     * @param  Collection<int, SubjectExamOffering>  $offerings
+     */
+    protected function syncMissingExamStudentsFromReadyRosters(Collection $offerings): void
+    {
+        foreach ($offerings as $offering) {
+            $examStudentsCount = (int) ($offering->exam_students_count ?? $offering->examStudents()->count());
+
+            if ($examStudentsCount > 0) {
+                continue;
+            }
+
+            $rosters = $this->readyRostersForOffering($offering);
+
+            if ($rosters->isEmpty()) {
+                continue;
+            }
+
+            foreach ($rosters as $roster) {
+                $students = $roster
+                    ->eligibleRosterStudents()
+                    ->orderBy('student_number')
+                    ->orderBy('full_name')
+                    ->get();
+
+                if ($students->isEmpty()) {
+                    continue;
+                }
+
+                foreach ($students as $student) {
+                    ExamStudent::query()->updateOrCreate(
+                        [
+                            'subject_exam_offering_id' => $offering->id,
+                            'student_number' => $student->student_number,
+                        ],
+                        [
+                            'full_name' => $student->full_name,
+                            'student_type' => $student->student_type,
+                            'notes' => $student->notes,
+                        ],
+                    );
+                }
+            }
+
+            $offering->unsetRelation('examStudents');
+        }
+    }
+
+    protected function matchingReadyRosterForOffering(SubjectExamOffering $offering): ?SubjectExamRoster
+    {
+        return $this->readyRostersForOffering($offering)->first();
+    }
+
+    /**
+     * @return Collection<int, SubjectExamRoster>
+     */
+    protected function readyRostersForOffering(SubjectExamOffering $offering): Collection
+    {
+        $offering->loadMissing('subject');
+
         return SubjectExamRoster::query()
+            ->with(['college', 'department', 'subject'])
+            ->withCount([
+                'rosterStudents as roster_students_count_raw',
+                'eligibleRosterStudents as eligible_students_count',
+            ])
+            ->where('college_id', $offering->subject?->college_id)
             ->where('subject_id', $offering->subject_id)
             ->where('academic_year_id', $offering->academic_year_id)
             ->where('semester_id', $offering->semester_id)
             ->where('status', 'ready')
-            ->exists();
+            ->when($offering->subject?->department_id, fn ($query, int $departmentId) => $query->where('department_id', $departmentId))
+            ->latest('id')
+            ->get();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function rosterDiagnosticsForOffering(SubjectExamOffering $offering): array
+    {
+        $offering->loadMissing('subject.college', 'subject.department', 'academicYear', 'semester');
+        $filtersApplied = [
+            'college_id' => $offering->subject?->college_id,
+            'department_id' => $offering->subject?->department_id,
+            'subject_id' => $offering->subject_id,
+            'academic_year_id' => $offering->academic_year_id,
+            'semester_id' => $offering->semester_id,
+            'status' => 'ready',
+            'is_eligible' => true,
+            'relationship' => 'subject_exam_rosters.id -> subject_exam_roster_students.subject_exam_roster_id',
+        ];
+        $matchingRosters = $this->readyRostersForOffering($offering);
+        $matchingRoster = $matchingRosters->first();
+        $fallbackRoster = $matchingRoster ?: SubjectExamRoster::query()
+            ->with(['college', 'department', 'academicYear', 'semester'])
+            ->withCount([
+                'rosterStudents as roster_students_count_raw',
+                'eligibleRosterStudents as eligible_students_count',
+            ])
+            ->where('subject_id', $offering->subject_id)
+            ->where('status', 'ready')
+            ->latest('id')
+            ->first();
+        $roster = $matchingRoster ?: $fallbackRoster;
+        $rawStudentsCount = $matchingRosters->isNotEmpty()
+            ? (int) $matchingRosters->sum(fn (SubjectExamRoster $matchedRoster): int => $matchedRoster->rosterStudents()->count())
+            : ($roster ? (int) $roster->rosterStudents()->count() : 0);
+        $eligibleStudentsCount = $matchingRosters->isNotEmpty()
+            ? (int) $matchingRosters->sum(fn (SubjectExamRoster $matchedRoster): int => $matchedRoster->eligibleRosterStudents()->count())
+            : ($roster ? (int) $roster->eligibleRosterStudents()->count() : 0);
+        $studentsCountAfterFilters = $matchingRosters->isNotEmpty() ? $eligibleStudentsCount : 0;
+        $exclusionReasons = [];
+
+        if ($roster && ! $matchingRoster) {
+            if ((int) $roster->college_id !== (int) $offering->subject?->college_id) {
+                $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.college_mismatch');
+            }
+
+            if ((int) $roster->academic_year_id !== (int) $offering->academic_year_id) {
+                $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.academic_year_mismatch');
+            }
+
+            if ((int) $roster->semester_id !== (int) $offering->semester_id) {
+                $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.semester_mismatch');
+            }
+
+            if ((int) $roster->department_id !== (int) $offering->subject?->department_id) {
+                $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.department_mismatch');
+            }
+        }
+
+        if ($matchingRoster && $rawStudentsCount > 0 && $eligibleStudentsCount === 0) {
+            $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.no_eligible_students');
+        }
+
+        if ($matchingRoster && $rawStudentsCount > 0 && $eligibleStudentsCount > 0 && (int) $offering->examStudents()->count() === 0) {
+            $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.exam_students_not_synced');
+        }
+
+        if (! $roster) {
+            $exclusionReasons[] = __('exam.global_hall_distribution.roster_diagnostics.no_ready_roster');
+        }
+
+        return [
+            'roster_id' => $roster?->id,
+            'roster_status' => $roster?->status,
+            'roster_name' => $roster?->name,
+            'roster_students_count_raw' => $rawStudentsCount,
+            'eligible_students_count' => $eligibleStudentsCount,
+            'students_count_after_filters' => $studentsCountAfterFilters,
+            'filters_applied' => $filtersApplied,
+            'exclusion_reasons' => $exclusionReasons,
+            'diagnostic_message' => $this->rosterDiagnosticMessage($rawStudentsCount, $eligibleStudentsCount, $studentsCountAfterFilters, $exclusionReasons),
+            'has_matching_ready_roster' => $matchingRosters->isNotEmpty(),
+            'has_roster_filter_mismatch' => $roster !== null && $matchingRosters->isEmpty(),
+            'roster_college_id' => $roster?->college_id,
+            'roster_department_id' => $roster?->department_id,
+            'roster_academic_year_id' => $roster?->academic_year_id,
+            'roster_semester_id' => $roster?->semester_id,
+        ];
+    }
+
+    protected function rosterDiagnosticMessage(
+        int $rawStudentsCount,
+        int $eligibleStudentsCount,
+        int $studentsCountAfterFilters,
+        array $exclusionReasons,
+    ): string {
+        if ($rawStudentsCount > 0 && $studentsCountAfterFilters === 0) {
+            return __('exam.global_hall_distribution.roster_diagnostics.raw_count_but_filtered_zero', [
+                'raw' => $rawStudentsCount,
+            ]);
+        }
+
+        if ($rawStudentsCount === 0 && $eligibleStudentsCount === 0) {
+            return __('exam.global_hall_distribution.roster_diagnostics.raw_zero');
+        }
+
+        return implode('، ', $exclusionReasons);
+    }
+
+    protected function logStudentsNotResolved(SubjectExamOffering $offering, array $diagnostics): void
+    {
+        Log::warning('Distribution failed because students were not resolved', [
+            'offering_id' => $offering->id ?? null,
+            'subject_id' => $offering->subject_id ?? null,
+            'roster_id' => $diagnostics['roster_id'] ?? null,
+            'college_id' => $offering->subject?->college_id ?? null,
+            'department_id' => $offering->subject?->department_id ?? null,
+            'academic_year_id' => $offering->academic_year_id ?? null,
+            'semester_id' => $offering->semester_id ?? null,
+            'roster_status' => $diagnostics['roster_status'] ?? null,
+            'roster_students_count_raw' => $diagnostics['roster_students_count_raw'] ?? null,
+            'eligible_students_count' => $diagnostics['eligible_students_count'] ?? null,
+            'students_count_after_filters' => $diagnostics['students_count_after_filters'] ?? null,
+            'filters_applied' => $diagnostics['filters_applied'] ?? [],
+            'exclusion_reasons' => $diagnostics['exclusion_reasons'] ?? [],
+        ]);
     }
 
     protected function withLegacyGlobalDistributionKeys(array $summary): array
