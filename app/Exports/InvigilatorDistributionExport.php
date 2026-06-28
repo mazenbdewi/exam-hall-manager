@@ -65,7 +65,7 @@ class InvigilatorDistributionExport implements WithMultipleSheets
                     __('exam.fields.invigilation_role'),
                     __('exam.fields.required_count'),
                     __('exam.fields.assigned_count'),
-                    __('exam.fields.shortage_count'),
+                    __('exam.fields.missing_assignments_count'),
                     __('exam.fields.reason'),
                 ],
                 $this->shortageRows($summary),

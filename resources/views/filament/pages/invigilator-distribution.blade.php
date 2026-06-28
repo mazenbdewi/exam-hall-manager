@@ -11,7 +11,7 @@
             __('exam.fields.used_halls') => $summary['halls_count'] ?? 0,
             __('exam.fields.required_count') => $summary['required_count'] ?? 0,
             __('exam.fields.assigned_count') => $summary['assigned_count'] ?? 0,
-            __('exam.fields.shortage_count') => $summary['shortage_count'] ?? 0,
+            __('exam.fields.missing_assignments_count') => $summary['shortage_count'] ?? 0,
             __('exam.fields.days_count') => $summary['days_count'] ?? 0,
             __('exam.fields.slots_count') => $summary['slots_count'] ?? 0,
         ];
@@ -186,14 +186,16 @@
 
         <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
             <h2 class="text-base font-semibold text-gray-950 dark:text-white">{{ __('exam.reports.shortage_summary_by_role') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ __('exam.reports.shortage_metrics_hint') }}</p>
             <div class="mt-3 overflow-x-auto">
-                <table class="w-full min-w-[560px] text-sm">
+                <table class="w-full min-w-[720px] text-sm">
                     <thead>
                         <tr class="border-b border-gray-200 text-gray-700 dark:border-white/10 dark:text-gray-200">
                             <th class="px-3 py-2 text-right">{{ __('exam.fields.invigilation_role') }}</th>
                             <th class="px-3 py-2 text-right">{{ __('exam.fields.required_count') }}</th>
                             <th class="px-3 py-2 text-right">{{ __('exam.fields.assigned_count') }}</th>
-                            <th class="px-3 py-2 text-right">{{ __('exam.fields.shortage_count') }}</th>
+                            <th class="px-3 py-2 text-right">{{ __('exam.fields.missing_assignments_count') }}</th>
+                            <th class="px-3 py-2 text-right">{{ __('exam.fields.recommended_additional_observers_count') }}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -203,6 +205,7 @@
                                 <td class="px-3 py-2">{{ $roleShortage['required_count'] ?? 0 }}</td>
                                 <td class="px-3 py-2">{{ $roleShortage['assigned_count'] ?? 0 }}</td>
                                 <td class="px-3 py-2 font-semibold">{{ $roleShortage['shortage_count'] ?? 0 }}</td>
+                                <td class="px-3 py-2 font-semibold">{{ $roleShortage['recommended_additional_observers_count'] ?? 0 }}</td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -242,7 +245,7 @@
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.invigilation_role') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.required_count') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.assigned_count') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.shortage_count') }}</th>
+                                <th class="px-3 py-2 text-right">{{ __('exam.fields.missing_assignments_count') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.reason') }}</th>
                             </tr>
                         </thead>
@@ -329,7 +332,7 @@
                                     · {{ __('exam.fields.used_halls') }}: {{ $day['halls_count'] }}
                                     · {{ __('exam.fields.required_count') }}: {{ $day['required_count'] }}
                                     · {{ __('exam.fields.assigned_count') }}: {{ $day['assigned_count'] }}
-                                    · {{ __('exam.fields.shortage_count') }}: {{ $day['shortage_count'] }}
+                                    · {{ __('exam.fields.missing_assignments_count') }}: {{ $day['shortage_count'] }}
                                 </div>
                             </div>
                             <div class="mt-3 space-y-3">

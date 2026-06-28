@@ -74,7 +74,8 @@
                         <th>{{ __('exam.fields.invigilation_role') }}</th>
                         <th>{{ __('exam.fields.required_count') }}</th>
                         <th>{{ __('exam.fields.assigned_count') }}</th>
-                        <th>{{ __('exam.fields.shortage_count') }}</th>
+                        <th>{{ __('exam.fields.missing_assignments_count') }}</th>
+                        <th>{{ __('exam.fields.recommended_additional_observers_count') }}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -84,6 +85,7 @@
                             <td>{{ $roleShortage['required_count'] ?? 0 }}</td>
                             <td>{{ $roleShortage['assigned_count'] ?? 0 }}</td>
                             <td>{{ $roleShortage['shortage_count'] ?? 0 }}</td>
+                            <td>{{ $roleShortage['recommended_additional_observers_count'] ?? 0 }}</td>
                         </tr>
                     @endforeach
                 </tbody>

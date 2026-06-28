@@ -36,7 +36,7 @@
                     {{ __('exam.fields.used_halls') }}: {{ $day['halls_count'] }} |
                     {{ __('exam.fields.required_count') }}: {{ $day['required_count'] }} |
                     {{ __('exam.fields.assigned_count') }}: {{ $day['assigned_count'] }} |
-                    {{ __('exam.fields.shortage_count') }}: {{ $day['shortage_count'] }}
+                    {{ __('exam.fields.missing_assignments_count') }}: {{ $day['shortage_count'] }}
                 </div>
             </div>
             @php
@@ -53,7 +53,7 @@
                             <th>{{ __('exam.fields.hall_name') }}</th>
                             <th>{{ __('exam.fields.hall_type') }}</th>
                             <th>{{ __('exam.fields.invigilation_role') }}</th>
-                            <th>{{ __('exam.fields.shortage_count') }}</th>
+                            <th>{{ __('exam.fields.missing_assignments_count') }}</th>
                             <th>{{ __('exam.fields.reason') }}</th>
                         </tr>
                     </thead>

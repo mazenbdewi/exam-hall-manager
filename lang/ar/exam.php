@@ -60,7 +60,7 @@ return [
         'student_public_lookup_settings' => 'إعدادات استعلام الطلاب',
         'invigilator_hall_requirements' => 'احتياج القاعات من المراقبين',
         'student_distribution_readiness' => 'حالة توزيع الطلاب على القاعات',
-        'invigilator_shortage' => 'النقص في المراقبين',
+        'invigilator_shortage' => 'المهام غير المغطاة للمراقبين',
     ],
 
     'fields' => [
@@ -154,7 +154,9 @@ return [
         'exempt_invigilators_count' => 'عدد المراقبين المعفيين 100%',
         'required_count' => 'إجمالي الاحتياج',
         'assigned_count' => 'تم إسنادهم',
-        'shortage_count' => 'النقص',
+        'shortage_count' => 'عدد المهام المتبقية بدون تغطية',
+        'missing_assignments_count' => 'المهام غير المغطاة',
+        'recommended_additional_observers_count' => 'الحد الأدنى المقترح للإضافة',
         'hall_head_shortage' => 'نقص رؤساء القاعات',
         'secretary_shortage' => 'نقص أمناء السر',
         'regular_shortage' => 'نقص المراقبين العاديين',
@@ -283,7 +285,7 @@ return [
         'export_invigilator_pdf_by_invigilator' => 'تصدير PDF حسب المراقب',
         'export_invigilator_pdf_by_hall' => 'تصدير PDF حسب القاعات',
         'export_invigilator_pdf_by_day' => 'تصدير PDF حسب اليوم',
-        'export_invigilator_shortage_pdf' => 'تصدير تقرير النقص PDF',
+        'export_invigilator_shortage_pdf' => 'تصدير تقرير المهام غير المغطاة PDF',
         'export_unassigned_students_pdf' => 'تحميل تقرير الطلاب غير الموزعين PDF',
         'export_unassigned_students_excel' => 'تحميل تقرير الطلاب غير الموزعين Excel',
         'export_global_distribution_summary_pdf' => 'تحميل تقرير نتيجة التوزيع PDF',
@@ -388,7 +390,7 @@ return [
         'invigilator_distribution_warning' => 'توزيع المراقبين يحتاج إلى مراجعة',
         'invigilator_distribution_blocked' => 'لا يمكن تنفيذ توزيع المراقبين',
         'invigilator_distribution_completed_with_shortage' => 'تم توزيع المراقبين مع وجود نقص مقداره :count.',
-        'no_invigilator_shortage' => 'لا يوجد نقص في المراقبين ضمن الفترة المحددة.',
+        'no_invigilator_shortage' => 'لا توجد مهام مراقبة غير مغطاة ضمن الفترة المحددة.',
         'invigilator_distribution_no_used_halls' => 'لا توجد قاعات مستخدمة ضمن الفترة المحددة. تأكد من تنفيذ توزيع الطلاب على القاعات أولاً.',
     ],
 
@@ -421,8 +423,8 @@ return [
         'remaining_capacity' => 'لا يزال هناك :count مقعد متبقٍ يمكن الاستفادة منه في الجلسات التالية أو بعد إعادة التوزيع.',
         'no_hall_distribution_results' => 'لا توجد قاعات مستخدمة ضمن النطاق المحدد.',
         'invigilators_all_distributed' => 'تم توزيع جميع المراقبين بنجاح.',
-        'invigilator_role_shortage' => 'تحتاج إلى إضافة :count من نوع :role.',
-        'invigilator_reduction_shortage_hint' => 'قد يكون النقص بسبب وجود مراقبين لديهم نسبة تخفيض عالية أو إعفاء كامل من التوزيع الآلي.',
+        'invigilator_role_shortage' => 'يوجد :assignments مهمة غير مغطاة من نوع :role. الحد الأدنى المقترح للإضافة: :observers مراقب.',
+        'invigilator_reduction_shortage_hint' => 'قد تكون المهام غير المغطاة ناتجة عن حدود التكليف، أو تضارب المواعيد، أو وجود مراقبين لديهم تخفيض عالٍ أو إعفاء كامل من التوزيع الآلي.',
     ],
 
     'invigilator_shortage_reasons' => [
@@ -680,11 +682,14 @@ return [
     'reports' => [
         'hall_report' => 'تقرير القاعات',
         'personal_schedule' => 'برنامج المراقب الشخصي',
-        'shortage_report' => 'تقرير النقص',
-        'has_shortage' => 'يوجد نقص',
+        'shortage_report' => 'تقرير المهام غير المغطاة',
+        'has_shortage' => 'مهام غير مغطاة',
         'required_role_shortage_reason' => 'تعذر توفير العدد المطلوب من هذا النوع من المراقبين ضمن الشروط المحددة.',
-        'shortage_summary_by_role' => 'ملخص النقص حسب نوع المراقب',
-        'invigilator_shortage_report_title' => 'تقرير النقص في المراقبين',
+        'shortage_summary_by_role' => 'ملخص المهام غير المغطاة حسب نوع المراقب',
+        'invigilator_shortage_report_title' => 'تقرير المهام غير المغطاة للمراقبين',
+        'shortage_metrics_hint' => 'المهام غير المغطاة تعني عدد مهام المراقبة الفارغة. الحد الأدنى المقترح للإضافة يقدّر عدد المراقبين الجدد اللازمين بعد احتساب حدود التكليف وتضارب المواعيد والقيود الأخرى.',
+        'shortage_by_slot' => 'المهام غير المغطاة حسب الموعد',
+        'shortage_reason_breakdown' => 'تفصيل أسباب المهام غير المغطاة',
     ],
 
     'scopes' => [

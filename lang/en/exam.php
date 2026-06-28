@@ -14,6 +14,8 @@ return array_replace_recursive($arabic, [
         'college' => 'College',
         'period' => 'Period',
         'unassigned_students' => 'Unassigned students',
+        'missing_assignments_count' => 'Uncovered duties',
+        'recommended_additional_observers_count' => 'Minimum observers to add',
         'is_drawing_studio' => 'Drawing studio - lab',
         'is_drawing_subject' => 'Drawing subject',
         'allow_normal_subjects_in_drawing_studios' => 'Allow drawing studios - labs for normal subjects when needed',
@@ -23,6 +25,14 @@ return array_replace_recursive($arabic, [
     ],
     'notifications' => [
         'drawing_studio_capacity_shortage' => 'There are not enough drawing studios - labs to distribute the drawing subject.',
+    ],
+    'diagnosis' => [
+        'invigilator_role_shortage' => 'There are :assignments uncovered :role duties. Minimum observers to add: :observers.',
+    ],
+    'reports' => [
+        'shortage_metrics_hint' => 'Uncovered duties are empty invigilation assignments. Minimum observers to add estimates new observers after same-slot and duty-limit constraints.',
+        'shortage_by_slot' => 'Shortage by date/time slot',
+        'shortage_reason_breakdown' => 'Shortage reason breakdown',
     ],
     'global_hall_distribution' => [
         'results_title' => 'Global Student Distribution Result',

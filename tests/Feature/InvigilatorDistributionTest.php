@@ -495,6 +495,47 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function summary_diagnosis_and_shortage_pdf_use_the_same_computed_shortage_metrics(): void
+    {
+        $context = $this->createSlotContext();
+        $this->createUsedHall($context['college'], 'قاعة نقص أولى', ExamHallType::Small);
+        $this->createUsedHall($context['college'], 'قاعة نقص ثانية', ExamHallType::Small);
+        $this->createRequirement($context['college'], ExamHallType::Small, 0, 1, 0, 0);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($context['college'], null, null, '2026-06-01', '2026-06-01');
+        $secretaryShortage = $summary['shortage_by_role'][InvigilationRole::Secretary->value];
+        $html = view('pdf.invigilator-distribution-shortage', [
+            'summary' => $summary,
+            'systemSetting' => SystemSetting::current(),
+            'logoDataUri' => null,
+        ])->render();
+
+        $this->assertSame(2, $secretaryShortage['required_count']);
+        $this->assertSame(0, $secretaryShortage['assigned_count']);
+        $this->assertSame(2, $secretaryShortage['shortage_count']);
+        $this->assertSame(2, $secretaryShortage['recommended_additional_observers_count']);
+        $this->assertSame(2, $summary['shortage_count']);
+        $this->assertCount(2, $summary['shortages']);
+        $this->assertStringContainsString('يوجد 2 مهمة غير مغطاة من نوع أمين سر', $summary['diagnosis'][0]['message']);
+        $this->assertStringContainsString(__('exam.reports.invigilator_shortage_report_title'), $html);
+        $this->assertStringContainsString(__('exam.fields.missing_assignments_count'), $html);
+        $this->assertStringContainsString(__('exam.fields.recommended_additional_observers_count'), $html);
+        $this->assertStringContainsString(__('exam.reports.shortage_by_slot'), $html);
+        $this->assertStringNotContainsString('تقرير النقص في المراقبين', $html);
+        $this->assertStringContainsString('قاعة نقص أولى', $html);
+        $this->assertStringContainsString('قاعة نقص ثانية', $html);
+    }
+
+    #[Test]
     public function invigilator_pdf_views_do_not_render_phone_numbers(): void
     {
         $context = $this->createSlotContext();
@@ -555,7 +596,7 @@ class InvigilatorDistributionTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString('أمين سر', $html);
-        $this->assertStringContainsString('يوجد نقص', $html);
+        $this->assertStringContainsString('مهام غير مغطاة', $html);
         $this->assertStringContainsString('تعذر توفير العدد المطلوب', $html);
     }
 

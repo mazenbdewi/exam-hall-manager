@@ -18,19 +18,21 @@
         'universityName' => $systemSetting->university_name,
         'universityLogo' => $logoDataUri,
         'facultyName' => $summary['college']->name,
-        'reportTitle' => 'تقرير النقص في المراقبين',
+        'reportTitle' => __('exam.reports.invigilator_shortage_report_title'),
         'reportSubtitle' => __('exam.reports.shortage_summary_by_role'),
         'dateRange' => $reportDateRange ?? __('exam.fields.period').': —',
     ])
     <div class="card">
         <div class="title" style="font-size: 14px;">{{ __('exam.reports.shortage_summary_by_role') }}</div>
+        <p>{{ __('exam.reports.shortage_metrics_hint') }}</p>
         <table>
             <thead>
                 <tr>
                     <th>{{ __('exam.fields.invigilation_role') }}</th>
                     <th>{{ __('exam.fields.required_count') }}</th>
                     <th>{{ __('exam.fields.assigned_count') }}</th>
-                    <th>{{ __('exam.fields.shortage_count') }}</th>
+                    <th>{{ __('exam.fields.missing_assignments_count') }}</th>
+                    <th>{{ __('exam.fields.recommended_additional_observers_count') }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -40,11 +42,78 @@
                         <td>{{ $roleShortage['required_count'] ?? 0 }}</td>
                         <td>{{ $roleShortage['assigned_count'] ?? 0 }}</td>
                         <td>{{ $roleShortage['shortage_count'] ?? 0 }}</td>
+                        <td>{{ $roleShortage['recommended_additional_observers_count'] ?? 0 }}</td>
                     </tr>
                 @endforeach
             </tbody>
         </table>
     </div>
+
+    <div class="card">
+        <div class="title" style="font-size: 14px;">{{ __('exam.sections.problem_diagnosis') }}</div>
+        <table>
+            <tbody>
+                @foreach (($summary['diagnosis'] ?? []) as $item)
+                    <tr><td>{{ $item['message'] }}</td></tr>
+                @endforeach
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <div class="title" style="font-size: 14px;">{{ __('exam.reports.shortage_by_slot') }}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>{{ __('exam.fields.exam_date') }}</th>
+                    <th>{{ __('exam.fields.exam_start_time') }}</th>
+                    <th>{{ __('exam.fields.invigilation_role') }}</th>
+                    <th>{{ __('exam.fields.required_count') }}</th>
+                    <th>{{ __('exam.fields.assigned_count') }}</th>
+                    <th>{{ __('exam.fields.missing_assignments_count') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                @forelse (($summary['shortage_by_slot'] ?? []) as $slotShortage)
+                    <tr>
+                        <td class="ltr">{{ $slotShortage['exam_date'] }}</td>
+                        <td class="ltr">{{ $slotShortage['start_time'] }}</td>
+                        <td>{{ $slotShortage['role_label'] }}</td>
+                        <td>{{ $slotShortage['required_count'] }}</td>
+                        <td>{{ $slotShortage['assigned_count'] }}</td>
+                        <td>{{ $slotShortage['shortage_count'] }}</td>
+                    </tr>
+                @empty
+                    <tr><td colspan="6">{{ __('exam.diagnosis.invigilators_all_distributed') }}</td></tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <div class="title" style="font-size: 14px;">{{ __('exam.reports.shortage_reason_breakdown') }}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>{{ __('exam.fields.invigilation_role') }}</th>
+                    <th>{{ __('exam.fields.reason') }}</th>
+                    <th>{{ __('exam.fields.missing_assignments_count') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (($summary['shortage_by_role'] ?? []) as $roleShortage)
+                    @foreach (($roleShortage['reason_counts'] ?? []) as $reason => $count)
+                        <tr>
+                            <td>{{ $roleShortage['role_label'] }}</td>
+                            <td>{{ $reason }}</td>
+                            <td>{{ $count }}</td>
+                        </tr>
+                    @endforeach
+                @endforeach
+            </tbody>
+        </table>
+    </div>
+
     <table>
         <thead>
             <tr>
@@ -55,7 +124,7 @@
                 <th>{{ __('exam.fields.invigilation_role') }}</th>
                 <th>{{ __('exam.fields.required_count') }}</th>
                 <th>{{ __('exam.fields.assigned_count') }}</th>
-                <th>{{ __('exam.fields.shortage_count') }}</th>
+                <th>{{ __('exam.fields.missing_assignments_count') }}</th>
                 <th>{{ __('exam.fields.reason') }}</th>
             </tr>
         </thead>

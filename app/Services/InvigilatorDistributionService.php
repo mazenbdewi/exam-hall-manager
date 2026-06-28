@@ -239,6 +239,7 @@ class InvigilatorDistributionService
         $exemptInvigilators = Invigilator::query()->where('college_id', $college->getKey())->where('workload_reduction_percentage', 100)->count();
         $assignments = $this->flattenAssignments($slotSummaries);
         $shortages = $slotSummaries->flatMap(fn (array $slot): array => $slot['shortages'])->values();
+        $shortageByRole = $this->shortageByRole($slotSummaries, $this->settingsForCollege($college));
 
         return [
             'college' => $college,
@@ -257,8 +258,9 @@ class InvigilatorDistributionService
             'has_assignments' => $slotSummaries->sum('assigned_count') > 0,
             'slots' => $slotSummaries->all(),
             'shortages' => $shortages->all(),
-            'shortage_by_role' => $this->shortageByRole($slotSummaries),
-            'diagnosis' => $this->diagnosis($slotSummaries),
+            'shortage_by_role' => $shortageByRole,
+            'shortage_by_slot' => $this->shortageBySlot($slotSummaries),
+            'diagnosis' => $this->diagnosis($slotSummaries, $shortageByRole),
             'by_invigilator' => $this->groupByInvigilator($assignments),
             'by_day' => $this->groupByDay($slotSummaries),
         ];
@@ -444,6 +446,7 @@ class InvigilatorDistributionService
                     ->all(),
             ];
         })->values();
+        $computedShortages = $this->computedShortagesForSlot($examDate, $startTime, $hallSummaries);
 
         return [
             'exam_date' => $examDate,
@@ -451,22 +454,9 @@ class InvigilatorDistributionService
             'halls_count' => $hallSummaries->count(),
             'required_count' => $hallSummaries->sum('required_count'),
             'assigned_count' => $hallSummaries->sum('assigned_count'),
-            'shortage_count' => $shortages->sum('shortage_count'),
+            'shortage_count' => $computedShortages->sum('shortage_count'),
             'halls' => $hallSummaries->all(),
-            'shortages' => $shortages->map(fn (InvigilatorUnassignedRequirement $shortage): array => [
-                'exam_date' => $shortage->exam_date?->format('Y-m-d'),
-                'start_time' => substr((string) $shortage->start_time, 0, 5),
-                'hall_name' => $shortage->examHall?->name,
-                'hall_location' => $shortage->examHall?->location,
-                'hall_type' => $shortage->examHall?->hall_type?->value ?? (string) $shortage->examHall?->hall_type,
-                'hall_type_label' => $shortage->examHall?->hall_type?->label() ?? (filled($shortage->examHall?->hall_type) ? (string) $shortage->examHall?->hall_type : '-'),
-                'role_key' => $shortage->invigilation_role?->value ?? (string) $shortage->invigilation_role,
-                'invigilation_role' => $shortage->invigilation_role?->label(),
-                'required_count' => $shortage->required_count,
-                'assigned_count' => $shortage->assigned_count,
-                'shortage_count' => $shortage->shortage_count,
-                'reason' => $shortage->reason,
-            ])->values()->all(),
+            'shortages' => $computedShortages->all(),
         ];
     }
 
@@ -1311,13 +1301,57 @@ class InvigilatorDistributionService
             ->values();
     }
 
-    protected function shortageByRole(Collection $slotSummaries): array
+    protected function computedShortagesForSlot(string $examDate, string $startTime, Collection $hallSummaries): Collection
     {
+        return $hallSummaries
+            ->flatMap(function (array $hall) use ($examDate, $startTime): array {
+                return collect($hall['required_roles'] ?? [])
+                    ->map(function (int $requiredCount, string $role) use ($examDate, $startTime, $hall): ?array {
+                        $assignedCount = count($hall['assignments_by_role'][$role] ?? []);
+                        $shortageCount = max(0, (int) $requiredCount - $assignedCount);
+
+                        if ($shortageCount === 0) {
+                            return null;
+                        }
+
+                        $recordedShortage = $hall['shortages_by_role'][$role] ?? [];
+
+                        return [
+                            'exam_date' => $examDate,
+                            'start_time' => substr($startTime, 0, 5),
+                            'hall_id' => $hall['id'] ?? null,
+                            'hall_name' => $hall['name'] ?? null,
+                            'hall_location' => $hall['location'] ?? null,
+                            'hall_type' => $hall['hall_type'] ?? null,
+                            'hall_type_label' => $hall['hall_type_label'] ?? '-',
+                            'role_key' => $role,
+                            'invigilation_role' => __("exam.invigilation_roles.{$role}"),
+                            'required_count' => (int) $requiredCount,
+                            'assigned_count' => $assignedCount,
+                            'shortage_count' => $shortageCount,
+                            'reason' => $recordedShortage['reason'] ?? __('exam.reports.required_role_shortage_reason'),
+                        ];
+                    })
+                    ->filter()
+                    ->values()
+                    ->all();
+            })
+            ->values();
+    }
+
+    protected function shortageByRole(Collection $slotSummaries, InvigilatorDistributionSetting $setting): array
+    {
+        $shortages = $slotSummaries->flatMap(fn (array $slot): array => $slot['shortages'] ?? []);
+
         return collect(InvigilationRole::cases())
-            ->mapWithKeys(function (InvigilationRole $role) use ($slotSummaries): array {
+            ->mapWithKeys(function (InvigilationRole $role) use ($slotSummaries, $shortages, $setting): array {
                 $halls = $slotSummaries->flatMap(fn (array $slot): array => $slot['halls'] ?? []);
                 $requiredCount = $halls->sum(fn (array $hall): int => (int) ($hall['required_roles'][$role->value] ?? 0));
                 $assignedCount = $halls->sum(fn (array $hall): int => count($hall['assignments_by_role'][$role->value] ?? []));
+                $roleShortages = $shortages
+                    ->filter(fn (array $shortage): bool => ($shortage['role_key'] ?? null) === $role->value)
+                    ->values();
+                $shortageCount = (int) $roleShortages->sum('shortage_count');
 
                 return [$role->value => [
                     'role' => $role->value,
@@ -1330,10 +1364,69 @@ class InvigilatorDistributionService
                     },
                     'required_count' => $requiredCount,
                     'assigned_count' => $assignedCount,
-                    'shortage_count' => max(0, $requiredCount - $assignedCount),
+                    'shortage_count' => $shortageCount,
+                    'missing_assignments_count' => $shortageCount,
+                    'recommended_additional_observers_count' => $this->recommendedAdditionalObserversForRole($roleShortages, $setting),
+                    'reason_counts' => $roleShortages
+                        ->groupBy(fn (array $shortage): string => (string) ($shortage['reason'] ?? __('exam.reports.required_role_shortage_reason')))
+                        ->map(fn (Collection $items): int => (int) $items->sum('shortage_count'))
+                        ->sortDesc()
+                        ->all(),
                 ]];
             })
             ->all();
+    }
+
+    protected function shortageBySlot(Collection $slotSummaries): array
+    {
+        return $slotSummaries
+            ->flatMap(function (array $slot): array {
+                return collect($slot['shortages'] ?? [])
+                    ->groupBy('role_key')
+                    ->map(fn (Collection $items, string $role): array => [
+                        'exam_date' => $slot['exam_date'],
+                        'start_time' => substr((string) $slot['start_time'], 0, 5),
+                        'role_key' => $role,
+                        'role_label' => __("exam.invigilation_roles.{$role}"),
+                        'required_count' => (int) $items->sum('required_count'),
+                        'assigned_count' => (int) $items->sum('assigned_count'),
+                        'shortage_count' => (int) $items->sum('shortage_count'),
+                    ])
+                    ->values()
+                    ->all();
+            })
+            ->sortBy([['exam_date', 'asc'], ['start_time', 'asc'], ['role_key', 'asc']])
+            ->values()
+            ->all();
+    }
+
+    protected function recommendedAdditionalObserversForRole(Collection $roleShortages, InvigilatorDistributionSetting $setting): int
+    {
+        $missingAssignments = (int) $roleShortages->sum('shortage_count');
+
+        if ($missingAssignments === 0) {
+            return 0;
+        }
+
+        $maxAssignments = max(1, (int) ($setting->default_max_assignments_per_invigilator ?? 1));
+        $dailyLimit = (bool) ($setting->allow_multiple_assignments_per_day ?? false)
+            ? max(1, (int) ($setting->max_assignments_per_day ?? 1))
+            : 1;
+
+        $maxSameSlotShortage = (int) $roleShortages
+            ->groupBy(fn (array $shortage): string => ($shortage['exam_date'] ?? '').'|'.($shortage['start_time'] ?? ''))
+            ->map(fn (Collection $items): int => (int) $items->sum('shortage_count'))
+            ->max();
+        $maxSameDayShortage = (int) $roleShortages
+            ->groupBy(fn (array $shortage): string => (string) ($shortage['exam_date'] ?? ''))
+            ->map(fn (Collection $items): int => (int) $items->sum('shortage_count'))
+            ->max();
+
+        return max(
+            $maxSameSlotShortage,
+            (int) ceil($missingAssignments / $maxAssignments),
+            (int) ceil($maxSameDayShortage / $dailyLimit),
+        );
     }
 
     protected function groupByInvigilator(Collection $assignments): array
@@ -1380,7 +1473,7 @@ class InvigilatorDistributionService
             ->all();
     }
 
-    protected function diagnosis(Collection $slotSummaries): array
+    protected function diagnosis(Collection $slotSummaries, array $shortageByRole): array
     {
         if ($slotSummaries->isEmpty()) {
             return [[
@@ -1389,22 +1482,24 @@ class InvigilatorDistributionService
             ]];
         }
 
-        $shortages = $slotSummaries->flatMap(fn (array $slot): array => $slot['shortages']);
+        $roleShortages = collect($shortageByRole)
+            ->filter(fn (array $roleShortage): bool => (int) ($roleShortage['shortage_count'] ?? 0) > 0)
+            ->values();
 
-        if ($shortages->isEmpty()) {
+        if ($roleShortages->isEmpty()) {
             return [[
                 'tone' => 'success',
                 'message' => __('exam.diagnosis.invigilators_all_distributed'),
             ]];
         }
 
-        $items = $shortages
-            ->groupBy('invigilation_role')
-            ->map(fn (Collection $items, string $role): array => [
+        $items = $roleShortages
+            ->map(fn (array $roleShortage): array => [
                 'tone' => 'danger',
                 'message' => __('exam.diagnosis.invigilator_role_shortage', [
-                    'role' => $role,
-                    'count' => $items->sum('shortage_count'),
+                    'role' => $roleShortage['role_label'] ?? $roleShortage['role'],
+                    'assignments' => (int) ($roleShortage['shortage_count'] ?? 0),
+                    'observers' => (int) ($roleShortage['recommended_additional_observers_count'] ?? 0),
                 ]),
             ])
             ->values()
