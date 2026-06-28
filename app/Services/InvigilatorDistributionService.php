@@ -239,7 +239,9 @@ class InvigilatorDistributionService
         $exemptInvigilators = Invigilator::query()->where('college_id', $college->getKey())->where('workload_reduction_percentage', 100)->count();
         $assignments = $this->flattenAssignments($slotSummaries);
         $shortages = $slotSummaries->flatMap(fn (array $slot): array => $slot['shortages'])->values();
-        $shortageByRole = $this->shortageByRole($slotSummaries, $this->settingsForCollege($college));
+        $setting = $this->settingsForCollege($college);
+        $shortageByRole = $this->shortageByRole($slotSummaries, $setting);
+        $dutyIncreaseRecommendations = $this->dutyIncreaseRecommendations($college, $slotSummaries, $setting);
 
         return [
             'college' => $college,
@@ -260,6 +262,7 @@ class InvigilatorDistributionService
             'shortages' => $shortages->all(),
             'shortage_by_role' => $shortageByRole,
             'shortage_by_slot' => $this->shortageBySlot($slotSummaries),
+            'duty_increase_recommendations' => $dutyIncreaseRecommendations,
             'diagnosis' => $this->diagnosis($slotSummaries, $shortageByRole),
             'by_invigilator' => $this->groupByInvigilator($assignments),
             'by_day' => $this->groupByDay($slotSummaries),
@@ -1427,6 +1430,243 @@ class InvigilatorDistributionService
             (int) ceil($missingAssignments / $maxAssignments),
             (int) ceil($maxSameDayShortage / $dailyLimit),
         );
+    }
+
+    protected function dutyIncreaseRecommendations(College $college, Collection $slotSummaries, InvigilatorDistributionSetting $setting): array
+    {
+        $shortageUnits = $slotSummaries
+            ->flatMap(fn (array $slot): array => $slot['shortages'] ?? [])
+            ->flatMap(function (array $shortage): array {
+                $role = InvigilationRole::tryFrom((string) ($shortage['role_key'] ?? ''));
+
+                if (! $role) {
+                    return [];
+                }
+
+                $shortageCount = max(0, (int) ($shortage['shortage_count'] ?? 0));
+
+                if ($shortageCount === 0) {
+                    return [];
+                }
+
+                return collect(range(1, $shortageCount))
+                    ->map(fn (): array => [
+                        'exam_date' => substr((string) ($shortage['exam_date'] ?? ''), 0, 10),
+                        'start_time' => $this->normalizeTime((string) ($shortage['start_time'] ?? '')),
+                        'hall_name' => (string) ($shortage['hall_name'] ?? ''),
+                        'role' => $role,
+                        'role_label' => $role->label(),
+                    ])
+                    ->all();
+            })
+            ->sortBy([['exam_date', 'asc'], ['start_time', 'asc'], ['role_label', 'asc'], ['hall_name', 'asc']])
+            ->values();
+
+        $totalUncoveredDuties = (int) $slotSummaries
+            ->flatMap(fn (array $slot): array => $slot['shortages'] ?? [])
+            ->sum('shortage_count');
+
+        if ($totalUncoveredDuties === 0) {
+            return $this->emptyDutyIncreaseRecommendations();
+        }
+
+        $invigilators = Invigilator::query()
+            ->where('college_id', $college->getKey())
+            ->where('is_active', true)
+            ->where('workload_reduction_percentage', '<', 100)
+            ->orderBy('id')
+            ->get();
+
+        $assignmentRows = InvigilatorAssignment::query()
+            ->where('college_id', $college->getKey())
+            ->get(['invigilator_id', 'exam_date', 'start_time']);
+
+        $assignmentCounts = $assignmentRows
+            ->groupBy('invigilator_id')
+            ->map(fn (Collection $items): int => $items->count())
+            ->all();
+        $assignedSlots = $assignmentRows
+            ->groupBy('invigilator_id')
+            ->map(fn (Collection $items): array => $items
+                ->mapWithKeys(fn (InvigilatorAssignment $assignment): array => [
+                    $this->slotKey($assignment->exam_date->format('Y-m-d'), (string) $assignment->start_time) => true,
+                ])
+                ->all())
+            ->all();
+        $assignedDayCounts = $assignmentRows
+            ->groupBy('invigilator_id')
+            ->map(fn (Collection $items): array => $items
+                ->groupBy(fn (InvigilatorAssignment $assignment): string => $assignment->exam_date->format('Y-m-d'))
+                ->map(fn (Collection $dayItems): int => $dayItems->count())
+                ->all())
+            ->all();
+
+        $recommended = [];
+        $recommendedSlotKeys = [];
+        $recommendedDayCounts = [];
+        $unresolved = [];
+
+        foreach ($shortageUnits as $unit) {
+            /** @var InvigilationRole $role */
+            $role = $unit['role'];
+            $slotKey = $this->slotKey($unit['exam_date'], $unit['start_time']);
+
+            $compatibleCandidates = $invigilators
+                ->filter(fn (Invigilator $invigilator): bool => $this->assignmentRoleIsCompatible($invigilator, $role, $setting))
+                ->values();
+
+            $candidates = $compatibleCandidates
+                ->filter(function (Invigilator $invigilator) use ($setting, $assignmentCounts, $assignedSlots, $assignedDayCounts, $recommended, $recommendedSlotKeys, $recommendedDayCounts, $unit, $slotKey): bool {
+                    $invigilatorId = (int) $invigilator->getKey();
+                    $currentAssigned = (int) ($assignmentCounts[$invigilatorId] ?? 0);
+                    $currentMax = $invigilator->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator);
+
+                    if ($currentMax <= 0 || $currentAssigned < $currentMax) {
+                        return false;
+                    }
+
+                    if (($assignedSlots[$invigilatorId][$slotKey] ?? false) || ($recommendedSlotKeys[$invigilatorId][$slotKey] ?? false)) {
+                        return false;
+                    }
+
+                    $date = $unit['exam_date'];
+                    $existingDayCount = (int) ($assignedDayCounts[$invigilatorId][$date] ?? 0);
+                    $recommendedDayCount = (int) ($recommendedDayCounts[$invigilatorId][$date] ?? 0);
+                    $projectedDayCount = $existingDayCount + $recommendedDayCount + 1;
+
+                    if (! $this->allowsMultipleAssignmentsPerDay($invigilator, $setting) && $projectedDayCount > 1) {
+                        return false;
+                    }
+
+                    $dayLimit = $this->maxAssignmentsPerDay($invigilator, $setting);
+
+                    if ($dayLimit !== null && $projectedDayCount > $dayLimit) {
+                        return false;
+                    }
+
+                    $suggestedAdditional = (int) ($recommended[$invigilatorId]['suggested_additional_duties'] ?? 0);
+
+                    return $currentAssigned + $suggestedAdditional >= $currentMax;
+                })
+                ->sortBy(function (Invigilator $invigilator) use ($assignmentCounts, $recommended, $setting): array {
+                    $invigilatorId = (int) $invigilator->getKey();
+
+                    return [
+                        (int) ($recommended[$invigilatorId]['suggested_additional_duties'] ?? 0),
+                        (int) ($assignmentCounts[$invigilatorId] ?? 0),
+                        $invigilator->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator),
+                        $invigilatorId,
+                    ];
+                })
+                ->values();
+
+            /** @var Invigilator|null $selected */
+            $selected = $candidates->first();
+
+            if (! $selected) {
+                $unresolved[] = [
+                    'exam_date' => $unit['exam_date'],
+                    'start_time' => substr((string) $unit['start_time'], 0, 5),
+                    'role' => $role->value,
+                    'role_label' => $role->label(),
+                    'hall_name' => $unit['hall_name'],
+                    'reason' => $compatibleCandidates->isEmpty()
+                        ? __('exam.reports.duty_increase_no_compatible_observers')
+                        : __('exam.reports.duty_increase_blocked_by_conflicts_or_daily_limits'),
+                ];
+
+                continue;
+            }
+
+            $selectedId = (int) $selected->getKey();
+            $currentAssigned = (int) ($assignmentCounts[$selectedId] ?? 0);
+            $currentMax = $selected->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator);
+            $period = trim($unit['exam_date'].' '.substr((string) $unit['start_time'], 0, 5).' - '.$unit['role_label'].' - '.$unit['hall_name'], ' -');
+
+            $recommended[$selectedId] ??= [
+                'invigilator_id' => $selectedId,
+                'name' => $selected->name,
+                'observer_type' => $selected->invigilation_role?->label(),
+                'eligible_roles' => collect($selected->eligibleRoleValues())
+                    ->reject(fn (string $role): bool => $role === InvigilationRole::Reserve->value)
+                    ->map(fn (string $role): string => __("exam.invigilation_roles.{$role}"))
+                    ->implode('، '),
+                'current_assigned_duties' => $currentAssigned,
+                'current_max_duties' => $currentMax,
+                'suggested_new_max_duties' => $currentMax,
+                'suggested_additional_duties' => 0,
+                'reason' => __('exam.reports.duty_increase_recommendation_reason'),
+                'related_slots' => [],
+                'related_roles' => [],
+            ];
+
+            $recommended[$selectedId]['suggested_additional_duties']++;
+            $recommended[$selectedId]['suggested_new_max_duties'] = $currentMax + $recommended[$selectedId]['suggested_additional_duties'];
+            $recommended[$selectedId]['related_slots'][] = $period;
+            $recommended[$selectedId]['related_roles'][] = $unit['role_label'];
+            $recommendedSlotKeys[$selectedId][$slotKey] = true;
+            $recommendedDayCounts[$selectedId][$unit['exam_date']] = (int) ($recommendedDayCounts[$selectedId][$unit['exam_date']] ?? 0) + 1;
+        }
+
+        $recommendations = collect($recommended)
+            ->map(function (array $item): array {
+                $item['related_slots'] = array_values(array_unique($item['related_slots']));
+                $item['related_roles'] = array_values(array_unique($item['related_roles']));
+
+                return $item;
+            })
+            ->sortBy([['suggested_additional_duties', 'desc'], ['current_assigned_duties', 'asc'], ['name', 'asc']])
+            ->values()
+            ->all();
+        $coverable = (int) collect($recommendations)->sum('suggested_additional_duties');
+
+        return [
+            'total_uncovered_duties' => $totalUncoveredDuties,
+            'coverable_by_limit_increase' => $coverable,
+            'requires_new_observers' => max(0, $totalUncoveredDuties - $coverable),
+            'recommended_observers_count' => count($recommendations),
+            'max_suggested_increase_per_observer' => (int) collect($recommendations)->max('suggested_additional_duties'),
+            'recommendations' => $recommendations,
+            'unresolved' => collect($unresolved)
+                ->groupBy(fn (array $item): string => implode('|', [
+                    $item['exam_date'],
+                    $item['start_time'],
+                    $item['role'],
+                    $item['reason'],
+                ]))
+                ->map(function (Collection $items): array {
+                    $first = $items->first();
+
+                    return [
+                        'exam_date' => $first['exam_date'],
+                        'start_time' => $first['start_time'],
+                        'role' => $first['role'],
+                        'role_label' => $first['role_label'],
+                        'shortage_count' => $items->count(),
+                        'reason' => $first['reason'],
+                    ];
+                })
+                ->values()
+                ->all(),
+        ];
+    }
+
+    protected function emptyDutyIncreaseRecommendations(): array
+    {
+        return [
+            'total_uncovered_duties' => 0,
+            'coverable_by_limit_increase' => 0,
+            'requires_new_observers' => 0,
+            'recommended_observers_count' => 0,
+            'max_suggested_increase_per_observer' => 0,
+            'recommendations' => [],
+            'unresolved' => [],
+        ];
+    }
+
+    protected function slotKey(string $examDate, string $startTime): string
+    {
+        return substr($examDate, 0, 10).'|'.$this->normalizeTime($startTime);
     }
 
     protected function groupByInvigilator(Collection $assignments): array

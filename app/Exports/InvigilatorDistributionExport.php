@@ -70,6 +70,26 @@ class InvigilatorDistributionExport implements WithMultipleSheets
                 ],
                 $this->shortageRows($summary),
             ),
+            new InvigilatorDistributionArraySheet(
+                __('exam.reports.observer_duty_increase_recommendation_report'),
+                [
+                    __('exam.fields.missing_assignments_count'),
+                    __('exam.reports.duties_coverable_by_current_observer_limit_increase'),
+                    __('exam.reports.duties_requiring_new_observers'),
+                    __('exam.reports.recommended_observers_to_increase'),
+                    __('exam.reports.max_suggested_increase_per_observer'),
+                    __('exam.fields.invigilator_name'),
+                    __('exam.fields.invigilation_role'),
+                    __('exam.fields.eligible_roles'),
+                    __('exam.fields.current_duties'),
+                    __('exam.fields.current_duty_limit'),
+                    __('exam.fields.suggested_duty_limit'),
+                    __('exam.fields.suggested_additional_duties'),
+                    __('exam.fields.affected_period'),
+                    __('exam.fields.reason'),
+                ],
+                $this->dutyIncreaseRecommendationRows($summary),
+            ),
         ];
     }
 
@@ -152,5 +172,50 @@ class InvigilatorDistributionExport implements WithMultipleSheets
             ])
             ->values()
             ->all();
+    }
+
+    protected function dutyIncreaseRecommendationRows(array $summary): array
+    {
+        $report = $summary['duty_increase_recommendations'] ?? [];
+        $summaryCells = [
+            $report['total_uncovered_duties'] ?? 0,
+            $report['coverable_by_limit_increase'] ?? 0,
+            $report['requires_new_observers'] ?? 0,
+            $report['recommended_observers_count'] ?? 0,
+            $report['max_suggested_increase_per_observer'] ?? 0,
+        ];
+
+        $rows = collect($report['recommendations'] ?? [])
+            ->map(fn (array $recommendation): array => [
+                ...$summaryCells,
+                $recommendation['name'] ?? '',
+                $recommendation['observer_type'] ?? '',
+                $recommendation['eligible_roles'] ?? '',
+                $recommendation['current_assigned_duties'] ?? 0,
+                $recommendation['current_max_duties'] ?? 0,
+                $recommendation['suggested_new_max_duties'] ?? 0,
+                $recommendation['suggested_additional_duties'] ?? 0,
+                implode('، ', $recommendation['related_slots'] ?? []),
+                $recommendation['reason'] ?? '',
+            ])
+            ->values()
+            ->all();
+
+        if ($rows !== []) {
+            return $rows;
+        }
+
+        return [[
+            ...$summaryCells,
+            '—',
+            '—',
+            '—',
+            0,
+            0,
+            0,
+            0,
+            '—',
+            collect($report['unresolved'] ?? [])->pluck('reason')->unique()->implode('، ') ?: '—',
+        ]];
     }
 }

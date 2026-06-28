@@ -27,6 +27,8 @@ class InvigilatorDistributionArraySheet implements FromArray, ShouldAutoSize, Wi
 
     public function title(): string
     {
-        return $this->title;
+        $title = preg_replace('/[\\\\\\/\\?\\*\\[\\]:]/u', ' ', $this->title) ?: $this->title;
+
+        return function_exists('mb_substr') ? mb_substr($title, 0, 31) : substr($title, 0, 31);
     }
 }

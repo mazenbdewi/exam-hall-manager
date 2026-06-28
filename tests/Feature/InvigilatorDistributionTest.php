@@ -537,6 +537,76 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function duty_increase_recommendations_are_balanced_across_eligible_observers(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $firstHall = $this->createUsedHall($college, 'قاعة 1', ExamHallType::Small);
+        $this->createUsedHall($college, 'قاعة 2', ExamHallType::Small);
+        $this->createUsedHallOnDate($college, 'قاعة 3', ExamHallType::Small, '2026-06-02');
+        $this->createUsedHallOnDate($college, 'قاعة 4', ExamHallType::Small, '2026-06-02');
+        $this->createUsedHallOnDate($college, 'قاعة 5', ExamHallType::Small, '2026-06-03');
+        $this->createUsedHallOnDate($college, 'قاعة 6', ExamHallType::Small, '2026-06-03');
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => false,
+            'max_assignments_per_day' => 2,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $invigilators = collect(range(1, 3))->map(fn (int $index): Invigilator => Invigilator::query()->create([
+            'college_id' => $college->id,
+            'name' => 'مراقب متوازن '.$index,
+            'phone' => '09990000'.$index,
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'max_assignments' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 2,
+            'is_active' => true,
+        ]));
+
+        Invigilator::query()->create([
+            'college_id' => $college->id,
+            'name' => 'احتياط لا يقترح',
+            'phone' => '099900009',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Reserve->value,
+            'max_assignments' => 1,
+            'is_active' => true,
+        ]);
+
+        foreach ($invigilators as $invigilator) {
+            InvigilatorAssignment::query()->create([
+                'college_id' => $college->id,
+                'exam_date' => '2026-05-31',
+                'start_time' => '07:00:00',
+                'exam_hall_id' => $firstHall->id,
+                'invigilator_id' => $invigilator->id,
+                'invigilation_role' => InvigilationRole::Regular->value,
+                'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+            ]);
+        }
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($college, null, null, '2026-06-01', '2026-06-03');
+        $report = $summary['duty_increase_recommendations'];
+
+        $this->assertSame(6, $summary['shortage_count']);
+        $this->assertSame(6, $report['total_uncovered_duties']);
+        $this->assertSame(6, $report['coverable_by_limit_increase']);
+        $this->assertSame(0, $report['requires_new_observers']);
+        $this->assertSame(3, $report['recommended_observers_count']);
+        $this->assertSame(2, $report['max_suggested_increase_per_observer']);
+        $this->assertSame([2, 2, 2], collect($report['recommendations'])->pluck('suggested_additional_duties')->sort()->values()->all());
+        $this->assertFalse(collect($report['recommendations'])->pluck('name')->contains('احتياط لا يقترح'));
+    }
+
+    #[Test]
     public function invigilator_pdf_service_splits_large_html_before_sending_it_to_mpdf(): void
     {
         $service = app(InvigilatorDistributionPdfService::class);
@@ -1976,6 +2046,31 @@ class InvigilatorDistributionTest extends TestCase
         HallAssignment::query()->create([
             'exam_hall_id' => $hall->id,
             'exam_date' => '2026-06-01',
+            'exam_start_time' => '09:00:00',
+            'college_id' => $college->id,
+            'total_capacity' => 80,
+            'assigned_students_count' => 20,
+            'remaining_capacity' => 60,
+        ]);
+
+        return $hall;
+    }
+
+    protected function createUsedHallOnDate(College $college, string $name, ExamHallType $type, string $examDate): ExamHall
+    {
+        $hall = ExamHall::query()->create([
+            'college_id' => $college->id,
+            'name' => $name,
+            'location' => 'المبنى الأول',
+            'capacity' => 80,
+            'hall_type' => $type->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        HallAssignment::query()->create([
+            'exam_hall_id' => $hall->id,
+            'exam_date' => $examDate,
             'exam_start_time' => '09:00:00',
             'college_id' => $college->id,
             'total_capacity' => 80,
