@@ -30,6 +30,15 @@ return array_replace_recursive($arabic, [
     'helpers' => [
         'allow_normal_subjects_in_drawing_studios' => 'When enabled, normal subjects may use drawing studios - labs only if normal halls do not have enough capacity.',
     ],
+    'pagination' => [
+        'rows_per_page' => 'Rows per page',
+        'show_rows' => 'Show :count rows',
+        'showing_rows' => 'Showing :from to :to of :total rows',
+        'previous' => 'Previous',
+        'next' => 'Next',
+        'current_page' => 'Current page: :page of :last',
+        'more_items' => 'and :count more slots',
+    ],
     'notifications' => [
         'drawing_studio_capacity_shortage' => 'There are not enough drawing studios - labs to distribute the drawing subject.',
     ],

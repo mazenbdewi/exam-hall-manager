@@ -538,6 +538,73 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function uncovered_invigilator_duties_report_shows_ten_rows_by_default(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        foreach (range(1, 12) as $index) {
+            $this->createUsedHall($college, 'قاعة نقص صفحة '.str_pad((string) $index, 2, '0', STR_PAD_LEFT), ExamHallType::Small);
+        }
+
+        $component = Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->set('active_tab', 'invigilator')
+            ->assertSet('shortage_per_page', 10)
+            ->assertSee(__('exam.reports.invigilator_shortage_report_title'))
+            ->assertSee(__('exam.pagination.show_rows', ['count' => 10]))
+            ->assertSee('قاعة نقص صفحة 01')
+            ->assertSee('قاعة نقص صفحة 10')
+            ->assertDontSee('قاعة نقص صفحة 11');
+
+        $summary = $component->instance()->getSummaryData();
+
+        $this->assertSame(12, $summary['shortage_count']);
+        $this->assertSame([], $summary['shortages']);
+    }
+
+    #[Test]
+    public function uncovered_invigilator_duties_report_page_size_and_navigation_work(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        foreach (range(1, 30) as $index) {
+            $this->createUsedHall($college, 'قاعة حجم '.str_pad((string) $index, 2, '0', STR_PAD_LEFT), ExamHallType::Small);
+        }
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->set('active_tab', 'invigilator')
+            ->set('shortage_per_page', 25)
+            ->assertSet('shortage_per_page', 25)
+            ->assertSee('قاعة حجم 01')
+            ->assertSee('قاعة حجم 25')
+            ->assertDontSee('قاعة حجم 26')
+            ->call('nextShortagePage')
+            ->assertSee(__('exam.pagination.current_page', ['page' => 2, 'last' => 2]))
+            ->assertSee('قاعة حجم 26')
+            ->assertSee('قاعة حجم 30')
+            ->assertDontSee('قاعة حجم 01')
+            ->call('previousShortagePage')
+            ->assertSee(__('exam.pagination.current_page', ['page' => 1, 'last' => 2]))
+            ->assertSee('قاعة حجم 01')
+            ->assertDontSee('قاعة حجم 26');
+    }
+
+    #[Test]
     public function duty_increase_recommendations_are_balanced_across_eligible_observers(): void
     {
         $context = $this->createSlotContext();

@@ -45,6 +45,10 @@ class InvigilatorDistribution extends Page
 
     public string $active_tab = 'day';
 
+    public int $shortage_page = 1;
+
+    public int $shortage_per_page = 10;
+
     protected ?array $cachedSummary = null;
 
     protected ?array $cachedReadiness = null;
@@ -100,6 +104,14 @@ class InvigilatorDistribution extends Page
 
         if (in_array($property, ['college_id', 'from_date', 'to_date'], true)) {
             $this->readiness_confirmed = false;
+            $this->shortage_page = 1;
+        }
+
+        if ($property === 'shortage_per_page') {
+            $this->shortage_per_page = in_array((int) $this->shortage_per_page, [10, 25, 50, 100], true)
+                ? (int) $this->shortage_per_page
+                : 10;
+            $this->shortage_page = 1;
         }
     }
 
@@ -287,7 +299,7 @@ class InvigilatorDistribution extends Page
             return null;
         }
 
-        if (empty($this->getSummaryData()['shortages'] ?? [])) {
+        if ((int) ($this->getSummaryData()['shortage_count'] ?? 0) <= 0) {
             Notification::make()
                 ->success()
                 ->title(__('exam.notifications.no_invigilator_shortage'))
@@ -373,7 +385,59 @@ class InvigilatorDistribution extends Page
             ];
         }
 
-        return $this->cachedSummary = app(InvigilatorDistributionService::class)->getSummary($college, ...$this->exportFilters());
+        [$examDate, $startTime, $fromDate, $toDate] = $this->exportFilters();
+
+        return $this->cachedSummary = app(InvigilatorDistributionService::class)->getSummary(
+            $college,
+            $examDate,
+            $startTime,
+            $fromDate,
+            $toDate,
+            includeShortageDetails: false,
+        );
+    }
+
+    public function getPaginatedShortagesData(): array
+    {
+        $college = $this->selectedCollege();
+
+        if (! $college) {
+            return [
+                'data' => [],
+                'total' => 0,
+                'per_page' => 10,
+                'current_page' => 1,
+                'last_page' => 1,
+                'from' => 0,
+                'to' => 0,
+                'has_pages' => false,
+                'per_page_options' => [10, 25, 50, 100],
+            ];
+        }
+
+        [$examDate, $startTime, $fromDate, $toDate] = $this->exportFilters();
+
+        return app(InvigilatorDistributionService::class)->getShortagePage(
+            $college,
+            $examDate,
+            $startTime,
+            $fromDate,
+            $toDate,
+            $this->shortage_page,
+            $this->shortage_per_page,
+        );
+    }
+
+    public function nextShortagePage(): void
+    {
+        $pagination = $this->getPaginatedShortagesData();
+        $this->shortage_page = min((int) $pagination['last_page'], (int) $pagination['current_page'] + 1);
+    }
+
+    public function previousShortagePage(): void
+    {
+        $pagination = $this->getPaginatedShortagesData();
+        $this->shortage_page = max(1, (int) $pagination['current_page'] - 1);
     }
 
     public function getReadinessData(): array

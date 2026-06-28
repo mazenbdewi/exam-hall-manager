@@ -693,6 +693,16 @@ return [
         'by_day' => 'حسب اليوم',
     ],
 
+    'pagination' => [
+        'rows_per_page' => 'عدد الصفوف',
+        'show_rows' => 'عرض :count صفًا',
+        'showing_rows' => 'عرض :from إلى :to من أصل :total صف',
+        'previous' => 'السابق',
+        'next' => 'التالي',
+        'current_page' => 'الصفحة الحالية: :page من :last',
+        'more_items' => 'و:count مواعيد أخرى',
+    ],
+
     'reports' => [
         'hall_report' => 'تقرير القاعات',
         'personal_schedule' => 'برنامج المراقب الشخصي',

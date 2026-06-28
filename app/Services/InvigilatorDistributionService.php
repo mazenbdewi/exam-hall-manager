@@ -220,7 +220,7 @@ class InvigilatorDistributionService
         ];
     }
 
-    public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, bool $includeDutyIncreaseRecommendationDetails = false): array
+    public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, bool $includeDutyIncreaseRecommendationDetails = false, bool $includeShortageDetails = true): array
     {
         $slots = filled($examDate) && filled($startTime)
             ? collect([['exam_date' => substr((string) $examDate, 0, 10), 'start_time' => $this->normalizeTime((string) $startTime)]])
@@ -260,13 +260,58 @@ class InvigilatorDistributionService
             'slots_count' => $slotSummaries->count(),
             'has_assignments' => $slotSummaries->sum('assigned_count') > 0,
             'slots' => $slotSummaries->all(),
-            'shortages' => $shortages->all(),
+            'shortages' => $includeShortageDetails ? $shortages->all() : [],
             'shortage_by_role' => $shortageByRole,
             'shortage_by_slot' => $this->shortageBySlot($slotSummaries),
             'duty_increase_recommendations' => $dutyIncreaseRecommendations,
             'diagnosis' => $this->diagnosis($slotSummaries, $shortageByRole),
             'by_invigilator' => $this->groupByInvigilator($assignments),
             'by_day' => $this->groupByDay($slotSummaries),
+        ];
+    }
+
+    public function getShortagePage(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, int $page = 1, int $perPage = 10): array
+    {
+        $allowedPerPage = [10, 25, 50, 100];
+        $perPage = in_array($perPage, $allowedPerPage, true) ? $perPage : 10;
+
+        $slots = filled($examDate) && filled($startTime)
+            ? collect([['exam_date' => substr((string) $examDate, 0, 10), 'start_time' => $this->normalizeTime((string) $startTime)]])
+            : $this->buildSlots($college, $fromDate, $toDate);
+
+        $rows = $slots
+            ->flatMap(fn (array $slot): array => $this->slotSummary($college, $slot['exam_date'], $slot['start_time'])['shortages'] ?? [])
+            ->sortBy([
+                ['exam_date', 'asc'],
+                ['start_time', 'asc'],
+                ['hall_name', 'asc'],
+                ['role_key', 'asc'],
+            ])
+            ->values();
+
+        $total = $rows->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min(max(1, $page), $lastPage);
+        $from = $total === 0 ? 0 : (($page - 1) * $perPage) + 1;
+        $to = min($total, $page * $perPage);
+
+        return [
+            'data' => $rows
+                ->slice(($page - 1) * $perPage, $perPage)
+                ->map(fn (array $row): array => [
+                    'college_name' => $college->name,
+                    ...$row,
+                ])
+                ->values()
+                ->all(),
+            'total' => $total,
+            'per_page' => $perPage,
+            'current_page' => $page,
+            'last_page' => $lastPage,
+            'from' => $from,
+            'to' => $to,
+            'has_pages' => $lastPage > 1,
+            'per_page_options' => $allowedPerPage,
         ];
     }
 

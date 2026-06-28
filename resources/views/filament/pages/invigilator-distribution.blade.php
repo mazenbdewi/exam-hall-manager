@@ -259,22 +259,59 @@
             </div>
         @endif
 
-        @if (! empty($summary['shortages'] ?? []))
+        @php($shortagePagination = $this->getPaginatedShortagesData())
+        @if ((int) ($shortagePagination['total'] ?? 0) > 0)
             <div class="rounded-lg border border-warning-200 bg-warning-50 p-4 shadow-sm dark:border-warning-500/20 dark:bg-warning-500/10">
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h2 class="text-base font-semibold text-warning-900 dark:text-warning-200">{{ __('exam.sections.invigilator_shortage') }}</h2>
-                    <x-filament::button size="sm" color="warning" icon="heroicon-o-document-arrow-down" wire:click="exportShortagePdf">
-                        {{ __('exam.actions.export_invigilator_shortage_pdf') }}
-                    </x-filament::button>
+                    <div>
+                        <h2 class="text-base font-semibold text-warning-900 dark:text-warning-200">{{ __('exam.reports.invigilator_shortage_report_title') }}</h2>
+                        <p class="mt-1 text-sm text-warning-800 dark:text-warning-100">
+                            {{ __('exam.pagination.showing_rows', ['from' => $shortagePagination['from'] ?? 0, 'to' => $shortagePagination['to'] ?? 0, 'total' => $shortagePagination['total'] ?? 0]) }}
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <label class="flex items-center gap-2 text-sm text-warning-900 dark:text-warning-100">
+                            <span>{{ __('exam.pagination.rows_per_page') }}</span>
+                            <select wire:model.live="shortage_per_page" class="rounded-md border-warning-300 bg-white text-sm text-gray-900 dark:border-warning-500/30 dark:bg-gray-900 dark:text-white">
+                                @foreach (($shortagePagination['per_page_options'] ?? [10, 25, 50, 100]) as $pageSize)
+                                    <option value="{{ $pageSize }}">{{ __('exam.pagination.show_rows', ['count' => $pageSize]) }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                        <x-filament::button size="sm" color="warning" icon="heroicon-o-document-arrow-down" wire:click="exportShortagePdf">
+                            {{ __('exam.actions.export_invigilator_shortage_pdf') }}
+                        </x-filament::button>
+                    </div>
                 </div>
+
+                @if (! empty($summary['shortage_by_slot'] ?? []))
+                    <div class="mb-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        @foreach (array_slice($summary['shortage_by_slot'], 0, 6) as $slotShortage)
+                            <div class="rounded-md border border-warning-200 bg-white/70 p-3 text-sm dark:border-warning-500/20 dark:bg-black/10">
+                                <div class="font-medium text-warning-950 dark:text-warning-100">
+                                    {{ $slotShortage['exam_date'] }} · {{ $slotShortage['start_time'] }}
+                                </div>
+                                <div class="mt-1 text-warning-800 dark:text-warning-100">
+                                    {{ __('exam.fields.missing_assignments_count') }}: {{ $slotShortage['shortage_count'] }}
+                                </div>
+                            </div>
+                        @endforeach
+                        @if (count($summary['shortage_by_slot']) > 6)
+                            <div class="rounded-md border border-warning-200 bg-white/70 p-3 text-sm font-medium text-warning-900 dark:border-warning-500/20 dark:bg-black/10 dark:text-warning-100">
+                                {{ __('exam.pagination.more_items', ['count' => count($summary['shortage_by_slot']) - 6]) }}
+                            </div>
+                        @endif
+                    </div>
+                @endif
+
                 <div class="overflow-x-auto">
-                    <table class="w-full min-w-[760px] text-sm">
+                    <table class="w-full min-w-[980px] text-sm">
                         <thead>
                             <tr class="border-b border-warning-200 text-warning-900 dark:border-warning-500/20 dark:text-warning-200">
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.exam_date') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.exam_start_time') }}</th>
+                                <th class="px-3 py-2 text-right">{{ __('exam.fields.college') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.hall_name') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.hall_type') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.invigilation_role') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.required_count') }}</th>
                                 <th class="px-3 py-2 text-right">{{ __('exam.fields.assigned_count') }}</th>
@@ -283,12 +320,12 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach ($summary['shortages'] as $shortage)
+                            @foreach (($shortagePagination['data'] ?? []) as $shortage)
                                 <tr class="border-b border-warning-100 last:border-0 dark:border-warning-500/10">
                                     <td class="px-3 py-2">{{ $shortage['exam_date'] }}</td>
                                     <td class="px-3 py-2">{{ $shortage['start_time'] }}</td>
+                                    <td class="px-3 py-2">{{ $shortage['college_name'] ?? ($summary['college']->name ?? '-') }}</td>
                                     <td class="px-3 py-2">{{ $shortage['hall_name'] }}</td>
-                                    <td class="px-3 py-2">{{ $shortage['hall_type_label'] ?? '-' }}</td>
                                     <td class="px-3 py-2">{{ $shortage['invigilation_role'] }}</td>
                                     <td class="px-3 py-2">{{ $shortage['required_count'] }}</td>
                                     <td class="px-3 py-2">{{ $shortage['assigned_count'] }}</td>
@@ -298,6 +335,30 @@
                             @endforeach
                         </tbody>
                     </table>
+                </div>
+
+                <div class="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-warning-900 dark:text-warning-100">
+                    <div>
+                        {{ __('exam.pagination.current_page', ['page' => $shortagePagination['current_page'] ?? 1, 'last' => $shortagePagination['last_page'] ?? 1]) }}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button
+                            type="button"
+                            wire:click="previousShortagePage"
+                            @disabled(($shortagePagination['current_page'] ?? 1) <= 1)
+                            class="rounded-md border border-warning-300 bg-white px-3 py-1.5 font-medium disabled:cursor-not-allowed disabled:opacity-50 dark:border-warning-500/30 dark:bg-gray-900"
+                        >
+                            {{ __('exam.pagination.previous') }}
+                        </button>
+                        <button
+                            type="button"
+                            wire:click="nextShortagePage"
+                            @disabled(($shortagePagination['current_page'] ?? 1) >= ($shortagePagination['last_page'] ?? 1))
+                            class="rounded-md border border-warning-300 bg-white px-3 py-1.5 font-medium disabled:cursor-not-allowed disabled:opacity-50 dark:border-warning-500/30 dark:bg-gray-900"
+                        >
+                            {{ __('exam.pagination.next') }}
+                        </button>
+                    </div>
                 </div>
             </div>
         @endif
