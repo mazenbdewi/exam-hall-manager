@@ -134,9 +134,11 @@ class ExamHallDistributionService
             'issue_slots_count' => 0,
             'slots' => [],
             'issues' => [],
+            'warnings' => [],
             'failure_details' => [],
             'unassigned_by_subject' => [],
             'unassigned_by_slot' => [],
+            'warnings_by_slot' => [],
             'settings' => $settings,
             'separate_carry_students' => $separateCarryStudents,
             'regular_students_count' => 0,
@@ -145,6 +147,9 @@ class ExamHallDistributionService
             'carry_halls_count' => 0,
             'mixed_halls_count' => 0,
             'carry_regular_mixing_cases_count' => 0,
+            'warning_slots_count' => 0,
+            'warnings_count' => 0,
+            'blocking_issues_count' => 0,
         ];
 
         foreach ($slots as $slotOfferings) {
@@ -166,13 +171,17 @@ class ExamHallDistributionService
                 $summary['unassigned_students'] += $slotStats['unassigned_students'];
                 $summary['used_halls'] += $slotStats['used_halls'];
                 $summary['issues'] = array_merge($summary['issues'], $slotStats['issues']);
+                $summary['warnings'] = array_merge($summary['warnings'], $slotStats['warnings']);
                 $summary['failure_details'] = array_merge($summary['failure_details'], $slotStats['failure_details']);
                 $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
                 $this->addSeparationStatsToGlobalSummary($summary, $slotStats);
 
-                if ($slotStats['unassigned_students'] > 0 || $slotCapacityShortage > 0 || ($separateCarryStudents && $slotStats['mixed_halls_count'] > 0)) {
+                if ($slotStats['unassigned_students'] > 0 || $slotCapacityShortage > 0) {
                     $summary['issue_slots_count']++;
                     $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
+                } elseif ($separateCarryStudents && $slotStats['mixed_halls_count'] > 0) {
+                    $summary['warning_slots_count']++;
+                    $summary['warnings_by_slot'][] = $slotStats['slot_issue'];
                 }
 
                 $summary['slots'][] = [
@@ -210,14 +219,18 @@ class ExamHallDistributionService
             $summary['unassigned_students'] += $unassignedStudentsCount;
             $summary['used_halls'] += $slotStats['used_halls'];
             $summary['issues'] = array_merge($summary['issues'], $slotStats['issues']);
+            $summary['warnings'] = array_merge($summary['warnings'], $slotStats['warnings']);
             $summary['failure_details'] = array_merge($summary['failure_details'], $slotStats['failure_details']);
             $summary['unassigned_by_subject'] = array_merge($summary['unassigned_by_subject'], $slotStats['unassigned_by_subject']);
             $summary['distributed_slots_count']++;
             $this->addSeparationStatsToGlobalSummary($summary, $slotStats);
 
-            if ($unassignedStudentsCount > 0 || $slotCapacityShortage > 0 || ($separateCarryStudents && $slotStats['mixed_halls_count'] > 0)) {
+            if ($unassignedStudentsCount > 0 || $slotCapacityShortage > 0) {
                 $summary['issue_slots_count']++;
                 $summary['unassigned_by_slot'][] = $slotStats['slot_issue'];
+            } elseif ($separateCarryStudents && $slotStats['mixed_halls_count'] > 0) {
+                $summary['warning_slots_count']++;
+                $summary['warnings_by_slot'][] = $slotStats['slot_issue'];
             }
 
             $summary['slots'][] = [
@@ -242,9 +255,12 @@ class ExamHallDistributionService
 
         $summary['separation_status_message'] = $this->carrySeparationStatusMessage($summary);
 
-        if ($summary['unassigned_students'] > 0 || $summary['capacity_shortage'] > 0 || $summary['carry_regular_mixing_cases_count'] > 0) {
+        if ($summary['unassigned_students'] > 0 || $summary['capacity_shortage'] > 0) {
             $summary['status'] = 'partial';
             $summary['message'] = __('exam.notifications.global_hall_distribution_completed_with_issues');
+        } elseif ($summary['carry_regular_mixing_cases_count'] > 0) {
+            $summary['status'] = 'success_with_warnings';
+            $summary['message'] = __('exam.global_hall_distribution.success_with_warnings_message');
         }
 
         return $this->persistGlobalDistributionResult($this->withLegacyGlobalDistributionKeys($summary));
@@ -1313,6 +1329,7 @@ class ExamHallDistributionService
         $hasSlotProblem = $unassignedStudents > 0 || $slotCapacityShortage > 0;
         $reason = $hasSlotProblem ? $this->globalDistributionIssueReason($slotCapacityShortage, $usedHalls) : null;
         $issues = [];
+        $warnings = [];
         $failureDetails = [];
         $unassignedBySubject = [];
 
@@ -1353,14 +1370,17 @@ class ExamHallDistributionService
         }
 
         if ($separateCarryStudents && $hallTypeStats['mixed_halls_count'] > 0) {
-            $issues[] = [
+            $warnings[] = [
                 'exam_date' => $examDate,
                 'start_time' => $examStartTime,
                 'subject_exam_offering_id' => null,
                 'subject_name' => null,
                 'affected_students_count' => $hallTypeStats['mixed_students_count'],
                 'reason' => __('exam.global_hall_distribution.carry_regular_mixed_issue'),
+                'message' => __('exam.global_hall_distribution.success_with_warnings_message'),
                 'issue_type' => 'carry_regular_mixed_due_to_capacity',
+                'severity' => 'warning',
+                'blocks_invigilator_distribution' => false,
             ];
         }
 
@@ -1373,6 +1393,7 @@ class ExamHallDistributionService
             'unassigned_students' => $unassignedStudents,
             'used_halls' => $usedHalls,
             'issues' => $issues,
+            'warnings' => $warnings,
             'failure_details' => $failureDetails,
             'unassigned_by_subject' => $unassignedBySubject,
             ...$hallTypeStats,
@@ -2219,12 +2240,24 @@ class ExamHallDistributionService
 
         $summary['unassigned_by_slot'] = collect($summary['unassigned_by_slot'] ?? [])
             ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0
-                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0
-                || (int) ($slot['mixed_halls_count'] ?? 0) > 0)
+                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $summary['warnings'] = collect($summary['warnings'] ?? [])
+            ->filter(fn (array $warning): bool => (int) ($warning['affected_students_count'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $summary['warnings_by_slot'] = collect($summary['warnings_by_slot'] ?? [])
+            ->filter(fn (array $slot): bool => (int) ($slot['mixed_halls_count'] ?? 0) > 0)
             ->values()
             ->all();
 
         $summary['issue_slots_count'] = count($summary['unassigned_by_slot']);
+        $summary['warning_slots_count'] = count($summary['warnings_by_slot']);
+        $summary['warnings_count'] = count($summary['warnings']);
+        $summary['blocking_issues_count'] = count($summary['issues']);
 
         return $summary;
     }
@@ -2342,10 +2375,16 @@ class ExamHallDistributionService
         $hasCapacityProblem = (int) ($summary['capacity_shortage'] ?? 0) > 0;
 
         if (($summary['status'] ?? null) !== 'failed') {
-            $summary['status'] = ($hasValidationProblem || $hasMixingProblem || $hasCapacityProblem) ? 'partial' : 'success';
-            $summary['message'] = $summary['status'] === 'success'
-                ? __('exam.notifications.global_hall_distribution_completed')
-                : __('exam.notifications.global_hall_distribution_completed_with_issues');
+            $summary['status'] = match (true) {
+                $hasValidationProblem || $hasCapacityProblem => 'partial',
+                $hasMixingProblem => 'success_with_warnings',
+                default => 'success',
+            };
+            $summary['message'] = match ($summary['status']) {
+                'success' => __('exam.notifications.global_hall_distribution_completed'),
+                'success_with_warnings' => __('exam.global_hall_distribution.success_with_warnings_message'),
+                default => __('exam.notifications.global_hall_distribution_completed_with_issues'),
+            };
         }
 
         return $this->withLegacyGlobalDistributionKeys($summary);

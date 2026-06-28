@@ -2,6 +2,7 @@
     $run = $this->latestDistributionRun();
     $tone = match ($run?->status) {
         'success' => 'success',
+        'success_with_warnings' => 'warning',
         'partial' => 'warning',
         'failed' => 'danger',
         default => 'gray',

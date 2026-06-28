@@ -1109,6 +1109,65 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function successful_student_distribution_with_carry_mixing_warning_allows_invigilator_distribution(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $offering = $context['offering'];
+
+        foreach (range(1, 8) as $index) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $offering->id,
+                'student_number' => '2026-CARRY-MIX-'.$index,
+                'full_name' => 'طالب '.$index,
+                'student_type' => $index <= 6 ? ExamStudentType::Regular->value : ExamStudentType::Carry->value,
+            ]);
+        }
+
+        ExamHall::query()->create([
+            'college_id' => $college->id,
+            'name' => 'قاعة مختلطة كافية',
+            'location' => 'المبنى الأول',
+            'capacity' => 8,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $studentResult = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $college->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+            separateCarryStudents: true,
+        );
+
+        $this->assertSame('success_with_warnings', $studentResult['status']);
+        $this->assertSame(0, $studentResult['unassigned_students']);
+        $this->assertSame(1, $studentResult['carry_regular_mixing_cases_count']);
+
+        $service = app(InvigilatorDistributionService::class);
+        $readiness = $service->studentDistributionReadiness($college, '2026-06-01', '2026-06-01');
+
+        $this->assertTrue($readiness['is_ready']);
+        $this->assertSame(0, $readiness['unassigned_students_count']);
+        $this->assertSame(0, $readiness['incomplete_slots_count']);
+        $this->assertSame(__('exam.readiness.ready_message'), $readiness['blocking_message']);
+
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createInvigilators($college, InvigilationRole::Regular, 1);
+
+        $invigilatorResult = $service->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+
+        $this->assertSame('success', $invigilatorResult['status']);
+        $this->assertSame(1, InvigilatorAssignment::query()->count());
+    }
+
+    #[Test]
     public function it_distributes_students_globally_by_college_and_groups_same_time_offerings(): void
     {
         $context = $this->createSlotContext();

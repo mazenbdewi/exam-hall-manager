@@ -51,6 +51,9 @@ return array_replace_recursive($arabic, [
     'global_hall_distribution' => [
         'results_title' => 'Global Student Distribution Result',
         'success_message' => 'All students were distributed successfully.',
+        'success_with_warnings_title' => 'Students were distributed successfully with warnings.',
+        'success_with_warnings_message' => 'Students were distributed successfully with non-blocking warnings.',
+        'success_with_warnings_body' => 'Students were distributed successfully with warnings. Carry students could not be fully separated from regular students due to hall or capacity shortage. You can proceed to invigilator distribution, or add more halls and redistribute if strict separation is required.',
         'partial_message' => 'Distribution completed with issues that need review.',
         'failed_message' => 'Distribution failed because of a data or hall problem.',
         'results_hint' => 'Review the summary and details before moving to invigilator distribution.',
@@ -149,6 +152,9 @@ return array_replace_recursive($arabic, [
             'total_capacity' => 'Total capacity',
             'capacity_shortage' => 'Capacity shortage',
             'remaining_capacity' => 'Remaining capacity in used halls',
+            'warning_slots_count' => 'Slots with warnings',
+            'warnings_count' => 'Non-blocking warnings',
+            'blocking_issues_count' => 'Blocking issues',
             'separate_carry_students' => 'Separate carry students',
             'carry_students_count' => 'Carry students',
             'regular_students_count' => 'Regular students',
@@ -165,5 +171,11 @@ return array_replace_recursive($arabic, [
             'remaining_capacity' => 'Remaining capacity',
             'data_source' => 'Validation source',
         ],
+    ],
+    'student_distribution_run_statuses' => [
+        'success' => 'All students were distributed successfully',
+        'success_with_warnings' => 'Distributed successfully with warnings',
+        'partial' => 'Distributed with issues that need review',
+        'failed' => 'Distribution could not be completed',
     ],
 ]);

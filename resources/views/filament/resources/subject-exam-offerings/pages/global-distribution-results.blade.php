@@ -8,6 +8,7 @@
         $unassignedReportDisabledMessage = $this->unassignedReportDisabledMessage();
         $statusTone = match ($run?->status) {
             'success' => 'success',
+            'success_with_warnings' => 'warning',
             'partial' => 'warning',
             'failed' => 'danger',
             default => 'gray',
@@ -35,8 +36,7 @@
         ] : [];
         $problemSlots = collect($summary['unassigned_by_slot'] ?? [])
             ->filter(fn (array $slot): bool => (int) ($slot['unassigned_count'] ?? 0) > 0
-                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0
-                || (int) ($slot['mixed_halls_count'] ?? 0) > 0)
+                || (int) ($slot['capacity_shortage'] ?? $slot['shortage_count'] ?? 0) > 0)
             ->values();
         $problemSubjects = collect($summary['unassigned_by_subject'] ?? [])
             ->filter(fn (array $subject): bool => (int) ($subject['unassigned_count'] ?? 0) > 0)
@@ -58,10 +58,10 @@
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <h2 class="text-lg font-semibold {{ $statusTone === 'success' ? 'text-success-900 dark:text-success-200' : ($statusTone === 'warning' ? 'text-warning-900 dark:text-warning-200' : 'text-danger-900 dark:text-danger-200') }}">
-                            {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message_detailed')) }}
+                            {{ $run->status === 'success' ? __('exam.global_hall_distribution.success_message') : ($run->status === 'success_with_warnings' ? __('exam.global_hall_distribution.success_with_warnings_title') : ($run->status === 'partial' ? __('exam.global_hall_distribution.partial_message') : __('exam.global_hall_distribution.failed_message_detailed'))) }}
                         </h2>
                         <p class="mt-1 text-sm {{ $statusTone === 'success' ? 'text-success-800 dark:text-success-200' : ($statusTone === 'warning' ? 'text-warning-800 dark:text-warning-200' : 'text-danger-800 dark:text-danger-200') }}">
-                            {{ $run->status === 'success' && $unassignedCount === 0 ? __('exam.global_hall_distribution.no_issues_success_hint') : ($run->notes ?: __('exam.global_hall_distribution.results_hint')) }}
+                            {{ $run->status === 'success_with_warnings' ? __('exam.global_hall_distribution.success_with_warnings_body') : ($run->status === 'success' && $unassignedCount === 0 ? __('exam.global_hall_distribution.no_issues_success_hint') : ($run->notes ?: __('exam.global_hall_distribution.results_hint'))) }}
                         </p>
                     </div>
                     <div class="flex flex-wrap gap-2">

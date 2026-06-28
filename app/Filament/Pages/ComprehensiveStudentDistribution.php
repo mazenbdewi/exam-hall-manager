@@ -362,6 +362,7 @@ class ComprehensiveStudentDistribution extends Page
             ],
             status: match ($result['status'] ?? 'failed') {
                 'success' => 'success',
+                'success_with_warnings' => 'warning',
                 'partial' => 'warning',
                 default => 'failed',
             },
@@ -386,6 +387,7 @@ class ComprehensiveStudentDistribution extends Page
         $notification = Notification::make()
             ->title(match ($result['status']) {
                 'success' => __('exam.notifications.global_hall_distribution_completed'),
+                'success_with_warnings' => __('exam.global_hall_distribution.success_with_warnings_title'),
                 'partial' => __('exam.notifications.global_hall_distribution_completed_with_issues'),
                 default => __('exam.notifications.global_hall_distribution_failed'),
             })
@@ -393,6 +395,7 @@ class ComprehensiveStudentDistribution extends Page
 
         (match ($result['status']) {
             'success' => $notification->success(),
+            'success_with_warnings' => $notification->warning()->persistent(),
             'partial' => $notification->warning()->persistent(),
             default => $notification->danger()->persistent(),
         })->send();
@@ -409,6 +412,7 @@ class ComprehensiveStudentDistribution extends Page
     {
         $intro = match ($result['status'] ?? 'failed') {
             'success' => __('exam.global_hall_distribution.success_notification_body'),
+            'success_with_warnings' => __('exam.global_hall_distribution.success_with_warnings_body'),
             'partial' => __('exam.global_hall_distribution.partial_notification_body').' '.__('exam.global_hall_distribution.summary.unassigned_students_count').': '.($result['unassigned_students'] ?? 0).'. '.__('exam.global_hall_distribution.shortage_report_hint'),
             default => __('exam.global_hall_distribution.failed_notification_body'),
         };
