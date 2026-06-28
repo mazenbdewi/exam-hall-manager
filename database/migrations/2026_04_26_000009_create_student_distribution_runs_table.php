@@ -13,7 +13,7 @@ return new class extends Migration
             $table->foreignId('college_id')->constrained()->cascadeOnUpdate()->restrictOnDelete();
             $table->date('from_date');
             $table->date('to_date');
-            $table->string('status', 20);
+            $table->string('status', 40);
             $table->unsignedInteger('total_offerings')->default(0);
             $table->unsignedInteger('total_slots')->default(0);
             $table->unsignedInteger('total_students')->default(0);

@@ -499,6 +499,11 @@ class ExamHallDistributionTest extends TestCase
         $this->assertSame(1, $result['mixed_halls_count']);
         $this->assertSame(1, $result['carry_regular_mixing_cases_count']);
         $this->assertStringContainsString('لم يتم فصل جميع طلاب الحملة', $result['separation_status_message']);
+        $this->assertDatabaseHas('student_distribution_runs', [
+            'status' => 'success_with_warnings',
+            'unassigned_students' => 0,
+            'capacity_shortage' => 0,
+        ]);
         $this->assertDatabaseMissing('student_distribution_run_issues', [
             'issue_type' => 'carry_regular_mixed_due_to_capacity',
         ]);
