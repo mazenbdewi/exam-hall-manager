@@ -283,6 +283,7 @@ return [
         'download_invigilators_template' => 'تنزيل قالب المراقبين',
         'import_invigilators' => 'استيراد المراقبين',
         'manage_invigilator_distribution' => 'توزيع المراقبين',
+        'distribution' => 'التوزيع',
         'run_invigilator_distribution' => 'تنفيذ توزيع المراقبين',
         'redistribute_invigilators' => 'إعادة التوزيع',
         'rerun_invigilator_distribution' => 'إعادة توزيع المراقبين',
@@ -738,6 +739,7 @@ return [
         ],
         'actions' => [
             'create' => 'إنشاء مسودة توزيع عادل للمراقبين',
+            'fair_distribution' => 'التوزيع العادل',
             'approve' => 'اعتماد وتثبيت التوزيع',
             'cancel' => 'إلغاء المسودة',
             'download_pdf' => 'تحميل تقرير المسودة PDF',

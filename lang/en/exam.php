@@ -4,6 +4,7 @@ $arabic = require __DIR__.'/../ar/exam.php';
 
 return array_replace_recursive($arabic, [
     'actions' => [
+        'distribution' => 'Distribution',
         'export_unassigned_students_pdf' => 'Download Unassigned Students PDF',
         'export_unassigned_students_excel' => 'Download Unassigned Students Excel',
         'export_global_distribution_summary_pdf' => 'Download Distribution Summary PDF',
@@ -72,6 +73,7 @@ return array_replace_recursive($arabic, [
         ],
         'actions' => [
             'create' => 'Create Fair Balanced Invigilator Draft',
+            'fair_distribution' => 'Fair distribution',
             'approve' => 'Approve and apply distribution',
             'cancel' => 'Cancel draft',
             'download_pdf' => 'Download Draft PDF',

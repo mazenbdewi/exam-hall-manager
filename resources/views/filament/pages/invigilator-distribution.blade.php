@@ -18,10 +18,6 @@
     @endphp
 
     <div dir="rtl" class="space-y-5 text-right">
-        <div class="rounded-lg border border-primary-200 bg-primary-50 p-3 text-sm font-semibold text-primary-700 shadow-sm dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-300">
-            صفحة توزيع المراقبين تم تحميلها
-        </div>
-
         <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
             <div class="mb-4 grid gap-2 text-sm text-gray-600 dark:text-gray-300 md:grid-cols-5">
                 <div><span class="font-semibold text-gray-950 dark:text-white">{{ __('exam.workflow.step_1') }}</span></div>
@@ -31,7 +27,7 @@
                 <div><span class="font-semibold text-gray-950 dark:text-white">{{ __('exam.workflow.step_5') }}</span></div>
             </div>
 
-            <div class="grid gap-3 md:grid-cols-3">
+            <div class="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-5">
                 @if (\App\Support\ExamCollegeScope::isSuperAdmin())
                     <label class="space-y-1">
                         <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ __('exam.fields.college') }}</span>
@@ -58,6 +54,35 @@
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ __('exam.fields.to_date') }}</span>
                     <input type="date" wire:model.live="to_date" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
                 </label>
+                @if ($this->hasExistingDistribution())
+                    <x-filament::button
+                        icon="heroicon-o-arrow-path"
+                        wire:click="runDistribution"
+                        wire:confirm="{{ __('exam.confirmations.rerun_invigilator_distribution') }}"
+                        wire:loading.attr="disabled"
+                        :disabled="! $this->canRunDistribution()"
+                    >
+                        {{ __('exam.actions.distribution') }}
+                    </x-filament::button>
+                @else
+                    <x-filament::button
+                        icon="heroicon-o-play"
+                        wire:click="runDistribution"
+                        wire:loading.attr="disabled"
+                        :disabled="! $this->canRunDistribution()"
+                    >
+                        {{ __('exam.actions.distribution') }}
+                    </x-filament::button>
+                @endif
+                <x-filament::button
+                    color="info"
+                    icon="heroicon-o-scale"
+                    wire:click="createFairBalancedDraft"
+                    wire:loading.attr="disabled"
+                    :disabled="! ($readiness['is_ready'] ?? false)"
+                >
+                    {{ __('exam.fair_draft.actions.fair_distribution') }}
+                </x-filament::button>
             </div>
         </div>
 
@@ -142,39 +167,8 @@
         </div>
 
         <div class="flex flex-wrap gap-2">
-            @if ($this->hasExistingDistribution())
-                <x-filament::button
-                    icon="heroicon-o-arrow-path"
-                    wire:click="runDistribution"
-                    wire:confirm="{{ __('exam.confirmations.rerun_invigilator_distribution') }}"
-                    wire:loading.attr="disabled"
-                    :disabled="! $this->canRunDistribution()"
-                >
-                    {{ $this->distributionButtonLabel() }}
-                </x-filament::button>
-            @else
-                <x-filament::button
-                    icon="heroicon-o-play"
-                    wire:click="runDistribution"
-                    wire:loading.attr="disabled"
-                    :disabled="! $this->canRunDistribution()"
-                >
-                    {{ $this->distributionButtonLabel() }}
-                </x-filament::button>
-            @endif
-
             <x-filament::button tag="a" :href="$this->reportsDashboardUrl()" color="gray" icon="heroicon-o-printer">
                 عرض التقارير والطباعة
-            </x-filament::button>
-
-            <x-filament::button
-                color="info"
-                icon="heroicon-o-scale"
-                wire:click="createFairBalancedDraft"
-                wire:loading.attr="disabled"
-                :disabled="! ($readiness['is_ready'] ?? false)"
-            >
-                {{ __('exam.fair_draft.actions.create') }}
             </x-filament::button>
         </div>
 

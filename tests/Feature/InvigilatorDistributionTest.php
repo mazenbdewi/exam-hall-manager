@@ -623,6 +623,9 @@ class InvigilatorDistributionTest extends TestCase
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
             ->assertSee('عرض التقارير والطباعة')
+            ->assertSee(__('exam.actions.distribution'))
+            ->assertSee(__('exam.fair_draft.actions.fair_distribution'))
+            ->assertDontSee('صفحة توزيع المراقبين تم تحميلها')
             ->assertDontSee(__('exam.tabs.by_day'))
             ->assertDontSee(__('exam.tabs.by_hall'))
             ->assertDontSee(__('exam.tabs.by_invigilator'))
@@ -638,6 +641,72 @@ class InvigilatorDistributionTest extends TestCase
         Livewire::actingAs($user)
             ->test(ReportsDashboard::class)
             ->assertOk();
+    }
+
+    #[Test]
+    public function normal_distribution_button_uses_selected_date_range_without_creating_fair_draft(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createOfferingForContextDate($context, '2026-06-02');
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createUsedHall($college, 'قاعة خارج فترة الزر', ExamHallType::Small);
+        $this->createUsedHallOnDate($college, 'قاعة داخل فترة الزر', ExamHallType::Small, '2026-06-02');
+        $this->createInvigilators($college, InvigilationRole::Regular, 2);
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-02')
+            ->set('to_date', '2026-06-02')
+            ->set('readiness_confirmed', true)
+            ->call('runDistribution');
+
+        $this->assertSame(0, InvigilatorDistributionDraft::query()->count());
+        $this->assertSame(0, InvigilatorAssignment::query()->whereDate('exam_date', '2026-06-01')->count());
+        $this->assertSame(1, InvigilatorAssignment::query()->whereDate('exam_date', '2026-06-02')->count());
+    }
+
+    #[Test]
+    public function fair_distribution_button_uses_selected_date_range_and_keeps_official_distribution_unchanged(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createOfferingForContextDate($context, '2026-06-02');
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $officialHall = $this->createUsedHall($college, 'قاعة رسمية باقية', ExamHallType::Small);
+        $this->createUsedHallOnDate($college, 'قاعة مسودة الفترة', ExamHallType::Small, '2026-06-02');
+        $officialInvigilator = $this->createRegularInvigilator($college, 'مراقب رسمي باق', '0999888801');
+        $this->createRegularInvigilator($college, 'مراقب مسودة الفترة', '0999888802');
+        InvigilatorAssignment::query()->create([
+            'college_id' => $college->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $officialHall->id,
+            'invigilator_id' => $officialInvigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-02')
+            ->set('to_date', '2026-06-02')
+            ->call('createFairBalancedDraft');
+
+        $draft = InvigilatorDistributionDraft::query()->firstOrFail();
+
+        $this->assertSame('2026-06-02', $draft->exam_date_from->format('Y-m-d'));
+        $this->assertSame('2026-06-02', $draft->exam_date_to->format('Y-m-d'));
+        $this->assertSame(1, $draft->assignments()->whereDate('exam_date', '2026-06-02')->count());
+        $this->assertSame(0, $draft->assignments()->whereDate('exam_date', '2026-06-01')->count());
+        $this->assertSame(1, InvigilatorAssignment::query()->whereDate('exam_date', '2026-06-01')->count());
+        $this->assertSame(0, InvigilatorAssignment::query()->whereDate('exam_date', '2026-06-02')->count());
     }
 
     #[Test]
@@ -2560,6 +2629,20 @@ class InvigilatorDistributionTest extends TestCase
             'allow_multiple_assignments_per_day' => true,
             'max_assignments_per_day' => 3,
             'is_active' => true,
+        ]);
+    }
+
+    protected function createOfferingForContextDate(array $context, string $examDate): SubjectExamOffering
+    {
+        $offering = $context['offering'];
+
+        return SubjectExamOffering::query()->create([
+            'subject_id' => $offering->subject_id,
+            'academic_year_id' => $offering->academic_year_id,
+            'semester_id' => $offering->semester_id,
+            'exam_date' => $examDate,
+            'exam_start_time' => '09:00:00',
+            'status' => ExamOfferingStatus::Draft->value,
         ]);
     }
 

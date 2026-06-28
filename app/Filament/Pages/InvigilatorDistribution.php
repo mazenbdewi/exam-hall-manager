@@ -129,6 +129,19 @@ class InvigilatorDistribution extends Page
             return;
         }
 
+        $dateRange = $this->selectedDateRange();
+
+        if (! $dateRange) {
+            Notification::make()
+                ->title(__('exam.notifications.invigilator_distribution_blocked'))
+                ->body(__('exam.readiness.reasons.period_missing'))
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
         $readiness = $this->getReadinessData();
 
         if (! $readiness['is_ready'] || ! $this->readiness_confirmed) {
@@ -149,8 +162,8 @@ class InvigilatorDistribution extends Page
                 description: 'تنفيذ توزيع المراقبين',
                 metadata: [
                     'faculty_id' => $college->getKey(),
-                    'from_date' => $this->from_date,
-                    'to_date' => $this->to_date,
+                    'from_date' => $dateRange[0],
+                    'to_date' => $dateRange[1],
                     'status' => 'blocked',
                     'message' => $blockingMessage,
                 ],
@@ -164,8 +177,8 @@ class InvigilatorDistribution extends Page
         $wasDistributed = $this->hasExistingDistribution();
         $result = $service->distributeForFaculty(
             $college,
-            Carbon::parse($this->from_date),
-            Carbon::parse($this->to_date),
+            Carbon::parse($dateRange[0]),
+            Carbon::parse($dateRange[1]),
         );
 
         app(AuditLogService::class)->log(
@@ -174,8 +187,8 @@ class InvigilatorDistribution extends Page
             description: $wasDistributed ? 'إعادة توزيع المراقبين' : 'تنفيذ توزيع المراقبين',
             metadata: [
                 'faculty_id' => $college->getKey(),
-                'from_date' => $this->from_date,
-                'to_date' => $this->to_date,
+                'from_date' => $dateRange[0],
+                'to_date' => $dateRange[1],
                 'total_required' => ($result['assigned_count'] ?? 0) + ($result['shortage_count'] ?? 0),
                 'assigned_count' => $result['assigned_count'] ?? null,
                 'shortage_count' => $result['shortage_count'] ?? null,
@@ -223,6 +236,19 @@ class InvigilatorDistribution extends Page
             return;
         }
 
+        $dateRange = $this->selectedDateRange();
+
+        if (! $dateRange) {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.notifications.invigilator_distribution_blocked'))
+                ->body(__('exam.readiness.reasons.period_missing'))
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
         $readiness = $this->getReadinessData();
 
         if (! ($readiness['is_ready'] ?? false)) {
@@ -238,8 +264,8 @@ class InvigilatorDistribution extends Page
 
         $draft = app(InvigilatorDistributionService::class)->createFairBalancedDraft(
             $college,
-            $this->from_date,
-            $this->to_date,
+            $dateRange[0],
+            $dateRange[1],
             auth()->id(),
         );
 
@@ -250,8 +276,8 @@ class InvigilatorDistribution extends Page
             metadata: [
                 'draft_id' => $draft->getKey(),
                 'faculty_id' => $college->getKey(),
-                'from_date' => $this->from_date,
-                'to_date' => $this->to_date,
+                'from_date' => $dateRange[0],
+                'to_date' => $dateRange[1],
             ],
         );
 
@@ -625,8 +651,26 @@ class InvigilatorDistribution extends Page
             ];
         }
 
+        $dateRange = $this->selectedDateRange();
+
+        if (! $dateRange) {
+            return $this->cachedReadiness = [
+                'is_ready' => false,
+                'blocking_message' => __('exam.readiness.reasons.period_missing'),
+                'offerings_count' => 0,
+                'slots_count' => 0,
+                'distributed_slots_count' => 0,
+                'used_halls_count' => 0,
+                'halls_needing_invigilators_count' => 0,
+                'assigned_students_count' => 0,
+                'unassigned_students_count' => 0,
+                'incomplete_slots_count' => 0,
+                'incomplete_slots' => [],
+            ];
+        }
+
         return $this->cachedReadiness = app(InvigilatorDistributionService::class)
-            ->studentDistributionReadiness($college, $this->from_date, $this->to_date);
+            ->studentDistributionReadiness($college, $dateRange[0], $dateRange[1]);
     }
 
     public function distributionDisabledReasons(): array
@@ -638,7 +682,7 @@ class InvigilatorDistribution extends Page
             $reasons[] = __('exam.readiness.reasons.college_missing');
         }
 
-        if (! $this->from_date || ! $this->to_date) {
+        if (! $this->selectedDateRange()) {
             $reasons[] = __('exam.readiness.reasons.period_missing');
         }
 
@@ -778,25 +822,52 @@ class InvigilatorDistribution extends Page
 
     protected function exportFilters(): array
     {
-        return [null, null, $this->from_date, $this->to_date];
+        $dateRange = $this->selectedDateRange();
+
+        return [null, null, $dateRange[0] ?? null, $dateRange[1] ?? null];
+    }
+
+    protected function selectedDateRange(): ?array
+    {
+        if (! filled($this->from_date) || ! filled($this->to_date)) {
+            return null;
+        }
+
+        try {
+            $fromDate = Carbon::parse($this->from_date)->toDateString();
+            $toDate = Carbon::parse($this->to_date)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($fromDate > $toDate) {
+            return null;
+        }
+
+        return [$fromDate, $toDate];
     }
 
     protected function assignmentQueryForSelection(): Builder
     {
+        $dateRange = $this->selectedDateRange();
         $query = InvigilatorAssignment::query()
             ->where('college_id', $this->college_id ?: 0);
 
         return $query
-            ->when($this->from_date, fn (Builder $query) => $query->whereDate('exam_date', '>=', $this->from_date))
-            ->when($this->to_date, fn (Builder $query) => $query->whereDate('exam_date', '<=', $this->to_date));
+            ->when($dateRange, fn (Builder $query) => $query
+                ->whereDate('exam_date', '>=', $dateRange[0])
+                ->whereDate('exam_date', '<=', $dateRange[1]));
     }
 
     protected function draftQueryForSelection(): Builder
     {
+        $dateRange = $this->selectedDateRange();
+
         return InvigilatorDistributionDraft::query()
             ->where('college_id', $this->college_id ?: 0)
-            ->when($this->from_date, fn (Builder $query) => $query->whereDate('exam_date_from', '>=', $this->from_date))
-            ->when($this->to_date, fn (Builder $query) => $query->whereDate('exam_date_to', '<=', $this->to_date));
+            ->when($dateRange, fn (Builder $query) => $query
+                ->whereDate('exam_date_from', '>=', $dateRange[0])
+                ->whereDate('exam_date_to', '<=', $dateRange[1]));
     }
 
     protected function firstExamDate(): ?string
