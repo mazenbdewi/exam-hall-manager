@@ -541,11 +541,12 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
-    public function uncovered_invigilator_duties_report_shows_ten_rows_by_default(): void
+    public function uncovered_invigilator_duties_report_is_not_rendered_on_invigilator_distribution_page(): void
     {
         $context = $this->createSlotContext();
         $college = $context['college'];
         $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01', usedHalls: 12);
         $user = $this->createSuperAdminUser();
         Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
 
@@ -553,56 +554,54 @@ class InvigilatorDistributionTest extends TestCase
             $this->createUsedHall($college, 'قاعة نقص صفحة '.str_pad((string) $index, 2, '0', STR_PAD_LEFT), ExamHallType::Small);
         }
 
-        $component = Livewire::actingAs($user)
-            ->test(InvigilatorDistribution::class)
-            ->set('college_id', $college->id)
-            ->set('from_date', '2026-06-01')
-            ->set('to_date', '2026-06-01')
-            ->assertSet('shortage_per_page', 10)
-            ->assertSee(__('exam.reports.invigilator_shortage_report_title'))
-            ->assertSee(__('exam.pagination.show_rows', ['count' => 10]))
-            ->assertSee('قاعة نقص صفحة 01')
-            ->assertSee('قاعة نقص صفحة 10')
-            ->assertDontSee('قاعة نقص صفحة 11');
-
-        $summary = $component->instance()->getSummaryData();
-
-        $this->assertSame(12, $summary['shortage_count']);
-        $this->assertSame([], $summary['shortages']);
-    }
-
-    #[Test]
-    public function uncovered_invigilator_duties_report_page_size_and_navigation_work(): void
-    {
-        $context = $this->createSlotContext();
-        $college = $context['college'];
-        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
-        $user = $this->createSuperAdminUser();
-        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
-
-        foreach (range(1, 30) as $index) {
-            $this->createUsedHall($college, 'قاعة حجم '.str_pad((string) $index, 2, '0', STR_PAD_LEFT), ExamHallType::Small);
-        }
-
         Livewire::actingAs($user)
             ->test(InvigilatorDistribution::class)
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
-            ->set('shortage_per_page', 25)
-            ->assertSet('shortage_per_page', 25)
-            ->assertSee('قاعة حجم 01')
-            ->assertSee('قاعة حجم 25')
-            ->assertDontSee('قاعة حجم 26')
-            ->call('nextShortagePage')
-            ->assertSee(__('exam.pagination.current_page', ['page' => 2, 'last' => 2]))
-            ->assertSee('قاعة حجم 26')
-            ->assertSee('قاعة حجم 30')
-            ->assertDontSee('قاعة حجم 01')
-            ->call('previousShortagePage')
-            ->assertSee(__('exam.pagination.current_page', ['page' => 1, 'last' => 2]))
-            ->assertSee('قاعة حجم 01')
-            ->assertDontSee('قاعة حجم 26');
+            ->assertSet('shortage_per_page', 10)
+            ->assertSee('عرض التقارير والطباعة')
+            ->assertDontSee(__('exam.reports.invigilator_shortage_report_title'))
+            ->assertDontSee(__('exam.pagination.show_rows', ['count' => 10]))
+            ->assertDontSee('قاعة نقص صفحة 01')
+            ->assertDontSee('قاعة نقص صفحة 12');
+    }
+
+    #[Test]
+    public function uncovered_invigilator_duties_pagination_stays_available_for_report_exports(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        foreach (range(1, 30) as $index) {
+            $this->createUsedHall($college, 'قاعة حجم '.str_pad((string) $index, 2, '0', STR_PAD_LEFT), ExamHallType::Small);
+        }
+
+        $pageOne = app(InvigilatorDistributionService::class)->getShortagePage(
+            $college,
+            null,
+            null,
+            '2026-06-01',
+            '2026-06-01',
+            1,
+            25,
+        );
+        $pageTwo = app(InvigilatorDistributionService::class)->getShortagePage(
+            $college,
+            null,
+            null,
+            '2026-06-01',
+            '2026-06-01',
+            2,
+            25,
+        );
+
+        $this->assertSame(25, $pageOne['per_page']);
+        $this->assertSame(25, count($pageOne['data']));
+        $this->assertSame(2, $pageOne['last_page']);
+        $this->assertSame('قاعة حجم 01', $pageOne['data'][0]['hall_name']);
+        $this->assertSame('قاعة حجم 25', $pageOne['data'][24]['hall_name']);
+        $this->assertSame('قاعة حجم 26', $pageTwo['data'][0]['hall_name']);
     }
 
     #[Test]
@@ -612,6 +611,7 @@ class InvigilatorDistributionTest extends TestCase
         $college = $context['college'];
         $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
         $this->createUsedHall($college, 'قاعة تقرير تفصيلي لا تظهر', ExamHallType::Small);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
         $this->createRegularInvigilator($college, 'مراقب تقرير تفصيلي لا يظهر', '0999777701');
         app(InvigilatorDistributionService::class)->distributeForSlot($college, '2026-06-01', '09:00:00');
         $user = $this->createSuperAdminUser();
@@ -625,22 +625,45 @@ class InvigilatorDistributionTest extends TestCase
             ->assertSee('عرض التقارير والطباعة')
             ->assertSee(__('exam.actions.distribution'))
             ->assertSee(__('exam.fair_draft.actions.fair_distribution'))
+            ->assertSee('يجب تنفيذ توزيع الطلاب على القاعات الامتحانية أولًا')
             ->assertDontSee('صفحة توزيع المراقبين تم تحميلها')
+            ->assertDontSee(__('exam.fields.invigilator_readiness_confirmation'))
+            ->assertDontSee(__('exam.fields.total_invigilators'))
+            ->assertDontSee(__('exam.reports.shortage_summary_by_role'))
+            ->assertDontSee(__('exam.sections.problem_diagnosis'))
             ->assertDontSee(__('exam.tabs.by_day'))
             ->assertDontSee(__('exam.tabs.by_hall'))
             ->assertDontSee(__('exam.tabs.by_invigilator'))
             ->assertDontSee('مراقب تقرير تفصيلي لا يظهر');
 
-        $summary = $component->instance()->getSummaryData();
-
-        $this->assertSame([], $summary['slots']);
-        $this->assertSame([], $summary['by_day']);
-        $this->assertSame([], $summary['by_invigilator']);
         $this->assertSame(ReportsDashboard::getUrl(), $component->instance()->reportsDashboardUrl());
 
         Livewire::actingAs($user)
             ->test(ReportsDashboard::class)
             ->assertOk();
+    }
+
+    #[Test]
+    public function invigilator_distribution_page_does_not_run_distribution_on_load(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createUsedHall($college, 'قاعة جاهزة بدون تنفيذ تلقائي', ExamHallType::Small);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+        $this->createRegularInvigilator($college, 'مراقب لا يوزع تلقائيًا', '0999777702');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->assertSee(__('exam.readiness.ready_message'));
+
+        $this->assertSame(0, InvigilatorAssignment::query()->count());
+        $this->assertSame(0, InvigilatorDistributionDraft::query()->count());
     }
 
     #[Test]
@@ -652,6 +675,7 @@ class InvigilatorDistributionTest extends TestCase
         $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
         $this->createUsedHall($college, 'قاعة خارج فترة الزر', ExamHallType::Small);
         $this->createUsedHallOnDate($college, 'قاعة داخل فترة الزر', ExamHallType::Small, '2026-06-02');
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-02', '2026-06-02');
         $this->createInvigilators($college, InvigilationRole::Regular, 2);
         $user = $this->createSuperAdminUser();
         Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
@@ -661,7 +685,6 @@ class InvigilatorDistributionTest extends TestCase
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-02')
             ->set('to_date', '2026-06-02')
-            ->set('readiness_confirmed', true)
             ->call('runDistribution');
 
         $this->assertSame(0, InvigilatorDistributionDraft::query()->count());
@@ -678,6 +701,7 @@ class InvigilatorDistributionTest extends TestCase
         $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
         $officialHall = $this->createUsedHall($college, 'قاعة رسمية باقية', ExamHallType::Small);
         $this->createUsedHallOnDate($college, 'قاعة مسودة الفترة', ExamHallType::Small, '2026-06-02');
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-02', '2026-06-02');
         $officialInvigilator = $this->createRegularInvigilator($college, 'مراقب رسمي باق', '0999888801');
         $this->createRegularInvigilator($college, 'مراقب مسودة الفترة', '0999888802');
         InvigilatorAssignment::query()->create([
@@ -939,13 +963,13 @@ class InvigilatorDistributionTest extends TestCase
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
-            ->assertSee(__('exam.fair_draft.saved_drafts'))
-            ->assertSee(__('exam.fair_draft.fields.draft_number').' #'.$draft->id)
+            ->assertDontSee(__('exam.fair_draft.saved_drafts'))
+            ->assertDontSee(__('exam.fair_draft.fields.draft_number').' #'.$draft->id)
             ->assertDontSee('مراقب لا يظهر في الصفحة 1');
     }
 
     #[Test]
-    public function duty_increase_recommendation_page_shows_lightweight_summary_without_full_rows(): void
+    public function duty_increase_recommendation_page_shows_export_button_without_preloading_report(): void
     {
         $context = $this->createSlotContext();
         $college = $context['college'];
@@ -973,8 +997,9 @@ class InvigilatorDistributionTest extends TestCase
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
-            ->assertSee(__('exam.reports.observer_duty_increase_recommendation_report'))
             ->assertSee(__('exam.actions.export_invigilator_duty_increase_recommendations_pdf'))
+            ->assertDontSee(__('exam.reports.duties_coverable_by_current_observer_limit_increase'))
+            ->assertDontSee(__('exam.reports.duties_requiring_new_observers'))
             ->assertDontSee($invigilator->name);
     }
 
@@ -1647,13 +1672,7 @@ class InvigilatorDistributionTest extends TestCase
             ->assertSee(__('exam.global_hall_distribution.success_with_warnings_title'))
             ->assertSee(__('exam.global_hall_distribution.success_with_warnings_body'));
 
-        $this->assertFalse($component->instance()->canRunDistribution());
-        $this->assertContains(__('exam.readiness.reasons.confirmation_missing'), $component->instance()->distributionDisabledReasons());
-
-        $component->set('readiness_confirmed', true);
-
         $this->assertTrue($component->instance()->canRunDistribution());
-        $this->assertNotContains(__('exam.readiness.reasons.confirmation_missing'), $component->instance()->distributionDisabledReasons());
 
         $component->call('runDistribution');
 
@@ -1661,7 +1680,7 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
-    public function invigilator_distribution_page_uses_real_blocking_reason_after_confirmation(): void
+    public function invigilator_distribution_page_uses_real_blocking_reason_for_unassigned_students(): void
     {
         $context = $this->createSlotContext();
         $college = $context['college'];
@@ -1672,6 +1691,8 @@ class InvigilatorDistributionTest extends TestCase
             'full_name' => 'طالب غير موزع',
             'student_type' => ExamStudentType::Regular->value,
         ]);
+        $this->createUsedHall($college, 'قاعة فيها طالب غير موزع', ExamHallType::Small);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01', unassignedStudents: 1);
 
         $user = $this->createSuperAdminUser();
         Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
@@ -1680,12 +1701,10 @@ class InvigilatorDistributionTest extends TestCase
             ->test(InvigilatorDistribution::class)
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-01')
-            ->set('to_date', '2026-06-01')
-            ->set('readiness_confirmed', true);
+            ->set('to_date', '2026-06-01');
 
         $this->assertFalse($component->instance()->canRunDistribution());
         $this->assertContains(__('exam.readiness.reasons.unassigned_students_block_invigilators'), $component->instance()->distributionDisabledReasons());
-        $this->assertNotContains(__('exam.readiness.reasons.confirmation_missing'), $component->instance()->distributionDisabledReasons());
     }
 
     #[Test]
@@ -2699,6 +2718,32 @@ class InvigilatorDistributionTest extends TestCase
         ]);
 
         return $hall;
+    }
+
+    protected function createSuccessfulStudentDistributionRun(
+        College $college,
+        string $fromDate,
+        string $toDate,
+        string $status = 'success',
+        int $unassignedStudents = 0,
+        int $usedHalls = 1,
+    ): StudentDistributionRun {
+        return StudentDistributionRun::query()->create([
+            'college_id' => $college->id,
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+            'status' => $status,
+            'total_offerings' => 1,
+            'total_slots' => 1,
+            'total_students' => $unassignedStudents,
+            'distributed_students' => 0,
+            'unassigned_students' => $unassignedStudents,
+            'total_capacity' => 80,
+            'used_halls' => $usedHalls,
+            'capacity_shortage' => 0,
+            'executed_at' => now(),
+            'summary_json' => [],
+        ]);
     }
 
     protected function createUsedHallOnDate(College $college, string $name, ExamHallType $type, string $examDate): ExamHall

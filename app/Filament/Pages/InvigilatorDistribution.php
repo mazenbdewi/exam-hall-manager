@@ -45,8 +45,6 @@ class InvigilatorDistribution extends Page
 
     public ?string $to_date = null;
 
-    public bool $readiness_confirmed = false;
-
     public int $shortage_page = 1;
 
     public int $shortage_per_page = 10;
@@ -105,7 +103,6 @@ class InvigilatorDistribution extends Page
         $this->cachedReadiness = null;
 
         if (in_array($property, ['college_id', 'from_date', 'to_date'], true)) {
-            $this->readiness_confirmed = false;
             $this->shortage_page = 1;
         }
 
@@ -144,11 +141,8 @@ class InvigilatorDistribution extends Page
 
         $readiness = $this->getReadinessData();
 
-        if (! $readiness['is_ready'] || ! $this->readiness_confirmed) {
-            $blockingMessage = ! ($readiness['is_ready'] ?? false)
-                ? ($readiness['blocking_message'] ?? __('exam.readiness.reasons.student_distribution_missing'))
-                : __('exam.readiness.reasons.confirmation_missing');
-
+        if (! ($readiness['is_ready'] ?? false)) {
+            $blockingMessage = $readiness['blocking_message'] ?? __('exam.readiness.reasons.student_distribution_missing');
             Notification::make()
                 ->title(__('exam.notifications.invigilator_distribution_blocked'))
                 ->body($blockingMessage)
@@ -221,7 +215,6 @@ class InvigilatorDistribution extends Page
 
         $this->cachedSummary = null;
         $this->cachedReadiness = null;
-        $this->readiness_confirmed = false;
     }
 
     public function createFairBalancedDraft(): void
@@ -670,7 +663,7 @@ class InvigilatorDistribution extends Page
         }
 
         return $this->cachedReadiness = app(InvigilatorDistributionService::class)
-            ->studentDistributionReadiness($college, $dateRange[0], $dateRange[1]);
+            ->lightweightStudentDistributionReadiness($college, $dateRange[0], $dateRange[1]);
     }
 
     public function distributionDisabledReasons(): array
@@ -690,18 +683,18 @@ class InvigilatorDistribution extends Page
             $reasons[] = __('exam.readiness.reasons.no_offerings');
         }
 
+        if (! ($readiness['has_student_distribution_run'] ?? true) && ($readiness['offerings_count'] ?? 0) > 0) {
+            $reasons[] = __('exam.readiness.reasons.student_distribution_missing');
+        }
+
         if (($readiness['unassigned_students_count'] ?? 0) > 0) {
             $reasons[] = __('exam.readiness.reasons.unassigned_students_block_invigilators');
         } elseif (($readiness['incomplete_slots_count'] ?? 0) > 0) {
             $reasons[] = __('exam.readiness.reasons.student_distribution_missing');
         }
 
-        if (($readiness['used_halls_count'] ?? 0) === 0 && ($readiness['offerings_count'] ?? 0) > 0) {
+        if (! ($readiness['has_hall_assignments'] ?? true) && ($readiness['offerings_count'] ?? 0) > 0) {
             $reasons[] = __('exam.readiness.reasons.no_used_halls');
-        }
-
-        if (! $this->readiness_confirmed) {
-            $reasons[] = __('exam.readiness.reasons.confirmation_missing');
         }
 
         if (! $this->canRunDistributionPermission()) {
@@ -769,8 +762,12 @@ class InvigilatorDistribution extends Page
     public function canRunDistribution(): bool
     {
         return $this->canRunDistributionPermission()
-            && $this->readiness_confirmed
             && (bool) ($this->getReadinessData()['is_ready'] ?? false);
+    }
+
+    public function selectedCollegeName(): string
+    {
+        return $this->selectedCollege()?->name ?? '—';
     }
 
     protected function canRunDistributionPermission(): bool

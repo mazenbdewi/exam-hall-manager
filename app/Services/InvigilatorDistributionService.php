@@ -16,6 +16,7 @@ use App\Models\InvigilatorDistributionSetting;
 use App\Models\InvigilatorHallRequirement;
 use App\Models\InvigilatorUnassignedRequirement;
 use App\Models\StudentDistributionRun;
+use App\Models\StudentDistributionRunIssue;
 use App\Models\SubjectExamOffering;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -983,6 +984,104 @@ class InvigilatorDistributionService
             'has_non_blocking_warnings' => false,
             'warnings' => [],
             'warning_message' => null,
+            'slots' => [],
+            'incomplete_slots' => [],
+        ];
+    }
+
+    public function lightweightStudentDistributionReadiness(College $college, ?string $fromDate, ?string $toDate): array
+    {
+        $fromDate = filled($fromDate) ? substr((string) $fromDate, 0, 10) : null;
+        $toDate = filled($toDate) ? substr((string) $toDate, 0, 10) : null;
+
+        if (! $fromDate || ! $toDate) {
+            return $this->emptyReadiness(
+                isReady: false,
+                blockingMessage: __('exam.readiness.reasons.period_missing'),
+            );
+        }
+
+        $hasOfferings = SubjectExamOffering::query()
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->whereHas('subject', fn (Builder $query) => $query->where('college_id', $college->getKey()))
+            ->exists();
+
+        if (! $hasOfferings) {
+            return array_merge($this->emptyReadiness(
+                isReady: false,
+                blockingMessage: __('exam.readiness.reasons.no_offerings'),
+            ), [
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+                'has_student_distribution_run' => false,
+                'has_hall_assignments' => false,
+            ]);
+        }
+
+        $run = StudentDistributionRun::query()
+            ->where('college_id', $college->getKey())
+            ->whereDate('from_date', '<=', $fromDate)
+            ->whereDate('to_date', '>=', $toDate)
+            ->latest('executed_at')
+            ->latest('id')
+            ->first();
+
+        $hasHallAssignments = HallAssignment::query()
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->where('assigned_students_count', '>', 0)
+            ->exists();
+
+        $unassignedStudentsCount = (int) ($run?->unassigned_students ?? 0);
+        $usedHallsCount = $hasHallAssignments ? max(1, (int) ($run?->used_halls ?? 1)) : 0;
+        $runStatusIsSuccessful = $run && in_array((string) $run->status, ['success', 'success_with_warnings'], true);
+        $isReady = $run !== null
+            && $runStatusIsSuccessful
+            && $unassignedStudentsCount === 0
+            && (int) ($run->used_halls ?? 0) > 0
+            && $hasHallAssignments;
+
+        $blockingMessage = match (true) {
+            $run === null => __('exam.readiness.reasons.student_distribution_missing'),
+            ! $runStatusIsSuccessful => __('exam.readiness.reasons.student_distribution_missing'),
+            $unassignedStudentsCount > 0 => __('exam.readiness.reasons.unassigned_students_block_invigilators'),
+            ! $hasHallAssignments || (int) ($run->used_halls ?? 0) <= 0 => __('exam.readiness.reasons.no_used_halls'),
+            default => __('exam.readiness.ready_message'),
+        };
+
+        $hasNonBlockingWarnings = $run !== null && (
+            (string) $run->status === 'success_with_warnings'
+            || (int) (($run->summary_json ?? [])['carry_regular_mixing_cases_count'] ?? 0) > 0
+            || StudentDistributionRunIssue::query()
+                ->where('student_distribution_run_id', $run->getKey())
+                ->where('issue_type', 'carry_regular_mixed_due_to_capacity')
+                ->exists()
+        );
+
+        return [
+            'is_ready' => $isReady,
+            'blocking_message' => $blockingMessage,
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+            'offerings_count' => 1,
+            'slots_count' => 0,
+            'distributed_slots_count' => 0,
+            'used_halls_count' => $usedHallsCount,
+            'halls_needing_invigilators_count' => $usedHallsCount,
+            'assigned_students_count' => 0,
+            'unassigned_students_count' => $unassignedStudentsCount,
+            'incomplete_slots_count' => $isReady ? 0 : 1,
+            'has_student_distribution_run' => $run !== null,
+            'has_hall_assignments' => $hasHallAssignments,
+            'has_non_blocking_warnings' => $hasNonBlockingWarnings,
+            'warnings' => $hasNonBlockingWarnings ? [[
+                'type' => 'carry_regular_mixed_due_to_capacity',
+                'message' => __('exam.global_hall_distribution.success_with_warnings_body'),
+                'blocks_invigilator_distribution' => false,
+            ]] : [],
+            'warning_message' => $hasNonBlockingWarnings ? __('exam.global_hall_distribution.success_with_warnings_body') : null,
             'slots' => [],
             'incomplete_slots' => [],
         ];
