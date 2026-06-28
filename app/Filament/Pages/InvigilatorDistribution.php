@@ -5,7 +5,9 @@ namespace App\Filament\Pages;
 use App\Models\College;
 use App\Models\HallAssignment;
 use App\Models\InvigilatorAssignment;
+use App\Models\InvigilatorDistributionDraft;
 use App\Models\SubjectExamOffering;
+use App\Exports\InvigilatorDistributionDraftExport;
 use App\Services\AuditLogService;
 use App\Services\InvigilatorDistributionPdfService;
 use App\Services\InvigilatorDistributionService;
@@ -18,6 +20,8 @@ use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
+use Maatwebsite\Excel\Facades\Excel;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -207,6 +211,139 @@ class InvigilatorDistribution extends Page
         $this->cachedSummary = null;
         $this->cachedReadiness = null;
         $this->readiness_confirmed = false;
+    }
+
+    public function createFairBalancedDraft(): void
+    {
+        if (! $this->canRunDistributionPermission()) {
+            abort(403);
+        }
+
+        $college = $this->selectedCollege();
+
+        if (! $college) {
+            return;
+        }
+
+        $readiness = $this->getReadinessData();
+
+        if (! ($readiness['is_ready'] ?? false)) {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.notifications.invigilator_distribution_blocked'))
+                ->body($readiness['blocking_message'] ?? __('exam.readiness.not_ready_message'))
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $draft = app(InvigilatorDistributionService::class)->createFairBalancedDraft(
+            $college,
+            $this->from_date,
+            $this->to_date,
+            auth()->id(),
+        );
+
+        app(AuditLogService::class)->log(
+            action: 'invigilator_distribution.fair_draft.create',
+            module: 'invigilator_distribution',
+            description: 'إنشاء مسودة توزيع عادل للمراقبين',
+            metadata: [
+                'draft_id' => $draft->getKey(),
+                'faculty_id' => $college->getKey(),
+                'from_date' => $this->from_date,
+                'to_date' => $this->to_date,
+            ],
+        );
+
+        Notification::make()
+            ->success()
+            ->title(__('exam.fair_draft.notifications.created'))
+            ->body(__('exam.fair_draft.notifications.created_body', ['draft' => $draft->getKey()]))
+            ->send();
+    }
+
+    public function approveFairBalancedDraft(int $draftId): void
+    {
+        if (! $this->canRunDistributionPermission()) {
+            abort(403);
+        }
+
+        $draft = $this->draftQueryForSelection()->whereKey($draftId)->firstOrFail();
+
+        try {
+            app(InvigilatorDistributionService::class)->approveFairBalancedDraft($draft, auth()->id());
+        } catch (RuntimeException $exception) {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.fair_draft.notifications.approval_failed'))
+                ->body($exception->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->cachedSummary = null;
+        $this->cachedReadiness = null;
+
+        Notification::make()
+            ->success()
+            ->title(__('exam.fair_draft.notifications.approved'))
+            ->send();
+    }
+
+    public function cancelFairBalancedDraft(int $draftId): void
+    {
+        if (! $this->canRunDistributionPermission()) {
+            abort(403);
+        }
+
+        $draft = $this->draftQueryForSelection()->whereKey($draftId)->firstOrFail();
+
+        try {
+            app(InvigilatorDistributionService::class)->cancelFairBalancedDraft($draft);
+        } catch (RuntimeException $exception) {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.fair_draft.notifications.cancel_failed'))
+                ->body($exception->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->success()
+            ->title(__('exam.fair_draft.notifications.cancelled'))
+            ->send();
+    }
+
+    public function exportFairBalancedDraftPdf(int $draftId): StreamedResponse|Response
+    {
+        if (! $this->canExportDistribution()) {
+            abort(403);
+        }
+
+        $draft = $this->draftQueryForSelection()->whereKey($draftId)->firstOrFail();
+
+        return app(InvigilatorDistributionPdfService::class)->downloadFairBalancedDraft($draft);
+    }
+
+    public function exportFairBalancedDraftExcel(int $draftId): Response
+    {
+        if (! $this->canExportDistribution()) {
+            abort(403);
+        }
+
+        $draft = $this->draftQueryForSelection()->whereKey($draftId)->firstOrFail();
+
+        return Excel::download(
+            new InvigilatorDistributionDraftExport($draft),
+            'invigilator-fair-draft-'.$draft->getKey().'-'.now()->format('Y-m-d-H-i').'.xlsx',
+        );
     }
 
     public function exportPdfByInvigilator(): StreamedResponse|Response|null
@@ -428,6 +565,31 @@ class InvigilatorDistribution extends Page
         );
     }
 
+    public function getFairBalancedDraftsData(): array
+    {
+        return $this->draftQueryForSelection()
+            ->with(['creator'])
+            ->withCount('assignments')
+            ->latest()
+            ->limit(8)
+            ->get()
+            ->map(function (InvigilatorDistributionDraft $draft): array {
+                $summary = $draft->summary_json ?? [];
+
+                return [
+                    'id' => $draft->getKey(),
+                    'status' => $draft->status,
+                    'status_label' => __('exam.fair_draft.statuses.'.$draft->status),
+                    'created_at' => $draft->created_at?->format('Y-m-d H:i'),
+                    'created_by' => $draft->creator?->name ?? '—',
+                    'period' => ($draft->exam_date_from?->format('Y-m-d') ?? '—').' - '.($draft->exam_date_to?->format('Y-m-d') ?? '—'),
+                    'assignments_count' => $draft->assignments_count,
+                    'summary' => $summary,
+                ];
+            })
+            ->all();
+    }
+
     public function nextShortagePage(): void
     {
         $pagination = $this->getPaginatedShortagesData();
@@ -628,6 +790,14 @@ class InvigilatorDistribution extends Page
         return $query
             ->when($this->from_date, fn (Builder $query) => $query->whereDate('exam_date', '>=', $this->from_date))
             ->when($this->to_date, fn (Builder $query) => $query->whereDate('exam_date', '<=', $this->to_date));
+    }
+
+    protected function draftQueryForSelection(): Builder
+    {
+        return InvigilatorDistributionDraft::query()
+            ->where('college_id', $this->college_id ?: 0)
+            ->when($this->from_date, fn (Builder $query) => $query->whereDate('exam_date_from', '>=', $this->from_date))
+            ->when($this->to_date, fn (Builder $query) => $query->whereDate('exam_date_to', '<=', $this->to_date));
     }
 
     protected function firstExamDate(): ?string

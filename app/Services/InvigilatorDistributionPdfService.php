@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\College;
+use App\Models\InvigilatorDistributionDraft;
 use App\Support\InstitutionSettings;
 use Illuminate\Support\Facades\File;
 use Mpdf\Config\ConfigVariables;
@@ -80,6 +81,28 @@ class InvigilatorDistributionPdfService
             $fromDate,
             $toDate,
             includeDutyIncreaseRecommendationDetails: true,
+        );
+    }
+
+    public function downloadFairBalancedDraft(InvigilatorDistributionDraft $draft): StreamedResponse
+    {
+        $draft->loadMissing(['college', 'creator', 'approver', 'assignments.invigilator', 'assignments.examHall']);
+        $institution = InstitutionSettings::make();
+        $html = view('pdf.invigilator-distribution-fair-draft', [
+            'draft' => $draft,
+            'systemSetting' => $institution->reportContext($draft->college?->name),
+            'logoDataUri' => $institution->logoDataUri(),
+        ])->render();
+
+        $pdf = $this->makePdf();
+        $this->writeHtml($pdf, $html);
+
+        $filename = 'invigilator-fair-draft-'.$draft->getKey().'-'.now()->format('Y-m-d-H-i').'.pdf';
+
+        return response()->streamDownload(
+            fn () => print $pdf->Output($filename, Destination::STRING_RETURN),
+            $filename,
+            ['Content-Type' => 'application/pdf'],
         );
     }
 

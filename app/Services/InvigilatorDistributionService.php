@@ -10,6 +10,8 @@ use App\Models\College;
 use App\Models\HallAssignment;
 use App\Models\Invigilator;
 use App\Models\InvigilatorAssignment;
+use App\Models\InvigilatorDistributionDraft;
+use App\Models\InvigilatorDistributionDraftAssignment;
 use App\Models\InvigilatorDistributionSetting;
 use App\Models\InvigilatorHallRequirement;
 use App\Models\InvigilatorUnassignedRequirement;
@@ -313,6 +315,422 @@ class InvigilatorDistributionService
             'has_pages' => $lastPage > 1,
             'per_page_options' => $allowedPerPage,
         ];
+    }
+
+    public function createFairBalancedDraft(College $college, ?string $fromDate = null, ?string $toDate = null, ?int $createdBy = null): InvigilatorDistributionDraft
+    {
+        $setting = $this->settingsForCollege($college);
+        $slots = $this->buildSlots($college, $fromDate, $toDate);
+        $slotSummaries = $slots
+            ->map(fn (array $slot): array => $this->slotSummary($college, $slot['exam_date'], $slot['start_time']))
+            ->values();
+        $dutyUnits = $this->fairDraftDutyUnits($slotSummaries);
+        $invigilators = Invigilator::query()
+            ->where('college_id', $college->getKey())
+            ->where('is_active', true)
+            ->where('workload_reduction_percentage', '<', 100)
+            ->orderBy('id')
+            ->get();
+        $invigilatorIds = $invigilators->pluck('id')->all();
+        $currentCounts = InvigilatorAssignment::query()
+            ->whereIn('invigilator_id', $invigilatorIds)
+            ->when($fromDate, fn (Builder $query) => $query->whereDate('exam_date', '>=', substr((string) $fromDate, 0, 10)))
+            ->when($toDate, fn (Builder $query) => $query->whereDate('exam_date', '<=', substr((string) $toDate, 0, 10)))
+            ->select('invigilator_id', DB::raw('count(*) as aggregate'))
+            ->groupBy('invigilator_id')
+            ->pluck('aggregate', 'invigilator_id')
+            ->map(fn (mixed $count): int => (int) $count)
+            ->all();
+        $outsideCounts = InvigilatorAssignment::query()
+            ->whereIn('invigilator_id', $invigilatorIds)
+            ->where(function (Builder $query) use ($college, $fromDate, $toDate): void {
+                $query->where('college_id', '!=', $college->getKey());
+
+                if ($fromDate) {
+                    $query->orWhereDate('exam_date', '<', substr((string) $fromDate, 0, 10));
+                }
+
+                if ($toDate) {
+                    $query->orWhereDate('exam_date', '>', substr((string) $toDate, 0, 10));
+                }
+            })
+            ->select('invigilator_id', DB::raw('count(*) as aggregate'))
+            ->groupBy('invigilator_id')
+            ->pluck('aggregate', 'invigilator_id')
+            ->map(fn (mixed $count): int => (int) $count)
+            ->all();
+        $blockedSlots = $this->officialSlotsOutsideFairDraftScope($college, $fromDate, $toDate, $invigilatorIds);
+
+        $proposedCounts = [];
+        $proposedDayCounts = [];
+        $proposedSlots = [];
+        $draftRows = [];
+        $uncovered = [];
+
+        foreach ($dutyUnits as $unit) {
+            $role = InvigilationRole::tryFrom($unit['role']);
+
+            if (! $role) {
+                continue;
+            }
+
+            $selected = $this->selectFairDraftInvigilator(
+                $invigilators,
+                $role,
+                $setting,
+                $unit,
+                $currentCounts,
+                $outsideCounts,
+                $proposedCounts,
+                $proposedDayCounts,
+                $proposedSlots,
+                $blockedSlots,
+                false,
+            );
+
+            $relaxedConstraints = [];
+
+            if (! $selected) {
+                $selected = $this->selectFairDraftInvigilator(
+                    $invigilators,
+                    $role,
+                    $setting,
+                    $unit,
+                    $currentCounts,
+                    $outsideCounts,
+                    $proposedCounts,
+                    $proposedDayCounts,
+                    $proposedSlots,
+                    $blockedSlots,
+                    true,
+                );
+                $relaxedConstraints = $selected
+                    ? $this->relaxedConstraintsForFairDraft($selected, $setting, $unit, $outsideCounts, $proposedCounts, $proposedDayCounts)
+                    : [];
+            }
+
+            if (! $selected) {
+                $uncovered[] = $unit;
+
+                continue;
+            }
+
+            $selectedId = (int) $selected->getKey();
+            $date = $unit['exam_date'];
+            $slotKey = $this->slotKey($date, $unit['start_time']);
+
+            $proposedCounts[$selectedId] = (int) ($proposedCounts[$selectedId] ?? 0) + 1;
+            $proposedDayCounts[$selectedId][$date] = (int) ($proposedDayCounts[$selectedId][$date] ?? 0) + 1;
+            $proposedSlots[$selectedId][$slotKey] = true;
+
+            $draftRows[] = [
+                'college_id' => $college->getKey(),
+                'invigilator_id' => $selectedId,
+                'exam_hall_id' => $unit['exam_hall_id'],
+                'exam_date' => $date,
+                'start_time' => $unit['start_time'],
+                'invigilation_role' => $role->value,
+                'relaxed_constraints_json' => $relaxedConstraints ?: null,
+                'reason' => $relaxedConstraints
+                    ? __('exam.fair_draft.reasons.soft_constraints_relaxed')
+                    : __('exam.fair_draft.reasons.least_loaded_eligible'),
+            ];
+        }
+
+        $summary = $this->fairDraftSummary($college, $invigilators, $currentCounts, $proposedCounts, $draftRows, $uncovered);
+
+        return DB::transaction(function () use ($college, $fromDate, $toDate, $createdBy, $setting, $summary, $draftRows, $currentCounts, $proposedCounts): InvigilatorDistributionDraft {
+            $draft = InvigilatorDistributionDraft::query()->create([
+                'college_id' => $college->getKey(),
+                'exam_date_from' => $fromDate ? substr((string) $fromDate, 0, 10) : null,
+                'exam_date_to' => $toDate ? substr((string) $toDate, 0, 10) : null,
+                'status' => 'draft',
+                'created_by' => $createdBy,
+                'summary_json' => $summary,
+                'settings_json' => [
+                    'default_max_assignments_per_invigilator' => $setting->default_max_assignments_per_invigilator,
+                    'max_assignments_per_day' => $setting->max_assignments_per_day,
+                    'allow_multiple_assignments_per_day' => $setting->allow_multiple_assignments_per_day,
+                    'allow_role_fallback' => $setting->allow_role_fallback,
+                ],
+            ]);
+
+            foreach ($draftRows as $row) {
+                $current = (int) ($currentCounts[$row['invigilator_id']] ?? 0);
+                $proposed = (int) ($proposedCounts[$row['invigilator_id']] ?? 0);
+
+                InvigilatorDistributionDraftAssignment::query()->create([
+                    'draft_id' => $draft->getKey(),
+                    ...$row,
+                    'current_duties_count' => $current,
+                    'proposed_duties_count' => $proposed,
+                    'difference' => $proposed - $current,
+                ]);
+            }
+
+            return $draft->refresh();
+        });
+    }
+
+    public function approveFairBalancedDraft(InvigilatorDistributionDraft $draft, ?int $approvedBy = null): InvigilatorDistributionDraft
+    {
+        return DB::transaction(function () use ($draft, $approvedBy): InvigilatorDistributionDraft {
+            $draft = InvigilatorDistributionDraft::query()
+                ->whereKey($draft->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($draft->status !== 'draft') {
+                throw new RuntimeException(__('exam.fair_draft.errors.already_finalized'));
+            }
+
+            $draft->load(['college', 'assignments.invigilator', 'assignments.examHall']);
+            $errors = $this->validateFairDraft($draft);
+
+            if ($errors !== []) {
+                throw new RuntimeException(implode(' ', $errors));
+            }
+
+            InvigilatorAssignment::query()
+                ->where('college_id', $draft->college_id)
+                ->when($draft->exam_date_from, fn (Builder $query) => $query->whereDate('exam_date', '>=', $draft->exam_date_from))
+                ->when($draft->exam_date_to, fn (Builder $query) => $query->whereDate('exam_date', '<=', $draft->exam_date_to))
+                ->delete();
+
+            foreach ($draft->assignments as $assignment) {
+                InvigilatorAssignment::query()->create([
+                    'college_id' => $draft->college_id,
+                    'exam_date' => $assignment->exam_date,
+                    'start_time' => $assignment->start_time,
+                    'exam_hall_id' => $assignment->exam_hall_id,
+                    'invigilator_id' => $assignment->invigilator_id,
+                    'invigilation_role' => $assignment->invigilation_role?->value ?? (string) $assignment->invigilation_role,
+                    'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+                    'assigned_by' => $approvedBy,
+                    'notes' => __('exam.fair_draft.approved_assignment_note', ['draft' => $draft->getKey()]),
+                ]);
+            }
+
+            $draft->forceFill([
+                'status' => 'approved',
+                'approved_by' => $approvedBy,
+                'approved_at' => now(),
+            ])->save();
+
+            return $draft->refresh();
+        });
+    }
+
+    public function cancelFairBalancedDraft(InvigilatorDistributionDraft $draft): InvigilatorDistributionDraft
+    {
+        if ($draft->status !== 'draft') {
+            throw new RuntimeException(__('exam.fair_draft.errors.already_finalized'));
+        }
+
+        $draft->forceFill(['status' => 'cancelled'])->save();
+
+        return $draft->refresh();
+    }
+
+    protected function fairDraftDutyUnits(Collection $slotSummaries): array
+    {
+        return $slotSummaries
+            ->flatMap(function (array $slot): array {
+                return collect($slot['halls'] ?? [])
+                    ->flatMap(function (array $hall) use ($slot): array {
+                        return collect($hall['required_roles'] ?? [])
+                            ->flatMap(function (int $requiredCount, string $role) use ($slot, $hall): array {
+                                $roleEnum = InvigilationRole::tryFrom($role);
+
+                                if (! $roleEnum || $roleEnum === InvigilationRole::Reserve || $requiredCount <= 0) {
+                                    return [];
+                                }
+
+                                return collect(range(1, $requiredCount))
+                                    ->map(fn (): array => [
+                                        'exam_date' => substr((string) $slot['exam_date'], 0, 10),
+                                        'start_time' => $this->normalizeTime((string) $slot['start_time']),
+                                        'exam_hall_id' => $hall['id'],
+                                        'hall_name' => $hall['name'],
+                                        'role' => $role,
+                                    ])
+                                    ->all();
+                            })
+                            ->all();
+                    })
+                    ->all();
+            })
+            ->values()
+            ->all();
+    }
+
+    protected function selectFairDraftInvigilator(Collection $invigilators, InvigilationRole $role, InvigilatorDistributionSetting $setting, array $unit, array $currentCounts, array $outsideCounts, array $proposedCounts, array $proposedDayCounts, array $proposedSlots, array $blockedSlots, bool $allowSoftRelaxation): ?Invigilator
+    {
+        $slotKey = $this->slotKey($unit['exam_date'], $unit['start_time']);
+
+        return $invigilators
+            ->filter(function (Invigilator $invigilator) use ($role, $setting, $unit, $outsideCounts, $proposedCounts, $proposedDayCounts, $proposedSlots, $blockedSlots, $slotKey, $allowSoftRelaxation): bool {
+                $invigilatorId = (int) $invigilator->getKey();
+
+                if (! $this->assignmentRoleIsCompatible($invigilator, $role, $setting)) {
+                    return false;
+                }
+
+                if (($blockedSlots[$invigilatorId][$slotKey] ?? false) || ($proposedSlots[$invigilatorId][$slotKey] ?? false)) {
+                    return false;
+                }
+
+                if ($allowSoftRelaxation) {
+                    return true;
+                }
+
+                $outsideCount = (int) ($outsideCounts[$invigilatorId] ?? 0);
+                $proposedCount = (int) ($proposedCounts[$invigilatorId] ?? 0);
+                $maxAssignments = $invigilator->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator);
+
+                if ($maxAssignments <= 0 || ($outsideCount + $proposedCount + 1) > $maxAssignments) {
+                    return false;
+                }
+
+                $date = $unit['exam_date'];
+                $projectedDayCount = (int) ($proposedDayCounts[$invigilatorId][$date] ?? 0) + 1;
+
+                if (! $this->allowsMultipleAssignmentsPerDay($invigilator, $setting) && $projectedDayCount > 1) {
+                    return false;
+                }
+
+                return $projectedDayCount <= $this->maxAssignmentsPerDay($invigilator, $setting);
+            })
+            ->sortBy(function (Invigilator $invigilator) use ($currentCounts, $outsideCounts, $proposedCounts): array {
+                $invigilatorId = (int) $invigilator->getKey();
+
+                return [
+                    (int) ($proposedCounts[$invigilatorId] ?? 0),
+                    (int) ($currentCounts[$invigilatorId] ?? 0),
+                    (int) ($outsideCounts[$invigilatorId] ?? 0),
+                    $invigilatorId,
+                ];
+            })
+            ->first();
+    }
+
+    protected function relaxedConstraintsForFairDraft(Invigilator $invigilator, InvigilatorDistributionSetting $setting, array $unit, array $outsideCounts, array $proposedCounts, array $proposedDayCounts): array
+    {
+        $invigilatorId = (int) $invigilator->getKey();
+        $constraints = [];
+        $maxAssignments = $invigilator->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator);
+        $projectedTotal = (int) ($outsideCounts[$invigilatorId] ?? 0) + (int) ($proposedCounts[$invigilatorId] ?? 0) + 1;
+
+        if ($maxAssignments <= 0 || $projectedTotal > $maxAssignments) {
+            $constraints[] = __('exam.fair_draft.relaxed_constraints.max_assignments');
+        }
+
+        $date = $unit['exam_date'];
+        $projectedDayCount = (int) ($proposedDayCounts[$invigilatorId][$date] ?? 0) + 1;
+
+        if (! $this->allowsMultipleAssignmentsPerDay($invigilator, $setting) && $projectedDayCount > 1) {
+            $constraints[] = __('exam.fair_draft.relaxed_constraints.multiple_per_day');
+        }
+
+        if ($projectedDayCount > $this->maxAssignmentsPerDay($invigilator, $setting)) {
+            $constraints[] = __('exam.fair_draft.relaxed_constraints.daily_limit');
+        }
+
+        return array_values(array_unique($constraints));
+    }
+
+    protected function fairDraftSummary(College $college, Collection $invigilators, array $currentCounts, array $proposedCounts, array $draftRows, array $uncovered): array
+    {
+        $allObserverIds = $invigilators->pluck('id')->map(fn (mixed $id): int => (int) $id)->all();
+        $proposedValues = collect($allObserverIds)->map(fn (int $id): int => (int) ($proposedCounts[$id] ?? 0));
+        $changedIds = collect($allObserverIds)
+            ->filter(fn (int $id): bool => (int) ($currentCounts[$id] ?? 0) !== (int) ($proposedCounts[$id] ?? 0));
+
+        return [
+            'college_name' => $college->name,
+            'total_observers' => count($allObserverIds),
+            'total_duties' => count($draftRows) + count($uncovered),
+            'proposed_duties' => count($draftRows),
+            'uncovered_duties' => count($uncovered),
+            'min_duties' => (int) ($proposedValues->min() ?? 0),
+            'max_duties' => (int) ($proposedValues->max() ?? 0),
+            'average_duties' => count($allObserverIds) > 0 ? round(count($draftRows) / count($allObserverIds), 2) : 0,
+            'increased_observers_count' => collect($allObserverIds)->filter(fn (int $id): bool => (int) ($proposedCounts[$id] ?? 0) > (int) ($currentCounts[$id] ?? 0))->count(),
+            'decreased_observers_count' => collect($allObserverIds)->filter(fn (int $id): bool => (int) ($proposedCounts[$id] ?? 0) < (int) ($currentCounts[$id] ?? 0))->count(),
+            'changed_observers_count' => $changedIds->count(),
+            'relaxed_constraints_count' => collect($draftRows)->filter(fn (array $row): bool => ! empty($row['relaxed_constraints_json'] ?? []))->count(),
+        ];
+    }
+
+    protected function officialSlotsOutsideFairDraftScope(College $college, ?string $fromDate, ?string $toDate, array $invigilatorIds): array
+    {
+        return InvigilatorAssignment::query()
+            ->whereIn('invigilator_id', $invigilatorIds)
+            ->where(function (Builder $query) use ($college, $fromDate, $toDate): void {
+                $query->where('college_id', '!=', $college->getKey());
+
+                if ($fromDate) {
+                    $query->orWhereDate('exam_date', '<', substr((string) $fromDate, 0, 10));
+                }
+
+                if ($toDate) {
+                    $query->orWhereDate('exam_date', '>', substr((string) $toDate, 0, 10));
+                }
+            })
+            ->get(['invigilator_id', 'exam_date', 'start_time'])
+            ->groupBy('invigilator_id')
+            ->map(fn (Collection $assignments): array => $assignments
+                ->mapWithKeys(fn (InvigilatorAssignment $assignment): array => [
+                    $this->slotKey($assignment->exam_date->format('Y-m-d'), (string) $assignment->start_time) => true,
+                ])
+                ->all())
+            ->all();
+    }
+
+    protected function validateFairDraft(InvigilatorDistributionDraft $draft): array
+    {
+        $setting = $this->settingsForCollege($draft->college);
+        $errors = [];
+        $duplicateSlots = $draft->assignments
+            ->groupBy(fn (InvigilatorDistributionDraftAssignment $assignment): string => implode('|', [
+                $assignment->invigilator_id,
+                $assignment->exam_date->format('Y-m-d'),
+                $this->normalizeTime((string) $assignment->start_time),
+            ]))
+            ->filter(fn (Collection $items): bool => $items->count() > 1);
+
+        if ($duplicateSlots->isNotEmpty()) {
+            $errors[] = __('exam.fair_draft.errors.duplicate_slot_assignment');
+        }
+
+        foreach ($draft->assignments as $assignment) {
+            $invigilator = $assignment->invigilator;
+            $role = $assignment->invigilation_role instanceof InvigilationRole
+                ? $assignment->invigilation_role
+                : InvigilationRole::tryFrom((string) $assignment->invigilation_role);
+
+            if (! $invigilator || ! $invigilator->is_active || (int) $invigilator->workload_reduction_percentage >= 100) {
+                $errors[] = __('exam.fair_draft.errors.invalid_invigilator');
+                continue;
+            }
+
+            if (! $role || ! $this->assignmentRoleIsCompatible($invigilator, $role, $setting)) {
+                $errors[] = __('exam.fair_draft.errors.invalid_role_assignment');
+            }
+
+            $hallIsUsed = HallAssignment::query()
+                ->where('college_id', $draft->college_id)
+                ->where('exam_hall_id', $assignment->exam_hall_id)
+                ->whereDate('exam_date', $assignment->exam_date)
+                ->whereTime('exam_start_time', $assignment->start_time)
+                ->exists();
+
+            if (! $hallIsUsed) {
+                $errors[] = __('exam.fair_draft.errors.invalid_hall_assignment');
+            }
+        }
+
+        return array_values(array_unique($errors));
     }
 
     public function studentDistributionReadiness(College $college, ?string $fromDate, ?string $toDate): array

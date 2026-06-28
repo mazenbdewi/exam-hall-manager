@@ -169,6 +169,16 @@
             <x-filament::button tag="a" :href="$this->reportsDashboardUrl()" color="gray" icon="heroicon-o-printer">
                 عرض التقارير والطباعة
             </x-filament::button>
+
+            <x-filament::button
+                color="info"
+                icon="heroicon-o-scale"
+                wire:click="createFairBalancedDraft"
+                wire:loading.attr="disabled"
+                :disabled="! ($readiness['is_ready'] ?? false)"
+            >
+                {{ __('exam.fair_draft.actions.create') }}
+            </x-filament::button>
         </div>
 
         @if (! empty($disabledReasons) && ! $this->canRunDistribution())
@@ -189,6 +199,65 @@
                     <div class="mt-2 text-2xl font-semibold text-gray-950 dark:text-white">{{ $value }}</div>
                 </div>
             @endforeach
+        </div>
+
+        @php($fairDrafts = $this->getFairBalancedDraftsData())
+        <div class="rounded-lg border border-info-200 bg-white p-4 shadow-sm dark:border-info-500/20 dark:bg-gray-900">
+            <div class="mb-3">
+                <h2 class="text-base font-semibold text-gray-950 dark:text-white">{{ __('exam.fair_draft.saved_drafts') }}</h2>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ __('exam.fair_draft.saved_drafts_hint') }}</p>
+            </div>
+            <div class="space-y-3">
+                @forelse ($fairDrafts as $draft)
+                    @php($draftSummary = $draft['summary'] ?? [])
+                    <div class="rounded-md border border-gray-200 p-3 dark:border-white/10">
+                        <div class="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <div class="font-semibold text-gray-950 dark:text-white">
+                                    {{ __('exam.fair_draft.fields.draft_number') }} #{{ $draft['id'] }}
+                                    <span class="rounded-full bg-info-50 px-2 py-1 text-xs text-info-700 dark:bg-info-500/10 dark:text-info-200">{{ $draft['status_label'] }}</span>
+                                </div>
+                                <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                                    {{ $draft['created_at'] }} · {{ $draft['period'] }} · {{ $draft['created_by'] }}
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <x-filament::button size="sm" color="gray" icon="heroicon-o-document-arrow-down" wire:click="exportFairBalancedDraftPdf({{ $draft['id'] }})">
+                                    {{ __('exam.fair_draft.actions.download_pdf') }}
+                                </x-filament::button>
+                                <x-filament::button size="sm" color="gray" icon="heroicon-o-arrow-down-tray" wire:click="exportFairBalancedDraftExcel({{ $draft['id'] }})">
+                                    {{ __('exam.fair_draft.actions.download_excel') }}
+                                </x-filament::button>
+                                @if ($draft['status'] === 'draft')
+                                    <x-filament::button size="sm" color="success" icon="heroicon-o-check" wire:click="approveFairBalancedDraft({{ $draft['id'] }})" wire:confirm="{{ __('exam.fair_draft.confirmations.approve') }}">
+                                        {{ __('exam.fair_draft.actions.approve') }}
+                                    </x-filament::button>
+                                    <x-filament::button size="sm" color="danger" icon="heroicon-o-x-mark" wire:click="cancelFairBalancedDraft({{ $draft['id'] }})" wire:confirm="{{ __('exam.fair_draft.confirmations.cancel') }}">
+                                        {{ __('exam.fair_draft.actions.cancel') }}
+                                    </x-filament::button>
+                                @endif
+                            </div>
+                        </div>
+                        <div class="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+                            @foreach ([
+                                __('exam.fair_draft.fields.min_duties') => $draftSummary['min_duties'] ?? 0,
+                                __('exam.fair_draft.fields.max_duties') => $draftSummary['max_duties'] ?? 0,
+                                __('exam.fair_draft.fields.average_duties') => $draftSummary['average_duties'] ?? 0,
+                                __('exam.fair_draft.fields.changed_observers') => $draftSummary['changed_observers_count'] ?? 0,
+                                __('exam.fair_draft.fields.relaxed_constraints_count') => $draftSummary['relaxed_constraints_count'] ?? 0,
+                                __('exam.fields.missing_assignments_count') => $draftSummary['uncovered_duties'] ?? 0,
+                            ] as $label => $value)
+                                <div class="rounded-md bg-gray-50 p-2 dark:bg-white/5">
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">{{ $label }}</div>
+                                    <div class="mt-1 font-semibold text-gray-950 dark:text-white">{{ $value }}</div>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                @empty
+                    <div class="text-sm text-gray-500">{{ __('exam.fair_draft.no_drafts') }}</div>
+                @endforelse
+            </div>
         </div>
 
         <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">

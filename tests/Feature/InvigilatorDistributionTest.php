@@ -21,6 +21,7 @@ use App\Models\ExamStudent;
 use App\Models\HallAssignment;
 use App\Models\Invigilator;
 use App\Models\InvigilatorAssignment;
+use App\Models\InvigilatorDistributionDraft;
 use App\Models\InvigilatorDistributionSetting;
 use App\Models\InvigilatorHallRequirement;
 use App\Models\InvigilatorUnassignedRequirement;
@@ -51,6 +52,7 @@ use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Facades\Excel;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -672,6 +674,171 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame(2, $report['max_suggested_increase_per_observer']);
         $this->assertSame([2, 2, 2], collect($report['recommendations'])->pluck('suggested_additional_duties')->sort()->values()->all());
         $this->assertFalse(collect($report['recommendations'])->pluck('name')->contains('احتياط لا يقترح'));
+    }
+
+    #[Test]
+    public function fair_balanced_draft_is_saved_without_changing_official_distribution(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'allow_role_fallback' => false,
+        ]);
+        $halls = collect(['2026-06-01', '2026-06-01', '2026-06-02', '2026-06-02', '2026-06-03', '2026-06-03'])
+            ->values()
+            ->map(fn (string $date, int $index): ExamHall => $this->createUsedHallOnDate($college, 'قاعة مسودة عادلة '.($index + 1), ExamHallType::Small, $date));
+        $invigilators = collect(range(1, 3))
+            ->map(fn (int $index): Invigilator => $this->createRegularInvigilator($college, 'مراقب مسودة '.$index, '099933330'.$index));
+        $reserve = Invigilator::query()->create([
+            'college_id' => $college->id,
+            'name' => 'احتياط لا يدخل المسودة',
+            'phone' => '0999333399',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Reserve->value,
+            'is_active' => true,
+        ]);
+
+        foreach ([0 => '2026-06-01', 2 => '2026-06-02', 4 => '2026-06-03'] as $hallIndex => $date) {
+            InvigilatorAssignment::query()->create([
+                'college_id' => $college->id,
+                'exam_date' => $date,
+                'start_time' => '09:00:00',
+                'exam_hall_id' => $halls[$hallIndex]->id,
+                'invigilator_id' => $invigilators[0]->id,
+                'invigilation_role' => InvigilationRole::Regular->value,
+                'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+            ]);
+        }
+
+        $draft = app(InvigilatorDistributionService::class)->createFairBalancedDraft($college, '2026-06-01', '2026-06-03');
+        $counts = $draft->assignments()->selectRaw('invigilator_id, count(*) as aggregate')->groupBy('invigilator_id')->pluck('aggregate', 'invigilator_id');
+
+        $this->assertSame('draft', $draft->status);
+        $this->assertSame(6, $draft->assignments()->count());
+        $this->assertSame(3, InvigilatorAssignment::query()->where('college_id', $college->id)->count());
+        $this->assertSame(2, (int) $counts[$invigilators[0]->id]);
+        $this->assertSame(2, (int) $counts[$invigilators[1]->id]);
+        $this->assertSame(2, (int) $counts[$invigilators[2]->id]);
+        $this->assertFalse($draft->assignments()->where('invigilator_id', $reserve->id)->exists());
+        $duplicateSlotCount = $draft->assignments()
+            ->get()
+            ->groupBy(fn ($assignment): string => $assignment->invigilator_id.'|'.$assignment->exam_date->format('Y-m-d').'|'.$assignment->start_time)
+            ->filter(fn ($items): bool => $items->count() > 1)
+            ->count();
+        $this->assertSame(0, $duplicateSlotCount);
+    }
+
+    #[Test]
+    public function approving_fair_balanced_draft_replaces_official_distribution_and_prevents_duplicate_approval(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $firstHall = $this->createUsedHall($college, 'قاعة اعتماد 1', ExamHallType::Small);
+        $this->createUsedHallOnDate($college, 'قاعة اعتماد 2', ExamHallType::Small, '2026-06-02');
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+        ]);
+        $oldInvigilator = $this->createRegularInvigilator($college, 'مراقب رسمي قديم', '0999444401');
+        $this->createRegularInvigilator($college, 'مراقب رسمي جديد', '0999444402');
+        InvigilatorAssignment::query()->create([
+            'college_id' => $college->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $firstHall->id,
+            'invigilator_id' => $oldInvigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $draft = app(InvigilatorDistributionService::class)->createFairBalancedDraft($college, '2026-06-01', '2026-06-02');
+        $approved = app(InvigilatorDistributionService::class)->approveFairBalancedDraft($draft, null);
+
+        $this->assertSame('approved', $approved->status);
+        $this->assertSame(2, InvigilatorAssignment::query()->where('college_id', $college->id)->count());
+        $this->assertSame(0, InvigilatorAssignment::query()
+            ->where('college_id', $college->id)
+            ->where('assignment_status', InvigilatorAssignmentStatus::Manual->value)
+            ->count());
+
+        $this->expectException(RuntimeException::class);
+        app(InvigilatorDistributionService::class)->approveFairBalancedDraft($approved, null);
+    }
+
+    #[Test]
+    public function fair_balanced_draft_reports_relaxed_soft_constraints_only_when_needed(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createUsedHall($college, 'قاعة قيد مرن 1', ExamHallType::Small);
+        $this->createUsedHallOnDate($college, 'قاعة قيد مرن 2', ExamHallType::Small, '2026-06-02');
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 1,
+        ]);
+        $this->createRegularInvigilator($college, 'مراقب قيد مرن', '0999555501', maxAssignments: 1);
+
+        $draft = app(InvigilatorDistributionService::class)->createFairBalancedDraft($college, '2026-06-01', '2026-06-02');
+        $relaxedRows = $draft->assignments()->whereNotNull('relaxed_constraints_json')->get();
+
+        $this->assertSame(2, $draft->assignments()->count());
+        $this->assertSame(1, $relaxedRows->count());
+        $this->assertSame(1, $draft->summary_json['relaxed_constraints_count']);
+        $this->assertStringContainsString('حد المهام', implode(' ', $relaxedRows->first()->relaxed_constraints_json));
+    }
+
+    #[Test]
+    public function fair_balanced_draft_pdf_export_works_and_main_page_stays_lightweight(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 20,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+        ]);
+
+        foreach (range(1, 12) as $index) {
+            $this->createUsedHall($college, 'قاعة صفحة مسودة '.$index, ExamHallType::Small);
+            $this->createRegularInvigilator($college, 'مراقب لا يظهر في الصفحة '.$index, '09996666'.str_pad((string) $index, 2, '0', STR_PAD_LEFT));
+        }
+
+        $draft = app(InvigilatorDistributionService::class)->createFairBalancedDraft($college, '2026-06-01', '2026-06-01');
+        $html = view('pdf.invigilator-distribution-fair-draft', [
+            'draft' => $draft->load(['college', 'creator', 'approver', 'assignments.invigilator', 'assignments.examHall']),
+            'systemSetting' => SystemSetting::current(),
+            'logoDataUri' => null,
+        ])->render();
+        $response = app(InvigilatorDistributionPdfService::class)->downloadFairBalancedDraft($draft);
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        $this->assertInstanceOf(StreamedResponse::class, $response);
+        $this->assertStringContainsString('application/pdf', (string) $response->headers->get('Content-Type'));
+        $this->assertStringContainsString(__('exam.fair_draft.statuses.draft'), $html);
+        $this->assertStringContainsString('مراقب لا يظهر في الصفحة 1', $html);
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->assertSee(__('exam.fair_draft.saved_drafts'))
+            ->assertSee(__('exam.fair_draft.fields.draft_number').' #'.$draft->id)
+            ->assertDontSee('مراقب لا يظهر في الصفحة 1');
     }
 
     #[Test]
@@ -2345,6 +2512,21 @@ class InvigilatorDistributionTest extends TestCase
         ]);
 
         return $invigilator;
+    }
+
+    protected function createRegularInvigilator(College $college, string $name, string $phone, ?int $maxAssignments = null): Invigilator
+    {
+        return Invigilator::query()->create([
+            'college_id' => $college->id,
+            'name' => $name,
+            'phone' => $phone,
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'max_assignments' => $maxAssignments,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'is_active' => true,
+        ]);
     }
 
     protected function createReadyRosterForOffering(SubjectExamOffering $offering, array $students, array $overrides = []): SubjectExamRoster
