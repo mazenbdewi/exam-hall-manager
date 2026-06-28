@@ -44,6 +44,7 @@ use Carbon\Carbon;
 use Database\Seeders\InvigilatorSeeder;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -690,6 +691,79 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame(0, InvigilatorDistributionDraft::query()->count());
         $this->assertSame(0, InvigilatorAssignment::query()->whereDate('exam_date', '2026-06-01')->count());
         $this->assertSame(1, InvigilatorAssignment::query()->whereDate('exam_date', '2026-06-02')->count());
+    }
+
+    #[Test]
+    public function normal_distribution_uses_bulk_optimized_algorithm_for_large_date_ranges(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $baseOffering = $context['offering'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 200,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 20,
+            'allow_role_fallback' => false,
+        ]);
+
+        foreach (range(1, 60) as $index) {
+            $this->createRegularInvigilator($college, 'مراقب أداء '.$index, '099966'.str_pad((string) $index, 4, '0', STR_PAD_LEFT), 200);
+        }
+
+        $dates = collect(range(1, 10))
+            ->map(fn (int $day): string => '2026-06-'.str_pad((string) $day, 2, '0', STR_PAD_LEFT))
+            ->all();
+        $times = ['09:00:00', '13:00:00'];
+        $expectedAssignments = 0;
+
+        foreach ($dates as $date) {
+            foreach ($times as $time) {
+                SubjectExamOffering::query()->create([
+                    'subject_id' => $baseOffering->subject_id,
+                    'academic_year_id' => $baseOffering->academic_year_id,
+                    'semester_id' => $baseOffering->semester_id,
+                    'exam_date' => $date,
+                    'exam_start_time' => $time,
+                    'status' => ExamOfferingStatus::Draft->value,
+                ]);
+
+                foreach (range(1, 5) as $hallIndex) {
+                    $this->createUsedHallOnDateTime($college, "قاعة أداء {$date} {$time} {$hallIndex}", ExamHallType::Small, $date, $time);
+                    $expectedAssignments++;
+                }
+            }
+        }
+
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-10', usedHalls: $expectedAssignments);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $result = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-10'),
+        );
+
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame($expectedAssignments, $result['assigned_count']);
+        $this->assertSame(0, $result['shortage_count']);
+        $this->assertSame(0, InvigilatorDistributionDraft::query()->count());
+        $this->assertSame($expectedAssignments, InvigilatorAssignment::query()->count());
+        $this->assertLessThan(80, $queryCount);
+
+        $duplicateSameSlotAssignments = InvigilatorAssignment::query()
+            ->select('invigilator_id', 'exam_date', 'start_time', DB::raw('count(*) as aggregate'))
+            ->groupBy('invigilator_id', 'exam_date', 'start_time')
+            ->havingRaw('count(*) > 1')
+            ->exists();
+
+        $this->assertFalse($duplicateSameSlotAssignments);
     }
 
     #[Test]
@@ -2762,6 +2836,31 @@ class InvigilatorDistributionTest extends TestCase
             'exam_hall_id' => $hall->id,
             'exam_date' => $examDate,
             'exam_start_time' => '09:00:00',
+            'college_id' => $college->id,
+            'total_capacity' => 80,
+            'assigned_students_count' => 20,
+            'remaining_capacity' => 60,
+        ]);
+
+        return $hall;
+    }
+
+    protected function createUsedHallOnDateTime(College $college, string $name, ExamHallType $type, string $examDate, string $startTime): ExamHall
+    {
+        $hall = ExamHall::query()->create([
+            'college_id' => $college->id,
+            'name' => $name,
+            'location' => 'المبنى الأول',
+            'capacity' => 80,
+            'hall_type' => $type->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        HallAssignment::query()->create([
+            'exam_hall_id' => $hall->id,
+            'exam_date' => $examDate,
+            'exam_start_time' => $startTime,
             'college_id' => $college->id,
             'total_capacity' => 80,
             'assigned_students_count' => 20,

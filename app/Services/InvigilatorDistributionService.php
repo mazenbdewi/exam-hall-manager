@@ -30,7 +30,20 @@ class InvigilatorDistributionService
 {
     public function distributeForFaculty(College $college, CarbonInterface $fromDate, CarbonInterface $toDate, bool $overwriteManual = false): array
     {
-        $readiness = $this->studentDistributionReadiness($college, $fromDate->toDateString(), $toDate->toDateString());
+        $startedAt = hrtime(true);
+        $fromDateString = $fromDate->toDateString();
+        $toDateString = $toDate->toDateString();
+        $context = [
+            'college_id' => $college->getKey(),
+            'from_date' => $fromDateString,
+            'to_date' => $toDateString,
+        ];
+
+        $readiness = $this->lightweightStudentDistributionReadiness($college, $fromDateString, $toDateString);
+
+        if (! ($readiness['is_ready'] ?? false) && ! ($readiness['has_student_distribution_run'] ?? false)) {
+            $readiness = $this->studentDistributionReadiness($college, $fromDateString, $toDateString);
+        }
 
         if (! $readiness['is_ready']) {
             return [
@@ -44,18 +57,277 @@ class InvigilatorDistributionService
             ];
         }
 
-        $slots = $this->buildSlots($college, $fromDate->toDateString(), $toDate->toDateString());
-        $results = $slots->map(fn (array $slot): array => $this->distributeForSlot($college, $slot['exam_date'], $slot['start_time'], $overwriteManual));
+        $result = $this->distributeForFacultyOptimized($college, $fromDateString, $toDateString, $overwriteManual, $context);
+
+        $this->logDistributionTiming('total distribution', $startedAt, [
+            ...$context,
+            'assigned_count' => $result['assigned_count'],
+            'shortage_count' => $result['shortage_count'],
+            'slots_count' => $result['slots_count'],
+        ]);
+
+        return $result;
+    }
+
+    protected function distributeForFacultyOptimized(College $college, string $fromDate, string $toDate, bool $overwriteManual, array $context): array
+    {
+        $stageStartedAt = hrtime(true);
+        $setting = $this->settingsForCollege($college);
+        $requirementsByHallType = $this->requirementsByHallType($college);
+        $usedHalls = $this->usedHallsForRange($college, $fromDate, $toDate);
+        $firstOfferingIdBySlot = $this->firstOfferingIdBySlot($college, $fromDate, $toDate);
+        $this->logDistributionTiming('loading reservations and requirements', $stageStartedAt, [
+            ...$context,
+            'used_halls_count' => $usedHalls->count(),
+            'requirements_count' => $requirementsByHallType->count(),
+        ]);
+
+        if ($usedHalls->isEmpty()) {
+            return [
+                'status' => 'danger',
+                'slots_count' => 0,
+                'assigned_count' => 0,
+                'shortage_count' => 0,
+                'message' => __('exam.notifications.invigilator_distribution_no_used_halls'),
+                'results' => [],
+            ];
+        }
+
+        $slots = $usedHalls
+            ->groupBy(fn (HallAssignment $assignment): string => $this->slotKey($assignment->exam_date->format('Y-m-d'), $this->normalizeTime((string) $assignment->exam_start_time)))
+            ->sortKeys();
+
+        $stageStartedAt = hrtime(true);
+        $invigilators = Invigilator::query()
+            ->where('college_id', $college->getKey())
+            ->where('is_active', true)
+            ->orderBy('id')
+            ->get();
+        $inactiveInvigilators = Invigilator::query()
+            ->where('college_id', $college->getKey())
+            ->where('is_active', false)
+            ->get();
+        $rolePools = $this->rolePools($invigilators);
+        $inactiveRoleCounts = $this->roleCounts($inactiveInvigilators);
+        $this->logDistributionTiming('loading invigilators', $stageStartedAt, [
+            ...$context,
+            'active_invigilators_count' => $invigilators->count(),
+            'inactive_invigilators_count' => $inactiveInvigilators->count(),
+        ]);
+
+        $stageStartedAt = hrtime(true);
+        DB::transaction(function () use ($college, $fromDate, $toDate, $overwriteManual): void {
+            $this->clearDistributionRange($college, $fromDate, $toDate, $overwriteManual);
+        });
+        $this->logDistributionTiming('clearing old assignments', $stageStartedAt, $context);
+
+        $stageStartedAt = hrtime(true);
+        $invigilatorIds = $invigilators->pluck('id')->all();
+        $existingAssignments = $invigilatorIds === []
+            ? collect()
+            : InvigilatorAssignment::query()
+                ->whereIn('invigilator_id', $invigilatorIds)
+                ->select(['id', 'college_id', 'exam_date', 'start_time', 'exam_hall_id', 'invigilator_id', 'invigilation_role', 'assignment_status'])
+                ->get();
+        $manualAssignmentsInRange = $existingAssignments
+            ->where('college_id', $college->getKey())
+            ->filter(fn (InvigilatorAssignment $assignment): bool => $assignment->exam_date->format('Y-m-d') >= $fromDate && $assignment->exam_date->format('Y-m-d') <= $toDate);
+        $this->logDistributionTiming('loading existing assignments', $stageStartedAt, [
+            ...$context,
+            'existing_assignments_count' => $existingAssignments->count(),
+            'manual_assignments_in_range_count' => $manualAssignmentsInRange->count(),
+        ]);
+
+        $totalCounts = [];
+        $dayCounts = [];
+        $slotAssigned = [];
+        $assignedByHallRole = [];
+
+        foreach ($existingAssignments as $assignment) {
+            $invigilatorId = (int) $assignment->invigilator_id;
+            $examDate = $assignment->exam_date->format('Y-m-d');
+            $slotKey = $this->slotKey($examDate, $this->normalizeTime((string) $assignment->start_time));
+            $hallRoleKey = $this->hallRoleKey($examDate, $this->normalizeTime((string) $assignment->start_time), (int) $assignment->exam_hall_id, $this->assignmentRoleValue($assignment));
+
+            $totalCounts[$invigilatorId] = (int) ($totalCounts[$invigilatorId] ?? 0) + 1;
+            $dayCounts[$invigilatorId][$examDate] = (int) ($dayCounts[$invigilatorId][$examDate] ?? 0) + 1;
+            $slotAssigned[$slotKey][$invigilatorId] = true;
+            $assignedByHallRole[$hallRoleKey] = (int) ($assignedByHallRole[$hallRoleKey] ?? 0) + 1;
+        }
+
+        $stageStartedAt = hrtime(true);
+        $assignmentRows = [];
+        $shortageRows = [];
+        $slotResults = [];
+        $now = now();
+
+        foreach ($slots as $slotKey => $slotHalls) {
+            [$examDate, $startTime] = explode('|', (string) $slotKey);
+            $slotResults[$slotKey] = [
+                'status' => 'success',
+                'exam_date' => $examDate,
+                'start_time' => $startTime,
+                'halls_count' => $slotHalls->count(),
+                'assigned_count' => 0,
+                'shortage_count' => 0,
+                'message' => __('exam.notifications.invigilator_distribution_completed'),
+            ];
+
+            foreach ($slotHalls as $hallAssignment) {
+                $hall = $hallAssignment->examHall;
+                $hallType = $hall?->hall_type?->value ?? (string) $hall?->hall_type;
+                $requirement = $requirementsByHallType->get($hallType);
+
+                if (! $hall || ! $requirement) {
+                    $shortageRows[] = $this->shortageRow($college, $examDate, $startTime, (int) ($hall?->id ?? 0), InvigilationRole::Regular, 1, 0, __('exam.invigilator_shortage_reasons.missing_hall_requirement'), $now);
+                    $slotResults[$slotKey]['shortage_count']++;
+
+                    continue;
+                }
+
+                foreach ($this->roleRequirements($requirement) as $roleValue => $requiredCount) {
+                    $requiredRole = InvigilationRole::from($roleValue);
+                    $requiredCount = (int) $requiredCount;
+
+                    if ($requiredCount <= 0) {
+                        continue;
+                    }
+
+                    $hallRoleKey = $this->hallRoleKey($examDate, $startTime, (int) $hall->id, $requiredRole->value);
+                    $assignedCount = (int) ($assignedByHallRole[$hallRoleKey] ?? 0);
+
+                    if ($requiredRole === InvigilationRole::Reserve) {
+                        if ($assignedCount < $requiredCount) {
+                            $shortageCount = $requiredCount - $assignedCount;
+                            $shortageRows[] = $this->shortageRow(
+                                $college,
+                                $examDate,
+                                $startTime,
+                                (int) $hall->id,
+                                $requiredRole,
+                                $requiredCount,
+                                $assignedCount,
+                                'لا يتم ربط مراقبي الاحتياط بالقاعات في التوزيع الآلي. يجب تحويل المراقب إلى دور فعال قبل استخدامه لتغطية نقص.',
+                                $now,
+                            );
+                            $slotResults[$slotKey]['shortage_count'] += $shortageCount;
+                        }
+
+                        continue;
+                    }
+
+                    for ($index = $assignedCount; $index < $requiredCount; $index++) {
+                        $selection = $this->selectInvigilatorFromMaps(
+                            requiredRole: $requiredRole,
+                            examDate: $examDate,
+                            startTime: $startTime,
+                            setting: $setting,
+                            rolePools: $rolePools,
+                            slotAssigned: $slotAssigned,
+                            totalCounts: $totalCounts,
+                            dayCounts: $dayCounts,
+                        );
+
+                        $invigilator = $selection['invigilator'];
+
+                        if (! $invigilator) {
+                            $diagnostics = $this->candidateDiagnosticsFromMaps(
+                                role: $requiredRole,
+                                setting: $setting,
+                                examDate: $examDate,
+                                startTime: $startTime,
+                                rolePools: $rolePools,
+                                slotAssigned: $slotAssigned,
+                                totalCounts: $totalCounts,
+                                dayCounts: $dayCounts,
+                                inactiveRoleCounts: $inactiveRoleCounts,
+                                activeInvigilatorsCount: $invigilators->count(),
+                            );
+                            $reason = $this->shortageReasonFromDiagnostics($requiredRole, $diagnostics);
+
+                            $this->logUnfilledRequiredRole(
+                                examDate: $examDate,
+                                startTime: $startTime,
+                                hallId: (int) $hall->id,
+                                hallName: (string) $hall->name,
+                                role: $requiredRole,
+                                requiredCount: $requiredCount,
+                                assignedCount: $index,
+                                diagnostics: $diagnostics,
+                            );
+
+                            $shortageRows[] = $this->shortageRow($college, $examDate, $startTime, (int) $hall->id, $requiredRole, $requiredCount, $index, $reason, $now);
+                            $slotResults[$slotKey]['shortage_count'] += $requiredCount - $index;
+
+                            break;
+                        }
+
+                        $invigilatorId = (int) $invigilator->getKey();
+                        $assignmentRows[] = [
+                            'college_id' => $college->getKey(),
+                            'subject_exam_offering_id' => $firstOfferingIdBySlot[$slotKey] ?? null,
+                            'exam_date' => $examDate,
+                            'start_time' => $startTime,
+                            'end_time' => null,
+                            'exam_hall_id' => (int) $hall->id,
+                            'invigilator_id' => $invigilatorId,
+                            'invigilation_role' => $requiredRole->value,
+                            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+                            'assigned_by' => auth()->id(),
+                            'notes' => $selection['notes'],
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ];
+
+                        $totalCounts[$invigilatorId] = (int) ($totalCounts[$invigilatorId] ?? 0) + 1;
+                        $dayCounts[$invigilatorId][$examDate] = (int) ($dayCounts[$invigilatorId][$examDate] ?? 0) + 1;
+                        $slotAssigned[$slotKey][$invigilatorId] = true;
+                        $assignedByHallRole[$hallRoleKey] = (int) ($assignedByHallRole[$hallRoleKey] ?? 0) + 1;
+                        $slotResults[$slotKey]['assigned_count']++;
+                    }
+                }
+            }
+
+            if ($slotResults[$slotKey]['shortage_count'] > 0) {
+                $slotResults[$slotKey]['status'] = 'partial';
+                $slotResults[$slotKey]['message'] = __('exam.notifications.invigilator_distribution_completed_with_shortage', ['count' => $slotResults[$slotKey]['shortage_count']]);
+            }
+        }
+
+        $this->logDistributionTiming('assignment loop', $stageStartedAt, [
+            ...$context,
+            'new_assignments_count' => count($assignmentRows),
+            'shortage_rows_count' => count($shortageRows),
+        ]);
+
+        $stageStartedAt = hrtime(true);
+        DB::transaction(function () use ($assignmentRows, $shortageRows): void {
+            foreach (array_chunk($assignmentRows, 1000) as $chunk) {
+                InvigilatorAssignment::query()->insert($chunk);
+            }
+
+            foreach (array_chunk($shortageRows, 1000) as $chunk) {
+                InvigilatorUnassignedRequirement::query()->insert($chunk);
+            }
+        });
+        $this->logDistributionTiming('saving assignments and shortages', $stageStartedAt, [
+            ...$context,
+            'new_assignments_count' => count($assignmentRows),
+            'shortage_rows_count' => count($shortageRows),
+        ]);
+
+        $results = collect($slotResults)->values();
+        $shortageCount = (int) $results->sum('shortage_count');
 
         return [
-            'status' => $results->isEmpty() || $results->contains(fn (array $result): bool => $result['shortage_count'] > 0) ? 'partial' : 'success',
+            'status' => $results->isEmpty() || $shortageCount > 0 ? 'partial' : 'success',
             'slots_count' => $results->count(),
-            'assigned_count' => $results->sum('assigned_count'),
-            'shortage_count' => $results->sum('shortage_count'),
+            'assigned_count' => count($assignmentRows),
+            'shortage_count' => $shortageCount,
             'message' => $results->isEmpty()
                 ? __('exam.notifications.invigilator_distribution_no_used_halls')
-                : ($results->sum('shortage_count') > 0
-                    ? __('exam.notifications.invigilator_distribution_completed_with_shortage', ['count' => $results->sum('shortage_count')])
+                : ($shortageCount > 0
+                    ? __('exam.notifications.invigilator_distribution_completed_with_shortage', ['count' => $shortageCount])
                     : __('exam.notifications.invigilator_distribution_completed')),
             'results' => $results->all(),
         ];
@@ -221,6 +493,341 @@ class InvigilatorDistributionService
                 ? __('exam.notifications.invigilator_distribution_completed_with_shortage', ['count' => $shortageCount])
                 : __('exam.notifications.invigilator_distribution_completed'),
         ];
+    }
+
+    protected function usedHallsForRange(College $college, string $fromDate, string $toDate): Collection
+    {
+        return HallAssignment::query()
+            ->with('examHall')
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->where('assigned_students_count', '>', 0)
+            ->whereHas('examHall', fn (Builder $query) => $query
+                ->where('college_id', $college->getKey())
+                ->where('is_active', true))
+            ->orderBy('exam_date')
+            ->orderBy('exam_start_time')
+            ->orderBy('exam_hall_id')
+            ->get()
+            ->filter(fn (HallAssignment $assignment): bool => $assignment->examHall !== null)
+            ->values();
+    }
+
+    protected function firstOfferingIdBySlot(College $college, string $fromDate, string $toDate): array
+    {
+        return SubjectExamOffering::query()
+            ->select(['id', 'exam_date', 'exam_start_time'])
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->whereHas('subject', fn (Builder $query) => $query->where('college_id', $college->getKey()))
+            ->orderBy('id')
+            ->get()
+            ->groupBy(fn (SubjectExamOffering $offering): string => $this->slotKey($offering->exam_date->format('Y-m-d'), (string) $offering->exam_start_time))
+            ->map(fn (Collection $offerings): int => (int) $offerings->first()->getKey())
+            ->all();
+    }
+
+    protected function rolePools(Collection $invigilators): array
+    {
+        $pools = collect(InvigilationRole::cases())
+            ->mapWithKeys(fn (InvigilationRole $role): array => [$role->value => collect()])
+            ->all();
+
+        foreach ($invigilators as $invigilator) {
+            foreach (InvigilationRole::cases() as $role) {
+                if ($this->invigilatorCanServeRequiredRole($invigilator, $role)) {
+                    $pools[$role->value]->push($invigilator);
+                }
+            }
+        }
+
+        return $pools;
+    }
+
+    protected function roleCounts(Collection $invigilators): array
+    {
+        $counts = collect(InvigilationRole::cases())
+            ->mapWithKeys(fn (InvigilationRole $role): array => [$role->value => 0])
+            ->all();
+
+        foreach ($invigilators as $invigilator) {
+            foreach (InvigilationRole::cases() as $role) {
+                if ($this->invigilatorCanServeRequiredRole($invigilator, $role)) {
+                    $counts[$role->value]++;
+                }
+            }
+        }
+
+        return $counts;
+    }
+
+    protected function selectInvigilatorFromMaps(
+        InvigilationRole $requiredRole,
+        string $examDate,
+        string $startTime,
+        InvigilatorDistributionSetting $setting,
+        array $rolePools,
+        array $slotAssigned,
+        array $totalCounts,
+        array $dayCounts,
+    ): array {
+        $strict = $this->selectCandidateFromPool($rolePools[$requiredRole->value] ?? collect(), $requiredRole, $examDate, $startTime, $setting, $slotAssigned, $totalCounts, $dayCounts);
+
+        if ($strict) {
+            return [
+                'invigilator' => $strict,
+                'notes' => null,
+            ];
+        }
+
+        if (! (bool) $setting->allow_role_fallback) {
+            return [
+                'invigilator' => null,
+                'notes' => null,
+            ];
+        }
+
+        foreach ($this->fallbackRolesFor($requiredRole) as $fallbackRole) {
+            $fallback = $this->selectCandidateFromPool($rolePools[$fallbackRole->value] ?? collect(), $requiredRole, $examDate, $startTime, $setting, $slotAssigned, $totalCounts, $dayCounts);
+
+            if (! $fallback) {
+                continue;
+            }
+
+            return [
+                'invigilator' => $fallback,
+                'notes' => __('exam.invigilator_shortage_reasons.fallback_used', [
+                    'required_role' => $requiredRole->label(),
+                    'fallback_role' => $fallbackRole->label(),
+                ]),
+            ];
+        }
+
+        return [
+            'invigilator' => null,
+            'notes' => null,
+        ];
+    }
+
+    protected function selectCandidateFromPool(
+        Collection $pool,
+        InvigilationRole $assignmentRole,
+        string $examDate,
+        string $startTime,
+        InvigilatorDistributionSetting $setting,
+        array $slotAssigned,
+        array $totalCounts,
+        array $dayCounts,
+    ): ?Invigilator {
+        $eligible = $pool
+            ->filter(fn (Invigilator $invigilator): bool => $this->candidateRejectionReasonsFromMaps($invigilator, $examDate, $startTime, $setting, $slotAssigned, $totalCounts, $dayCounts) === [])
+            ->values();
+
+        if ($eligible->isEmpty()) {
+            return null;
+        }
+
+        $primaryEligible = $eligible
+            ->filter(fn (Invigilator $invigilator): bool => $invigilator->hasPrimaryRole($assignmentRole))
+            ->values();
+        $selectionPool = $primaryEligible->isNotEmpty() ? $primaryEligible : $eligible;
+
+        return (($setting->distribution_pattern?->value ?? $setting->distribution_pattern) === InvigilatorDistributionPattern::Random->value)
+            ? $selectionPool->shuffle()->first()
+            : $selectionPool->sortBy(fn (Invigilator $invigilator): array => $this->scoreFromMaps($invigilator, $examDate, $setting, $totalCounts, $dayCounts))->first();
+    }
+
+    protected function candidateDiagnosticsFromMaps(
+        InvigilationRole $role,
+        InvigilatorDistributionSetting $setting,
+        string $examDate,
+        string $startTime,
+        array $rolePools,
+        array $slotAssigned,
+        array $totalCounts,
+        array $dayCounts,
+        array $inactiveRoleCounts,
+        int $activeInvigilatorsCount,
+    ): array {
+        /** @var Collection<int, Invigilator> $candidates */
+        $candidates = $rolePools[$role->value] ?? collect();
+        $rejections = [];
+        $eligible = collect();
+
+        foreach ($candidates as $candidate) {
+            $reasons = $this->candidateRejectionReasonsFromMaps($candidate, $examDate, $startTime, $setting, $slotAssigned, $totalCounts, $dayCounts);
+
+            if ($reasons === []) {
+                $eligible->push($candidate);
+
+                continue;
+            }
+
+            foreach ($reasons as $reason) {
+                $rejections[$reason] = ($rejections[$reason] ?? 0) + 1;
+            }
+        }
+
+        return [
+            'role' => $role->value,
+            'role_label' => $role->label(),
+            'inactive_count' => (int) ($inactiveRoleCounts[$role->value] ?? 0),
+            'wrong_faculty_count' => 0,
+            'wrong_role_count' => max(0, $activeInvigilatorsCount - $candidates->count()),
+            'candidates_found' => $candidates->count(),
+            'eligible_count' => $eligible->count(),
+            'rejected_count' => $candidates->count() - $eligible->count(),
+            'rejected_counts' => $rejections,
+            'eligible' => $eligible->values(),
+        ];
+    }
+
+    protected function candidateRejectionReasonsFromMaps(
+        Invigilator $invigilator,
+        string $examDate,
+        string $startTime,
+        InvigilatorDistributionSetting $setting,
+        array $slotAssigned,
+        array $totalCounts,
+        array $dayCounts,
+    ): array {
+        $reasons = [];
+        $invigilatorId = (int) $invigilator->getKey();
+        $slotKey = $this->slotKey($examDate, $startTime);
+        $maxAssignments = $invigilator->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator);
+        $totalAssignments = (int) ($totalCounts[$invigilatorId] ?? 0);
+
+        if (isset($slotAssigned[$slotKey][$invigilatorId])) {
+            $reasons[] = 'same_slot_conflict';
+        }
+
+        if ((int) $invigilator->workload_reduction_percentage >= 100) {
+            $reasons[] = 'workload_reduction_100';
+        } elseif ($maxAssignments <= 0 || $totalAssignments >= $maxAssignments) {
+            $reasons[] = 'max_assignments_reached';
+        }
+
+        $dayAssignments = (int) ($dayCounts[$invigilatorId][$examDate] ?? 0);
+        $allowMultiplePerDay = $this->allowsMultipleAssignmentsPerDay($invigilator, $setting);
+        $dayLimit = $this->maxAssignmentsPerDay($invigilator, $setting);
+
+        if (! $allowMultiplePerDay && $dayAssignments > 0) {
+            $reasons[] = $invigilator->allow_multiple_assignments_per_day !== null
+                ? 'personal_same_day_limit'
+                : 'same_day_limit';
+        }
+
+        if ($dayLimit !== null && $dayAssignments >= $dayLimit) {
+            $reasons[] = $invigilator->max_assignments_per_day !== null
+                ? 'personal_daily_limit_reached'
+                : 'daily_limit_reached';
+        }
+
+        return array_values(array_unique($reasons));
+    }
+
+    protected function scoreFromMaps(Invigilator $invigilator, string $examDate, InvigilatorDistributionSetting $setting, array $totalCounts, array $dayCounts): array
+    {
+        $invigilatorId = (int) $invigilator->getKey();
+        $total = (int) ($totalCounts[$invigilatorId] ?? 0);
+        $week = $this->assignmentCountInWeekFromMap($dayCounts[$invigilatorId] ?? [], $examDate);
+        $nearby = $this->nearbyAssignmentCountFromMap($dayCounts[$invigilatorId] ?? [], $examDate);
+        $pattern = $setting->distribution_pattern?->value ?? $setting->distribution_pattern;
+        $dayPreference = $this->dayPreference($invigilator, $setting);
+
+        $patternScore = match ($pattern) {
+            InvigilatorDistributionPattern::Consecutive->value => -$nearby,
+            InvigilatorDistributionPattern::Distributed->value => $nearby,
+            default => 0,
+        };
+
+        $dayScore = match ($dayPreference) {
+            InvigilatorDayPreference::Early->value => $this->assignmentCountBeforeFromMap($dayCounts[$invigilatorId] ?? [], $examDate),
+            InvigilatorDayPreference::Late->value => -$this->assignmentCountBeforeFromMap($dayCounts[$invigilatorId] ?? [], $examDate),
+            default => 0,
+        };
+
+        return [$total, $week, $patternScore, $dayScore, $invigilatorId];
+    }
+
+    protected function assignmentCountInWeekFromMap(array $dateCounts, string $examDate): int
+    {
+        $date = Carbon::parse($examDate);
+        $from = $date->copy()->startOfWeek()->toDateString();
+        $to = $date->copy()->endOfWeek()->toDateString();
+
+        return collect($dateCounts)
+            ->filter(fn (int $count, string $date): bool => $date >= $from && $date <= $to)
+            ->sum();
+    }
+
+    protected function nearbyAssignmentCountFromMap(array $dateCounts, string $examDate): int
+    {
+        $date = Carbon::parse($examDate);
+        $from = $date->copy()->subDay()->toDateString();
+        $to = $date->copy()->addDay()->toDateString();
+
+        return collect($dateCounts)
+            ->filter(fn (int $count, string $date): bool => $date >= $from && $date <= $to)
+            ->sum();
+    }
+
+    protected function assignmentCountBeforeFromMap(array $dateCounts, string $examDate): int
+    {
+        return collect($dateCounts)
+            ->filter(fn (int $count, string $date): bool => $date < $examDate)
+            ->sum();
+    }
+
+    protected function clearDistributionRange(College $college, string $fromDate, string $toDate, bool $overwriteManual = false): void
+    {
+        $assignmentQuery = InvigilatorAssignment::withTrashed()
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate);
+
+        if (! $overwriteManual) {
+            $assignmentQuery->where('assignment_status', '!=', InvigilatorAssignmentStatus::Manual->value);
+        }
+
+        $assignmentQuery->forceDelete();
+
+        InvigilatorUnassignedRequirement::query()
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->delete();
+    }
+
+    protected function shortageRow(College $college, string $examDate, string $startTime, int $hallId, InvigilationRole $role, int $required, int $assigned, string $reason, CarbonInterface $timestamp): array
+    {
+        return [
+            'college_id' => $college->getKey(),
+            'exam_date' => $examDate,
+            'start_time' => $startTime,
+            'exam_hall_id' => $hallId,
+            'invigilation_role' => $role->value,
+            'required_count' => $required,
+            'assigned_count' => $assigned,
+            'shortage_count' => max(0, $required - $assigned),
+            'reason' => $reason,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ];
+    }
+
+    protected function hallRoleKey(string $examDate, string $startTime, int $hallId, string $role): string
+    {
+        return $this->slotKey($examDate, $startTime).'|'.$hallId.'|'.$role;
+    }
+
+    protected function logDistributionTiming(string $stage, int $startedAt, array $context = []): void
+    {
+        Log::info('Invigilator distribution performance: '.$stage, [
+            ...$context,
+            'duration_ms' => (int) round((hrtime(true) - $startedAt) / 1_000_000),
+        ]);
     }
 
     public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, bool $includeDutyIncreaseRecommendationDetails = false, bool $includeShortageDetails = true, bool $includeReportDetails = true): array
