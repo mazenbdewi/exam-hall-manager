@@ -594,7 +594,7 @@ class InvigilatorDistributionTest extends TestCase
             ]);
         }
 
-        $summary = app(InvigilatorDistributionService::class)->getSummary($college, null, null, '2026-06-01', '2026-06-03');
+        $summary = app(InvigilatorDistributionService::class)->getSummary($college, null, null, '2026-06-01', '2026-06-03', true);
         $report = $summary['duty_increase_recommendations'];
 
         $this->assertSame(6, $summary['shortage_count']);
@@ -605,6 +605,101 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame(2, $report['max_suggested_increase_per_observer']);
         $this->assertSame([2, 2, 2], collect($report['recommendations'])->pluck('suggested_additional_duties')->sort()->values()->all());
         $this->assertFalse(collect($report['recommendations'])->pluck('name')->contains('احتياط لا يقترح'));
+    }
+
+    #[Test]
+    public function duty_increase_recommendation_page_shows_lightweight_summary_without_full_rows(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $hall = $this->createUsedHall($college, 'قاعة توصية خفيفة', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => false,
+            'max_assignments_per_day' => 2,
+        ]);
+        $invigilator = $this->createMaxedRegularInvigilator($college, $hall, 'مراقب لا يظهر في الصفحة', '0999111101');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($college, null, null, '2026-06-01', '2026-06-01');
+
+        $this->assertSame(1, $summary['duty_increase_recommendations']['total_uncovered_duties']);
+        $this->assertSame(1, $summary['duty_increase_recommendations']['coverable_by_limit_increase']);
+        $this->assertSame([], $summary['duty_increase_recommendations']['recommendations']);
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->assertSee(__('exam.reports.observer_duty_increase_recommendation_report'))
+            ->assertSee(__('exam.actions.export_invigilator_duty_increase_recommendations_pdf'))
+            ->assertDontSee($invigilator->name);
+    }
+
+    #[Test]
+    public function duty_increase_recommendation_pdf_download_includes_full_rows(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $hall = $this->createUsedHall($college, 'قاعة توصية PDF', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => false,
+            'max_assignments_per_day' => 2,
+        ]);
+        $invigilator = $this->createMaxedRegularInvigilator($college, $hall, 'مراقب يظهر في PDF', '0999111102');
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($college, null, null, '2026-06-01', '2026-06-01', true);
+        $html = view('pdf.invigilator-duty-increase-recommendations', [
+            'summary' => $summary,
+            'systemSetting' => SystemSetting::current(),
+            'logoDataUri' => null,
+            'reportDateRange' => __('exam.fields.period').': 2026-06-01 - 2026-06-01',
+        ])->render();
+        $response = app(InvigilatorDistributionPdfService::class)
+            ->downloadDutyIncreaseRecommendations($college, null, null, '2026-06-01', '2026-06-01');
+
+        $this->assertInstanceOf(StreamedResponse::class, $response);
+        $this->assertStringContainsString('application/pdf', (string) $response->headers->get('Content-Type'));
+        $this->assertStringContainsString($invigilator->name, $html);
+        $this->assertStringContainsString(__('exam.reports.observer_duty_increase_recommendation_report'), $html);
+    }
+
+    #[Test]
+    public function large_duty_increase_recommendation_summary_does_not_return_full_rows_by_default(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => false,
+            'max_assignments_per_day' => 2,
+        ]);
+
+        foreach (range(1, 12) as $index) {
+            $hall = $this->createUsedHall($college, 'قاعة توصية كبيرة '.$index, ExamHallType::Small);
+            $this->createMaxedRegularInvigilator($college, $hall, 'مراقب توصية كبير '.$index, '09992222'.str_pad((string) $index, 2, '0', STR_PAD_LEFT));
+        }
+
+        $summary = app(InvigilatorDistributionService::class)->getSummary($college, null, null, '2026-06-01', '2026-06-01');
+        $report = $summary['duty_increase_recommendations'];
+
+        $this->assertSame(12, $report['total_uncovered_duties']);
+        $this->assertSame(12, $report['coverable_by_limit_increase']);
+        $this->assertSame(12, $report['recommended_observers_count']);
+        $this->assertSame([], $report['recommendations']);
+        $this->assertSame([], $report['unresolved']);
     }
 
     #[Test]
@@ -2156,6 +2251,33 @@ class InvigilatorDistributionTest extends TestCase
         $user->assignRole(RoleNames::SUPER_ADMIN);
 
         return $user;
+    }
+
+    protected function createMaxedRegularInvigilator(College $college, ExamHall $hall, string $name, string $phone): Invigilator
+    {
+        $invigilator = Invigilator::query()->create([
+            'college_id' => $college->id,
+            'name' => $name,
+            'phone' => $phone,
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'max_assignments' => 1,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 2,
+            'is_active' => true,
+        ]);
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $college->id,
+            'exam_date' => '2026-05-31',
+            'start_time' => '07:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $invigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+
+        return $invigilator;
     }
 
     protected function createReadyRosterForOffering(SubjectExamOffering $offering, array $students, array $overrides = []): SubjectExamRoster

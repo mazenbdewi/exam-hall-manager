@@ -292,6 +292,7 @@ return [
         'export_invigilator_pdf_by_hall' => 'تصدير PDF حسب القاعات',
         'export_invigilator_pdf_by_day' => 'تصدير PDF حسب اليوم',
         'export_invigilator_shortage_pdf' => 'تصدير تقرير المهام غير المغطاة PDF',
+        'export_invigilator_duty_increase_recommendations_pdf' => 'تحميل تقرير اقتراحات زيادة مهام المراقبين PDF',
         'export_unassigned_students_pdf' => 'تحميل تقرير الطلاب غير الموزعين PDF',
         'export_unassigned_students_excel' => 'تحميل تقرير الطلاب غير الموزعين Excel',
         'export_global_distribution_summary_pdf' => 'تحميل تقرير نتيجة التوزيع PDF',

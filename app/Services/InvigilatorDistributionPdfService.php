@@ -69,6 +69,20 @@ class InvigilatorDistributionPdfService
         );
     }
 
+    public function downloadDutyIncreaseRecommendations(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null): StreamedResponse
+    {
+        return $this->download(
+            'pdf.invigilator-duty-increase-recommendations',
+            'invigilator-duty-increase-recommendations',
+            $college,
+            $examDate,
+            $startTime,
+            $fromDate,
+            $toDate,
+            includeDutyIncreaseRecommendationDetails: true,
+        );
+    }
+
     protected function makePdf(): Mpdf
     {
         $tempDir = storage_path('app/mpdf-temp');
@@ -111,9 +125,9 @@ class InvigilatorDistributionPdfService
         return $pdf;
     }
 
-    protected function download(string $view, string $filenamePrefix, College $college, ?string $examDate, ?string $startTime, ?string $fromDate, ?string $toDate): StreamedResponse
+    protected function download(string $view, string $filenamePrefix, College $college, ?string $examDate, ?string $startTime, ?string $fromDate, ?string $toDate, bool $includeDutyIncreaseRecommendationDetails = false): StreamedResponse
     {
-        $summary = $this->distributionService->getSummary($college, $examDate, $startTime, $fromDate, $toDate);
+        $summary = $this->distributionService->getSummary($college, $examDate, $startTime, $fromDate, $toDate, $includeDutyIncreaseRecommendationDetails);
         $institution = InstitutionSettings::make();
         $html = view($view, [
             'summary' => $summary,

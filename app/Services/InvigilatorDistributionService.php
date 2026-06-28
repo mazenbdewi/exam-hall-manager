@@ -220,7 +220,7 @@ class InvigilatorDistributionService
         ];
     }
 
-    public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null): array
+    public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, bool $includeDutyIncreaseRecommendationDetails = false): array
     {
         $slots = filled($examDate) && filled($startTime)
             ? collect([['exam_date' => substr((string) $examDate, 0, 10), 'start_time' => $this->normalizeTime((string) $startTime)]])
@@ -242,7 +242,7 @@ class InvigilatorDistributionService
         $shortages = $slotSummaries->flatMap(fn (array $slot): array => $slot['shortages'])->values();
         $setting = $this->settingsForCollege($college);
         $shortageByRole = $this->shortageByRole($slotSummaries, $setting);
-        $dutyIncreaseRecommendations = $this->dutyIncreaseRecommendations($college, $slotSummaries, $setting);
+        $dutyIncreaseRecommendations = $this->dutyIncreaseRecommendations($college, $slotSummaries, $setting, $includeDutyIncreaseRecommendationDetails);
 
         return [
             'college' => $college,
@@ -1479,7 +1479,7 @@ class InvigilatorDistributionService
         );
     }
 
-    protected function dutyIncreaseRecommendations(College $college, Collection $slotSummaries, InvigilatorDistributionSetting $setting): array
+    protected function dutyIncreaseRecommendations(College $college, Collection $slotSummaries, InvigilatorDistributionSetting $setting, bool $includeDetails = true): array
     {
         $shortageUnits = $slotSummaries
             ->flatMap(fn (array $slot): array => $slot['shortages'] ?? [])
@@ -1632,69 +1632,83 @@ class InvigilatorDistributionService
 
             $recommended[$selectedId] ??= [
                 'invigilator_id' => $selectedId,
-                'name' => $selected->name,
-                'observer_type' => $selected->invigilation_role?->label(),
-                'eligible_roles' => collect($selected->eligibleRoleValues())
-                    ->reject(fn (string $role): bool => $role === InvigilationRole::Reserve->value)
-                    ->map(fn (string $role): string => __("exam.invigilation_roles.{$role}"))
-                    ->implode('، '),
                 'current_assigned_duties' => $currentAssigned,
                 'current_max_duties' => $currentMax,
                 'suggested_new_max_duties' => $currentMax,
                 'suggested_additional_duties' => 0,
-                'reason' => __('exam.reports.duty_increase_recommendation_reason'),
-                'related_slots' => [],
-                'related_roles' => [],
             ];
+
+            if ($includeDetails && ! isset($recommended[$selectedId]['name'])) {
+                $recommended[$selectedId] += [
+                    'name' => $selected->name,
+                    'observer_type' => $selected->invigilation_role?->label(),
+                    'eligible_roles' => collect($selected->eligibleRoleValues())
+                        ->reject(fn (string $role): bool => $role === InvigilationRole::Reserve->value)
+                        ->map(fn (string $role): string => __("exam.invigilation_roles.{$role}"))
+                        ->implode('، '),
+                    'reason' => __('exam.reports.duty_increase_recommendation_reason'),
+                    'related_slots' => [],
+                    'related_roles' => [],
+                ];
+            }
 
             $recommended[$selectedId]['suggested_additional_duties']++;
             $recommended[$selectedId]['suggested_new_max_duties'] = $currentMax + $recommended[$selectedId]['suggested_additional_duties'];
-            $recommended[$selectedId]['related_slots'][] = $period;
-            $recommended[$selectedId]['related_roles'][] = $unit['role_label'];
+
+            if ($includeDetails) {
+                $recommended[$selectedId]['related_slots'][] = $period;
+                $recommended[$selectedId]['related_roles'][] = $unit['role_label'];
+            }
+
             $recommendedSlotKeys[$selectedId][$slotKey] = true;
             $recommendedDayCounts[$selectedId][$unit['exam_date']] = (int) ($recommendedDayCounts[$selectedId][$unit['exam_date']] ?? 0) + 1;
         }
 
-        $recommendations = collect($recommended)
-            ->map(function (array $item): array {
-                $item['related_slots'] = array_values(array_unique($item['related_slots']));
-                $item['related_roles'] = array_values(array_unique($item['related_roles']));
+        $recommendedCollection = collect($recommended);
+        $recommendations = $includeDetails
+            ? $recommendedCollection
+                ->map(function (array $item): array {
+                    $item['related_slots'] = array_values(array_unique($item['related_slots'] ?? []));
+                    $item['related_roles'] = array_values(array_unique($item['related_roles'] ?? []));
 
-                return $item;
-            })
-            ->sortBy([['suggested_additional_duties', 'desc'], ['current_assigned_duties', 'asc'], ['name', 'asc']])
-            ->values()
-            ->all();
-        $coverable = (int) collect($recommendations)->sum('suggested_additional_duties');
+                    return $item;
+                })
+                ->sortBy([['suggested_additional_duties', 'desc'], ['current_assigned_duties', 'asc'], ['name', 'asc']])
+                ->values()
+                ->all()
+            : [];
+        $coverable = (int) $recommendedCollection->sum('suggested_additional_duties');
 
         return [
             'total_uncovered_duties' => $totalUncoveredDuties,
             'coverable_by_limit_increase' => $coverable,
             'requires_new_observers' => max(0, $totalUncoveredDuties - $coverable),
-            'recommended_observers_count' => count($recommendations),
-            'max_suggested_increase_per_observer' => (int) collect($recommendations)->max('suggested_additional_duties'),
+            'recommended_observers_count' => $recommendedCollection->count(),
+            'max_suggested_increase_per_observer' => (int) $recommendedCollection->max('suggested_additional_duties'),
             'recommendations' => $recommendations,
-            'unresolved' => collect($unresolved)
-                ->groupBy(fn (array $item): string => implode('|', [
-                    $item['exam_date'],
-                    $item['start_time'],
-                    $item['role'],
-                    $item['reason'],
-                ]))
-                ->map(function (Collection $items): array {
-                    $first = $items->first();
+            'unresolved' => $includeDetails
+                ? collect($unresolved)
+                    ->groupBy(fn (array $item): string => implode('|', [
+                        $item['exam_date'],
+                        $item['start_time'],
+                        $item['role'],
+                        $item['reason'],
+                    ]))
+                    ->map(function (Collection $items): array {
+                        $first = $items->first();
 
-                    return [
-                        'exam_date' => $first['exam_date'],
-                        'start_time' => $first['start_time'],
-                        'role' => $first['role'],
-                        'role_label' => $first['role_label'],
-                        'shortage_count' => $items->count(),
-                        'reason' => $first['reason'],
-                    ];
-                })
-                ->values()
-                ->all(),
+                        return [
+                            'exam_date' => $first['exam_date'],
+                            'start_time' => $first['start_time'],
+                            'role' => $first['role'],
+                            'role_label' => $first['role_label'],
+                            'shortage_count' => $items->count(),
+                            'reason' => $first['reason'],
+                        ];
+                    })
+                    ->values()
+                    ->all()
+                : [],
         ];
     }
 

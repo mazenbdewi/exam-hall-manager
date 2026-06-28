@@ -310,6 +310,43 @@ class InvigilatorDistribution extends Page
         return app(InvigilatorDistributionPdfService::class)->downloadShortage($college, ...$this->exportFilters());
     }
 
+    public function exportDutyIncreaseRecommendationsPdf(): StreamedResponse|Response|null
+    {
+        if (! (ExamCollegeScope::isSuperAdmin() || static::userCan('view_invigilator_shortage_report') || $this->canExportDistribution())) {
+            abort(403);
+        }
+
+        $college = $this->selectedCollege();
+
+        if (! $college) {
+            return null;
+        }
+
+        $report = $this->getSummaryData()['duty_increase_recommendations'] ?? [];
+
+        if ((int) ($report['total_uncovered_duties'] ?? 0) <= 0) {
+            Notification::make()
+                ->success()
+                ->title(__('exam.notifications.no_invigilator_shortage'))
+                ->send();
+
+            return null;
+        }
+
+        app(AuditLogService::class)->log(
+            action: 'export.pdf',
+            module: 'exports',
+            description: 'تصدير تقرير',
+            metadata: [
+                'report_type' => 'invigilator_duty_increase_recommendations',
+                'faculty_id' => $college->getKey(),
+                'date_range' => collect([$this->from_date, $this->to_date])->filter()->implode(' - '),
+            ],
+        );
+
+        return app(InvigilatorDistributionPdfService::class)->downloadDutyIncreaseRecommendations($college, ...$this->exportFilters());
+    }
+
     public function getSummaryData(): array
     {
         if ($this->cachedSummary !== null) {

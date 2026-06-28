@@ -236,7 +236,12 @@
         @php($dutyIncreaseReport = $summary['duty_increase_recommendations'] ?? [])
         @if ((int) ($dutyIncreaseReport['total_uncovered_duties'] ?? 0) > 0)
             <div class="rounded-lg border border-primary-200 bg-white p-4 shadow-sm dark:border-primary-500/20 dark:bg-gray-900">
-                <h2 class="text-base font-semibold text-gray-950 dark:text-white">{{ __('exam.reports.observer_duty_increase_recommendation_report') }}</h2>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h2 class="text-base font-semibold text-gray-950 dark:text-white">{{ __('exam.reports.observer_duty_increase_recommendation_report') }}</h2>
+                    <x-filament::button size="sm" color="primary" icon="heroicon-o-document-arrow-down" wire:click="exportDutyIncreaseRecommendationsPdf">
+                        {{ __('exam.actions.export_invigilator_duty_increase_recommendations_pdf') }}
+                    </x-filament::button>
+                </div>
                 <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                     @foreach ([
                         __('exam.fields.missing_assignments_count') => $dutyIncreaseReport['total_uncovered_duties'] ?? 0,
@@ -251,68 +256,6 @@
                         </div>
                     @endforeach
                 </div>
-
-                <div class="mt-4 overflow-x-auto">
-                    <table class="w-full min-w-[980px] text-sm">
-                        <thead>
-                            <tr class="border-b border-gray-200 text-gray-700 dark:border-white/10 dark:text-gray-200">
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.invigilator_name') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.invigilation_role') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.eligible_roles') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.current_duties') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.current_duty_limit') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.suggested_duty_limit') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.suggested_additional_duties') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.affected_period') }}</th>
-                                <th class="px-3 py-2 text-right">{{ __('exam.fields.reason') }}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse (($dutyIncreaseReport['recommendations'] ?? []) as $recommendation)
-                                <tr class="border-b border-gray-100 last:border-0 dark:border-white/5">
-                                    <td class="px-3 py-2 font-medium">{{ $recommendation['name'] }}</td>
-                                    <td class="px-3 py-2">{{ $recommendation['observer_type'] }}</td>
-                                    <td class="px-3 py-2">{{ $recommendation['eligible_roles'] }}</td>
-                                    <td class="px-3 py-2">{{ $recommendation['current_assigned_duties'] }}</td>
-                                    <td class="px-3 py-2">{{ $recommendation['current_max_duties'] }}</td>
-                                    <td class="px-3 py-2 font-semibold">{{ $recommendation['suggested_new_max_duties'] }}</td>
-                                    <td class="px-3 py-2 font-semibold">{{ $recommendation['suggested_additional_duties'] }}</td>
-                                    <td class="px-3 py-2">{{ implode('، ', $recommendation['related_slots'] ?? []) }}</td>
-                                    <td class="px-3 py-2">{{ $recommendation['reason'] }}</td>
-                                </tr>
-                            @empty
-                                <tr><td colspan="9" class="px-3 py-3 text-gray-500">{{ __('exam.reports.duty_increase_blocked_by_conflicts_or_daily_limits') }}</td></tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
-
-                @if (! empty($dutyIncreaseReport['unresolved'] ?? []))
-                    <div class="mt-4 overflow-x-auto">
-                        <table class="w-full min-w-[720px] text-sm">
-                            <thead>
-                                <tr class="border-b border-gray-200 text-gray-700 dark:border-white/10 dark:text-gray-200">
-                                    <th class="px-3 py-2 text-right">{{ __('exam.fields.exam_date') }}</th>
-                                    <th class="px-3 py-2 text-right">{{ __('exam.fields.exam_start_time') }}</th>
-                                    <th class="px-3 py-2 text-right">{{ __('exam.fields.invigilation_role') }}</th>
-                                    <th class="px-3 py-2 text-right">{{ __('exam.fields.missing_assignments_count') }}</th>
-                                    <th class="px-3 py-2 text-right">{{ __('exam.fields.reason') }}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach ($dutyIncreaseReport['unresolved'] as $unresolved)
-                                    <tr class="border-b border-gray-100 last:border-0 dark:border-white/5">
-                                        <td class="px-3 py-2">{{ $unresolved['exam_date'] }}</td>
-                                        <td class="px-3 py-2">{{ $unresolved['start_time'] }}</td>
-                                        <td class="px-3 py-2">{{ $unresolved['role_label'] }}</td>
-                                        <td class="px-3 py-2 font-semibold">{{ $unresolved['shortage_count'] }}</td>
-                                        <td class="px-3 py-2">{{ $unresolved['reason'] }}</td>
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                @endif
             </div>
         @endif
 

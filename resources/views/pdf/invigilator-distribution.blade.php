@@ -114,54 +114,6 @@
                     @endforeach
                 </tbody>
             </table>
-            @php($dutyIncreaseReport = $summary['duty_increase_recommendations'] ?? [])
-            @if ((int) ($dutyIncreaseReport['total_uncovered_duties'] ?? 0) > 0)
-                <div class="section-title">{{ __('exam.reports.observer_duty_increase_recommendation_report') }}</div>
-                <table>
-                    <tbody>
-                        <tr>
-                            <th>{{ __('exam.fields.missing_assignments_count') }}</th>
-                            <td>{{ $dutyIncreaseReport['total_uncovered_duties'] ?? 0 }}</td>
-                            <th>{{ __('exam.reports.duties_coverable_by_current_observer_limit_increase') }}</th>
-                            <td>{{ $dutyIncreaseReport['coverable_by_limit_increase'] ?? 0 }}</td>
-                        </tr>
-                        <tr>
-                            <th>{{ __('exam.reports.duties_requiring_new_observers') }}</th>
-                            <td>{{ $dutyIncreaseReport['requires_new_observers'] ?? 0 }}</td>
-                            <th>{{ __('exam.reports.recommended_observers_to_increase') }}</th>
-                            <td>{{ $dutyIncreaseReport['recommended_observers_count'] ?? 0 }}</td>
-                        </tr>
-                    </tbody>
-                </table>
-                <table style="margin-top: 8px;">
-                    <thead>
-                        <tr>
-                            <th>{{ __('exam.fields.invigilator_name') }}</th>
-                            <th>{{ __('exam.fields.invigilation_role') }}</th>
-                            <th>{{ __('exam.fields.current_duties') }}</th>
-                            <th>{{ __('exam.fields.current_duty_limit') }}</th>
-                            <th>{{ __('exam.fields.suggested_duty_limit') }}</th>
-                            <th>{{ __('exam.fields.suggested_additional_duties') }}</th>
-                            <th>{{ __('exam.fields.affected_period') }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @forelse (($dutyIncreaseReport['recommendations'] ?? []) as $recommendation)
-                            <tr>
-                                <td>{{ $recommendation['name'] }}</td>
-                                <td>{{ $recommendation['observer_type'] }}</td>
-                                <td>{{ $recommendation['current_assigned_duties'] }}</td>
-                                <td>{{ $recommendation['current_max_duties'] }}</td>
-                                <td>{{ $recommendation['suggested_new_max_duties'] }}</td>
-                                <td>{{ $recommendation['suggested_additional_duties'] }}</td>
-                                <td>{{ implode('، ', $recommendation['related_slots'] ?? []) }}</td>
-                            </tr>
-                        @empty
-                            <tr><td colspan="7">{{ __('exam.reports.duty_increase_blocked_by_conflicts_or_daily_limits') }}</td></tr>
-                        @endforelse
-                    </tbody>
-                </table>
-            @endif
             <div class="section-title">{{ __('exam.reports.shortage_report') }}</div>
             <table>
                 <thead>

@@ -24,6 +24,7 @@ class InvigilatorDistributionExport implements WithMultipleSheets
             $this->startTime,
             $this->fromDate,
             $this->toDate,
+            true,
         );
 
         return [

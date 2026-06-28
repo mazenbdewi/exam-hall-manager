@@ -7,6 +7,7 @@ return array_replace_recursive($arabic, [
         'export_unassigned_students_pdf' => 'Download Unassigned Students PDF',
         'export_unassigned_students_excel' => 'Download Unassigned Students Excel',
         'export_global_distribution_summary_pdf' => 'Download Distribution Summary PDF',
+        'export_invigilator_duty_increase_recommendations_pdf' => 'Download Observer Duty Increase Recommendation PDF',
     ],
     'fields' => [
         'status' => 'Status',
