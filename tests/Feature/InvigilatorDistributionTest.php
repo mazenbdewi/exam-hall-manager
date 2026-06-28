@@ -33,6 +33,7 @@ use App\Models\SubjectExamRoster;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\ExamHallDistributionService;
+use App\Services\InvigilatorDistributionPdfService;
 use App\Services\InvigilatorDistributionService;
 use App\Support\RoleNames;
 use App\Support\ShieldPermission;
@@ -533,6 +534,27 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertStringNotContainsString('تقرير النقص في المراقبين', $html);
         $this->assertStringContainsString('قاعة نقص أولى', $html);
         $this->assertStringContainsString('قاعة نقص ثانية', $html);
+    }
+
+    #[Test]
+    public function invigilator_pdf_service_splits_large_html_before_sending_it_to_mpdf(): void
+    {
+        $service = app(InvigilatorDistributionPdfService::class);
+        $method = new \ReflectionMethod($service, 'htmlChunks');
+        $method->setAccessible(true);
+
+        $html = '<html><body><table>'
+            .str_repeat('<tr><td>سطر تقرير كبير لاختبار تقسيم HTML قبل mPDF</td></tr>', 12000)
+            .'</table></body></html>';
+
+        $chunks = $method->invoke($service, $html, 100_000);
+
+        $this->assertGreaterThan(1, count($chunks));
+        $this->assertSame($html, implode('', $chunks));
+
+        foreach (array_slice($chunks, 0, -1) as $chunk) {
+            $this->assertLessThanOrEqual(100_000, strlen($chunk));
+        }
     }
 
     #[Test]

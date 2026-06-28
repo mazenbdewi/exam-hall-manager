@@ -123,7 +123,7 @@ class InvigilatorDistributionPdfService
         ])->render();
 
         $pdf = $this->makePdf();
-        $pdf->WriteHTML($html);
+        $this->writeHtml($pdf, $html);
 
         $filename = $filenamePrefix.'-'.now()->format('Y-m-d-H-i').'.pdf';
 
@@ -132,6 +132,80 @@ class InvigilatorDistributionPdfService
             $filename,
             ['Content-Type' => 'application/pdf'],
         );
+    }
+
+    protected function writeHtml(Mpdf $pdf, string $html): void
+    {
+        $this->prepareHtmlParserLimits(strlen($html));
+
+        foreach ($this->htmlChunks($html) as $chunk) {
+            if ($chunk === '') {
+                continue;
+            }
+
+            $pdf->WriteHTML($chunk);
+        }
+    }
+
+    protected function prepareHtmlParserLimits(int $htmlLength): void
+    {
+        $backtrackLimit = max(
+            (int) ini_get('pcre.backtrack_limit'),
+            min(100_000_000, max(5_000_000, $htmlLength * 2)),
+        );
+
+        ini_set('pcre.backtrack_limit', (string) $backtrackLimit);
+        ini_set('pcre.recursion_limit', (string) max((int) ini_get('pcre.recursion_limit'), 1_000_000));
+    }
+
+    /**
+     * mPDF can fail on very large single WriteHTML() calls because PCRE parses
+     * the whole document at once. Keep the rendered report intact, but pass it
+     * in chunks that end on common block boundaries whenever possible.
+     *
+     * @return array<int, string>
+     */
+    protected function htmlChunks(string $html, int $maxLength = 500_000): array
+    {
+        if (strlen($html) <= $maxLength) {
+            return [$html];
+        }
+
+        $chunks = [];
+        $remaining = $html;
+
+        while (strlen($remaining) > $maxLength) {
+            $window = substr($remaining, 0, $maxLength);
+            $splitAt = $this->lastHtmlBoundary($window);
+
+            if ($splitAt <= 0) {
+                $splitAt = $maxLength;
+            }
+
+            $chunks[] = substr($remaining, 0, $splitAt);
+            $remaining = substr($remaining, $splitAt);
+        }
+
+        $chunks[] = $remaining;
+
+        return $chunks;
+    }
+
+    protected function lastHtmlBoundary(string $html): int
+    {
+        $lastPosition = 0;
+
+        foreach (['</tr>', '</table>', '</div>', '</p>', '</style>', '</head>'] as $boundary) {
+            $position = strripos($html, $boundary);
+
+            if ($position === false) {
+                continue;
+            }
+
+            $lastPosition = max($lastPosition, $position + strlen($boundary));
+        }
+
+        return $lastPosition;
     }
 
     protected function reportDateRange(array $summary): string
