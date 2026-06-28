@@ -767,6 +767,54 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function normal_distribution_does_not_duplicate_existing_manual_hall_slot_assignment(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $hall = $this->createUsedHall($college, 'قاعة تكليف يدوي محفوظ', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 2, 0);
+        $manualInvigilator = $this->createRegularInvigilator($college, 'مراقب يدوي محفوظ', '0999555501', 10);
+        $automaticInvigilator = $this->createRegularInvigilator($college, 'مراقب آلي إضافي', '0999555502', 10);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $college->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $manualInvigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(1, $result['assigned_count']);
+        $this->assertSame(2, InvigilatorAssignment::query()->count());
+        $this->assertDatabaseHas('invigilator_assignments', [
+            'invigilator_id' => $manualInvigilator->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+        $this->assertDatabaseHas('invigilator_assignments', [
+            'invigilator_id' => $automaticInvigilator->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+
+        $duplicateSameHallSlotInvigilators = InvigilatorAssignment::query()
+            ->select('exam_hall_id', 'exam_date', 'start_time', 'invigilator_id', DB::raw('count(*) as aggregate'))
+            ->groupBy('exam_hall_id', 'exam_date', 'start_time', 'invigilator_id')
+            ->havingRaw('count(*) > 1')
+            ->exists();
+
+        $this->assertFalse($duplicateSameHallSlotInvigilators);
+    }
+
+    #[Test]
     public function fair_distribution_button_uses_selected_date_range_and_keeps_official_distribution_unchanged(): void
     {
         $context = $this->createSlotContext();

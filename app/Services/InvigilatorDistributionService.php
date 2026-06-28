@@ -142,21 +142,25 @@ class InvigilatorDistributionService
         $dayCounts = [];
         $slotAssigned = [];
         $assignedByHallRole = [];
+        $existingAssignmentKeys = [];
 
         foreach ($existingAssignments as $assignment) {
             $invigilatorId = (int) $assignment->invigilator_id;
             $examDate = $assignment->exam_date->format('Y-m-d');
             $slotKey = $this->slotKey($examDate, $this->normalizeTime((string) $assignment->start_time));
             $hallRoleKey = $this->hallRoleKey($examDate, $this->normalizeTime((string) $assignment->start_time), (int) $assignment->exam_hall_id, $this->assignmentRoleValue($assignment));
+            $assignmentKey = $this->assignmentUniqueKey((int) $assignment->exam_hall_id, $examDate, $this->normalizeTime((string) $assignment->start_time), $invigilatorId);
 
             $totalCounts[$invigilatorId] = (int) ($totalCounts[$invigilatorId] ?? 0) + 1;
             $dayCounts[$invigilatorId][$examDate] = (int) ($dayCounts[$invigilatorId][$examDate] ?? 0) + 1;
             $slotAssigned[$slotKey][$invigilatorId] = true;
             $assignedByHallRole[$hallRoleKey] = (int) ($assignedByHallRole[$hallRoleKey] ?? 0) + 1;
+            $existingAssignmentKeys[$assignmentKey] = true;
         }
 
         $stageStartedAt = hrtime(true);
         $assignmentRows = [];
+        $plannedAssignmentKeys = [];
         $shortageRows = [];
         $slotResults = [];
         $now = now();
@@ -263,6 +267,15 @@ class InvigilatorDistributionService
                         }
 
                         $invigilatorId = (int) $invigilator->getKey();
+                        $assignmentKey = $this->assignmentUniqueKey((int) $hall->id, $examDate, $startTime, $invigilatorId);
+
+                        if (isset($existingAssignmentKeys[$assignmentKey]) || isset($plannedAssignmentKeys[$assignmentKey])) {
+                            $slotAssigned[$slotKey][$invigilatorId] = true;
+                            $index--;
+
+                            continue;
+                        }
+
                         $assignmentRows[] = [
                             'college_id' => $college->getKey(),
                             'subject_exam_offering_id' => $firstOfferingIdBySlot[$slotKey] ?? null,
@@ -278,6 +291,7 @@ class InvigilatorDistributionService
                             'created_at' => $now,
                             'updated_at' => $now,
                         ];
+                        $plannedAssignmentKeys[$assignmentKey] = true;
 
                         $totalCounts[$invigilatorId] = (int) ($totalCounts[$invigilatorId] ?? 0) + 1;
                         $dayCounts[$invigilatorId][$examDate] = (int) ($dayCounts[$invigilatorId][$examDate] ?? 0) + 1;
@@ -301,9 +315,10 @@ class InvigilatorDistributionService
         ]);
 
         $stageStartedAt = hrtime(true);
-        DB::transaction(function () use ($assignmentRows, $shortageRows): void {
+        $savedAssignmentsCount = 0;
+        DB::transaction(function () use ($assignmentRows, $shortageRows, &$savedAssignmentsCount): void {
             foreach (array_chunk($assignmentRows, 1000) as $chunk) {
-                InvigilatorAssignment::query()->insert($chunk);
+                $savedAssignmentsCount += InvigilatorAssignment::query()->insertOrIgnore($chunk);
             }
 
             foreach (array_chunk($shortageRows, 1000) as $chunk) {
@@ -322,7 +337,7 @@ class InvigilatorDistributionService
         return [
             'status' => $results->isEmpty() || $shortageCount > 0 ? 'partial' : 'success',
             'slots_count' => $results->count(),
-            'assigned_count' => count($assignmentRows),
+            'assigned_count' => $savedAssignmentsCount,
             'shortage_count' => $shortageCount,
             'message' => $results->isEmpty()
                 ? __('exam.notifications.invigilator_distribution_no_used_halls')
@@ -820,6 +835,11 @@ class InvigilatorDistributionService
     protected function hallRoleKey(string $examDate, string $startTime, int $hallId, string $role): string
     {
         return $this->slotKey($examDate, $startTime).'|'.$hallId.'|'.$role;
+    }
+
+    protected function assignmentUniqueKey(int $hallId, string $examDate, string $startTime, int $invigilatorId): string
+    {
+        return $hallId.'|'.substr($examDate, 0, 10).'|'.$this->normalizeTime($startTime).'|'.$invigilatorId;
     }
 
     protected function logDistributionTiming(string $stage, int $startedAt, array $context = []): void
@@ -2985,6 +3005,14 @@ class InvigilatorDistributionService
 
     protected function normalizeTime(string $time): string
     {
+        $time = trim($time);
+
+        if (preg_match('/^(\d{1,2}):(\d{2})(?::(\d{2}))?/', $time, $matches) === 1) {
+            return str_pad($matches[1], 2, '0', STR_PAD_LEFT)
+                .':'.$matches[2]
+                .':'.($matches[3] ?? '00');
+        }
+
         return strlen($time) === 5 ? $time.':00' : $time;
     }
 }
