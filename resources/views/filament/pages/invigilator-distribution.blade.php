@@ -15,9 +15,6 @@
             __('exam.fields.days_count') => $summary['days_count'] ?? 0,
             __('exam.fields.slots_count') => $summary['slots_count'] ?? 0,
         ];
-        $tabClasses = fn (string $tab): string => $active_tab === $tab
-            ? 'border-primary-500 bg-primary-50 text-primary-700 dark:border-primary-400 dark:bg-primary-500/10 dark:text-primary-300'
-            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-white/10 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/5';
     @endphp
 
     <div dir="rtl" class="space-y-5 text-right">
@@ -432,90 +429,5 @@
             </div>
         @endif
 
-        <div class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900">
-            <div class="mb-4 flex flex-wrap gap-2">
-                <button type="button" wire:click="$set('active_tab', 'day')" class="rounded-md border px-3 py-2 text-sm font-medium {{ $tabClasses('day') }}">{{ __('exam.tabs.by_day') }}</button>
-                <button type="button" wire:click="$set('active_tab', 'hall')" class="rounded-md border px-3 py-2 text-sm font-medium {{ $tabClasses('hall') }}">{{ __('exam.tabs.by_hall') }}</button>
-                <button type="button" wire:click="$set('active_tab', 'invigilator')" class="rounded-md border px-3 py-2 text-sm font-medium {{ $tabClasses('invigilator') }}">{{ __('exam.tabs.by_invigilator') }}</button>
-            </div>
-
-            @if ($active_tab === 'invigilator')
-                <div class="grid gap-3 lg:grid-cols-2">
-                    @forelse ($summary['by_invigilator'] ?? [] as $invigilator)
-                        <div class="rounded-lg border border-gray-200 p-3 dark:border-white/10">
-                            <div class="flex flex-wrap items-start justify-between gap-2">
-                                <div>
-                                    <div class="font-semibold text-gray-950 dark:text-white">{{ $invigilator['name'] }}</div>
-                                    <div class="text-sm text-gray-500">
-                                        {{ $invigilator['staff_category'] }} · {{ $invigilator['invigilation_role'] }}
-                                        · {{ __('exam.fields.workload_reduction_percentage_short') }}: {{ $invigilator['workload_reduction_percentage'] ?? 0 }}%
-                                    </div>
-                                </div>
-                                <span class="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-white/10 dark:text-gray-200">{{ $invigilator['assignments_count'] }}</span>
-                            </div>
-                            <div class="mt-3 space-y-2 text-sm">
-                                @foreach ($invigilator['assignments'] as $assignment)
-                                    <div class="rounded-md bg-gray-50 p-2 dark:bg-white/5">
-                                        {{ $assignment['exam_date'] }} · {{ substr((string) $assignment['start_time'], 0, 5) }}
-                                        <span class="text-gray-500">|</span>
-                                        {{ $assignment['hall_name'] }} - {{ $assignment['hall_location'] }}
-                                        <span class="text-gray-500">|</span>
-                                        {{ $assignment['role_label'] }}
-                                    </div>
-                                @endforeach
-                            </div>
-                        </div>
-                    @empty
-                        <div class="text-sm text-gray-500">{{ __('exam.helpers.no_invigilator_assignments') }}</div>
-                    @endforelse
-                </div>
-            @elseif ($active_tab === 'hall')
-                <div class="space-y-4">
-                    @forelse ($summary['slots'] ?? [] as $slot)
-                        <div class="rounded-lg border border-gray-200 p-3 dark:border-white/10">
-                            <h3 class="font-semibold text-gray-950 dark:text-white">{{ $slot['exam_date'] }} · {{ substr((string) $slot['start_time'], 0, 5) }}</h3>
-                            <div class="mt-3 grid gap-3 lg:grid-cols-2">
-                                @foreach ($slot['halls'] as $hall)
-                                    @include('filament.pages.partials.invigilator-hall-card', ['hall' => $hall])
-                                @endforeach
-                            </div>
-                        </div>
-                    @empty
-                        <div class="text-sm text-gray-500">{{ __('exam.helpers.no_invigilator_assignments') }}</div>
-                    @endforelse
-                </div>
-            @else
-                <div class="space-y-4">
-                    @forelse ($summary['by_day'] ?? [] as $day)
-                        <div class="rounded-lg border border-gray-200 p-3 dark:border-white/10">
-                            <div class="flex flex-wrap items-center justify-between gap-3">
-                                <h3 class="font-semibold text-gray-950 dark:text-white">{{ $day['exam_date'] }}</h3>
-                                <div class="text-sm text-gray-500">
-                                    {{ __('exam.fields.slots_count') }}: {{ $day['slots_count'] }}
-                                    · {{ __('exam.fields.used_halls') }}: {{ $day['halls_count'] }}
-                                    · {{ __('exam.fields.required_count') }}: {{ $day['required_count'] }}
-                                    · {{ __('exam.fields.assigned_count') }}: {{ $day['assigned_count'] }}
-                                    · {{ __('exam.fields.missing_assignments_count') }}: {{ $day['shortage_count'] }}
-                                </div>
-                            </div>
-                            <div class="mt-3 space-y-3">
-                                @foreach ($day['slots'] as $slot)
-                                    <div class="rounded-md bg-gray-50 p-3 dark:bg-white/5">
-                                        <div class="mb-2 font-medium text-gray-900 dark:text-white">{{ substr((string) $slot['start_time'], 0, 5) }}</div>
-                                        <div class="grid gap-3 lg:grid-cols-2">
-                                            @foreach ($slot['halls'] as $hall)
-                                                @include('filament.pages.partials.invigilator-hall-card', ['hall' => $hall])
-                                            @endforeach
-                                        </div>
-                                    </div>
-                                @endforeach
-                            </div>
-                        </div>
-                    @empty
-                        <div class="text-sm text-gray-500">{{ __('exam.helpers.no_invigilator_assignments') }}</div>
-                    @endforelse
-                </div>
-            @endif
-        </div>
     </div>
 </x-filament-panels::page>

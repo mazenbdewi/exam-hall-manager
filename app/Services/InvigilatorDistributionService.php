@@ -222,7 +222,7 @@ class InvigilatorDistributionService
         ];
     }
 
-    public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, bool $includeDutyIncreaseRecommendationDetails = false, bool $includeShortageDetails = true): array
+    public function getSummary(College $college, ?string $examDate = null, ?string $startTime = null, ?string $fromDate = null, ?string $toDate = null, bool $includeDutyIncreaseRecommendationDetails = false, bool $includeShortageDetails = true, bool $includeReportDetails = true): array
     {
         $slots = filled($examDate) && filled($startTime)
             ? collect([['exam_date' => substr((string) $examDate, 0, 10), 'start_time' => $this->normalizeTime((string) $startTime)]])
@@ -240,7 +240,7 @@ class InvigilatorDistributionService
             ->count();
         $reducedInvigilators = Invigilator::query()->where('college_id', $college->getKey())->where('workload_reduction_percentage', '>', 0)->count();
         $exemptInvigilators = Invigilator::query()->where('college_id', $college->getKey())->where('workload_reduction_percentage', 100)->count();
-        $assignments = $this->flattenAssignments($slotSummaries);
+        $assignments = $includeReportDetails ? $this->flattenAssignments($slotSummaries) : collect();
         $shortages = $slotSummaries->flatMap(fn (array $slot): array => $slot['shortages'])->values();
         $setting = $this->settingsForCollege($college);
         $shortageByRole = $this->shortageByRole($slotSummaries, $setting);
@@ -261,14 +261,14 @@ class InvigilatorDistributionService
             'days_count' => $slotSummaries->pluck('exam_date')->unique()->count(),
             'slots_count' => $slotSummaries->count(),
             'has_assignments' => $slotSummaries->sum('assigned_count') > 0,
-            'slots' => $slotSummaries->all(),
+            'slots' => $includeReportDetails ? $slotSummaries->all() : [],
             'shortages' => $includeShortageDetails ? $shortages->all() : [],
             'shortage_by_role' => $shortageByRole,
             'shortage_by_slot' => $this->shortageBySlot($slotSummaries),
             'duty_increase_recommendations' => $dutyIncreaseRecommendations,
             'diagnosis' => $this->diagnosis($slotSummaries, $shortageByRole),
-            'by_invigilator' => $this->groupByInvigilator($assignments),
-            'by_day' => $this->groupByDay($slotSummaries),
+            'by_invigilator' => $includeReportDetails ? $this->groupByInvigilator($assignments) : [],
+            'by_day' => $includeReportDetails ? $this->groupByDay($slotSummaries) : [],
         ];
     }
 

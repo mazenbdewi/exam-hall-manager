@@ -11,6 +11,7 @@ use App\Enums\InvigilatorAssignmentStatus;
 use App\Enums\StaffCategory;
 use App\Exports\InvigilatorsTemplateExport;
 use App\Filament\Pages\InvigilatorDistribution;
+use App\Filament\Pages\ReportsDashboard;
 use App\Filament\Resources\SubjectExamOfferings\Pages\GlobalDistributionResults;
 use App\Imports\InvigilatorsImport;
 use App\Models\AcademicYear;
@@ -557,7 +558,6 @@ class InvigilatorDistributionTest extends TestCase
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
-            ->set('active_tab', 'invigilator')
             ->assertSet('shortage_per_page', 10)
             ->assertSee(__('exam.reports.invigilator_shortage_report_title'))
             ->assertSee(__('exam.pagination.show_rows', ['count' => 10]))
@@ -589,7 +589,6 @@ class InvigilatorDistributionTest extends TestCase
             ->set('college_id', $college->id)
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
-            ->set('active_tab', 'invigilator')
             ->set('shortage_per_page', 25)
             ->assertSet('shortage_per_page', 25)
             ->assertSee('قاعة حجم 01')
@@ -604,6 +603,41 @@ class InvigilatorDistributionTest extends TestCase
             ->assertSee(__('exam.pagination.current_page', ['page' => 1, 'last' => 2]))
             ->assertSee('قاعة حجم 01')
             ->assertDontSee('قاعة حجم 26');
+    }
+
+    #[Test]
+    public function invigilator_distribution_page_does_not_render_heavy_report_preview_tabs(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createUsedHall($college, 'قاعة تقرير تفصيلي لا تظهر', ExamHallType::Small);
+        $this->createRegularInvigilator($college, 'مراقب تقرير تفصيلي لا يظهر', '0999777701');
+        app(InvigilatorDistributionService::class)->distributeForSlot($college, '2026-06-01', '09:00:00');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        $component = Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->assertSee('عرض التقارير والطباعة')
+            ->assertDontSee(__('exam.tabs.by_day'))
+            ->assertDontSee(__('exam.tabs.by_hall'))
+            ->assertDontSee(__('exam.tabs.by_invigilator'))
+            ->assertDontSee('مراقب تقرير تفصيلي لا يظهر');
+
+        $summary = $component->instance()->getSummaryData();
+
+        $this->assertSame([], $summary['slots']);
+        $this->assertSame([], $summary['by_day']);
+        $this->assertSame([], $summary['by_invigilator']);
+        $this->assertSame(ReportsDashboard::getUrl(), $component->instance()->reportsDashboardUrl());
+
+        Livewire::actingAs($user)
+            ->test(ReportsDashboard::class)
+            ->assertOk();
     }
 
     #[Test]

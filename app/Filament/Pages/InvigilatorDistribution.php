@@ -47,8 +47,6 @@ class InvigilatorDistribution extends Page
 
     public bool $readiness_confirmed = false;
 
-    public string $active_tab = 'day';
-
     public int $shortage_page = 1;
 
     public int $shortage_per_page = 10;
@@ -531,6 +529,7 @@ class InvigilatorDistribution extends Page
             $fromDate,
             $toDate,
             includeShortageDetails: false,
+            includeReportDetails: false,
         );
     }
 
