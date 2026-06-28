@@ -10,6 +10,7 @@ use App\Enums\InvigilationRole;
 use App\Enums\InvigilatorAssignmentStatus;
 use App\Enums\StaffCategory;
 use App\Exports\InvigilatorsTemplateExport;
+use App\Filament\Pages\InvigilatorDistribution;
 use App\Filament\Resources\SubjectExamOfferings\Pages\GlobalDistributionResults;
 use App\Imports\InvigilatorsImport;
 use App\Models\AcademicYear;
@@ -1168,6 +1169,94 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function invigilator_distribution_page_enables_button_when_only_student_distribution_warning_exists(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $offering = $context['offering'];
+
+        foreach (range(1, 8) as $index) {
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $offering->id,
+                'student_number' => '2026-LW-WARN-'.$index,
+                'full_name' => 'طالب '.$index,
+                'student_type' => $index <= 6 ? ExamStudentType::Regular->value : ExamStudentType::Carry->value,
+            ]);
+        }
+
+        ExamHall::query()->create([
+            'college_id' => $college->id,
+            'name' => 'قاعة خلط غير مانع',
+            'location' => 'المبنى الأول',
+            'capacity' => 8,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $college->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+            separateCarryStudents: true,
+        );
+
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createInvigilators($college, InvigilationRole::Regular, 1);
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        $component = Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->assertSee(__('exam.global_hall_distribution.success_with_warnings_title'))
+            ->assertSee(__('exam.global_hall_distribution.success_with_warnings_body'));
+
+        $this->assertFalse($component->instance()->canRunDistribution());
+        $this->assertContains(__('exam.readiness.reasons.confirmation_missing'), $component->instance()->distributionDisabledReasons());
+
+        $component->set('readiness_confirmed', true);
+
+        $this->assertTrue($component->instance()->canRunDistribution());
+        $this->assertNotContains(__('exam.readiness.reasons.confirmation_missing'), $component->instance()->distributionDisabledReasons());
+
+        $component->call('runDistribution');
+
+        $this->assertSame(1, InvigilatorAssignment::query()->count());
+    }
+
+    #[Test]
+    public function invigilator_distribution_page_uses_real_blocking_reason_after_confirmation(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+
+        ExamStudent::query()->create([
+            'subject_exam_offering_id' => $context['offering']->id,
+            'student_number' => '2026-BLOCK-1',
+            'full_name' => 'طالب غير موزع',
+            'student_type' => ExamStudentType::Regular->value,
+        ]);
+
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        $component = Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->set('readiness_confirmed', true);
+
+        $this->assertFalse($component->instance()->canRunDistribution());
+        $this->assertContains(__('exam.readiness.reasons.unassigned_students_block_invigilators'), $component->instance()->distributionDisabledReasons());
+        $this->assertNotContains(__('exam.readiness.reasons.confirmation_missing'), $component->instance()->distributionDisabledReasons());
+    }
+
+    #[Test]
     public function it_distributes_students_globally_by_college_and_groups_same_time_offerings(): void
     {
         $context = $this->createSlotContext();
@@ -2058,6 +2147,15 @@ class InvigilatorDistributionTest extends TestCase
         ]);
 
         return compact('college', 'offering');
+    }
+
+    protected function createSuperAdminUser(): User
+    {
+        $user = User::factory()->create();
+        Role::findOrCreate(RoleNames::SUPER_ADMIN, 'web');
+        $user->assignRole(RoleNames::SUPER_ADMIN);
+
+        return $user;
     }
 
     protected function createReadyRosterForOffering(SubjectExamOffering $offering, array $students, array $overrides = []): SubjectExamRoster

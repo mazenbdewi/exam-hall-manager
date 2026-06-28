@@ -118,9 +118,13 @@ class InvigilatorDistribution extends Page
         $readiness = $this->getReadinessData();
 
         if (! $readiness['is_ready'] || ! $this->readiness_confirmed) {
+            $blockingMessage = ! ($readiness['is_ready'] ?? false)
+                ? ($readiness['blocking_message'] ?? __('exam.readiness.reasons.student_distribution_missing'))
+                : __('exam.readiness.reasons.confirmation_missing');
+
             Notification::make()
                 ->title(__('exam.notifications.invigilator_distribution_blocked'))
-                ->body($readiness['blocking_message'] ?? __('exam.readiness.reasons.student_distribution_missing'))
+                ->body($blockingMessage)
                 ->danger()
                 ->persistent()
                 ->send();
@@ -134,7 +138,7 @@ class InvigilatorDistribution extends Page
                     'from_date' => $this->from_date,
                     'to_date' => $this->to_date,
                     'status' => 'blocked',
-                    'message' => $readiness['blocking_message'] ?? null,
+                    'message' => $blockingMessage,
                 ],
                 status: 'failed',
             );

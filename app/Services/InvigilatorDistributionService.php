@@ -13,6 +13,7 @@ use App\Models\InvigilatorAssignment;
 use App\Models\InvigilatorDistributionSetting;
 use App\Models\InvigilatorHallRequirement;
 use App\Models\InvigilatorUnassignedRequirement;
+use App\Models\StudentDistributionRun;
 use App\Models\SubjectExamOffering;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -351,6 +352,7 @@ class InvigilatorDistributionService
         $isReady = $incompleteSlots->isEmpty()
             && $usedHallsCount > 0
             && $hallsNeedingInvigilatorsCount > 0;
+        $warnings = $this->studentDistributionNonBlockingWarnings($college, $fromDate, $toDate);
 
         return [
             'is_ready' => $isReady,
@@ -371,6 +373,9 @@ class InvigilatorDistributionService
             'assigned_students_count' => (int) $slots->sum('assigned_students_count'),
             'unassigned_students_count' => $unassignedStudentsCount,
             'incomplete_slots_count' => $incompleteSlots->count(),
+            'has_non_blocking_warnings' => $warnings !== [],
+            'warnings' => $warnings,
+            'warning_message' => $warnings === [] ? null : __('exam.global_hall_distribution.success_with_warnings_body'),
             'slots' => $slots->all(),
             'incomplete_slots' => $incompleteSlots->all(),
         ];
@@ -512,9 +517,51 @@ class InvigilatorDistributionService
             'assigned_students_count' => 0,
             'unassigned_students_count' => 0,
             'incomplete_slots_count' => 0,
+            'has_non_blocking_warnings' => false,
+            'warnings' => [],
+            'warning_message' => null,
             'slots' => [],
             'incomplete_slots' => [],
         ];
+    }
+
+    protected function studentDistributionNonBlockingWarnings(College $college, ?string $fromDate, ?string $toDate): array
+    {
+        if (! $fromDate || ! $toDate) {
+            return [];
+        }
+
+        $run = StudentDistributionRun::query()
+            ->where('college_id', $college->getKey())
+            ->whereDate('from_date', '<=', $fromDate)
+            ->whereDate('to_date', '>=', $toDate)
+            ->latest('executed_at')
+            ->latest('id')
+            ->first();
+
+        if (! $run || (int) $run->unassigned_students > 0 || (int) $run->capacity_shortage > 0 || (int) $run->used_halls <= 0) {
+            return [];
+        }
+
+        $summary = $run->summary_json ?? [];
+        $warnings = collect($summary['warnings'] ?? [])
+            ->merge($summary['warnings_by_slot'] ?? [])
+            ->filter(function (array $warning) use ($fromDate, $toDate): bool {
+                $date = substr((string) ($warning['exam_date'] ?? ''), 0, 10);
+
+                return filled($date) && $date >= $fromDate && $date <= $toDate;
+            })
+            ->values();
+
+        if ($warnings->isEmpty() && (int) ($summary['carry_regular_mixing_cases_count'] ?? 0) <= 0) {
+            return [];
+        }
+
+        return [[
+            'type' => 'carry_regular_mixed_due_to_capacity',
+            'message' => __('exam.global_hall_distribution.success_with_warnings_body'),
+            'blocks_invigilator_distribution' => false,
+        ]];
     }
 
     protected function readinessBlockingMessage(bool $hasOfferings, int $incompleteSlotsCount, int $unassignedStudentsCount, int $usedHallsCount, int $hallsNeedingInvigilatorsCount): string

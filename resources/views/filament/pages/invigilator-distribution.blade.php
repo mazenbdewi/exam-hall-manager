@@ -114,6 +114,13 @@
                     <div class="mt-2">{{ __('exam.readiness.fix_helper') }}</div>
                 </div>
             @endif
+
+            @if ($readiness['has_non_blocking_warnings'] ?? false)
+                <div class="mt-4 rounded-md border border-warning-300 bg-warning-50 p-3 text-sm leading-6 text-warning-900 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-100">
+                    <div class="font-semibold">{{ __('exam.global_hall_distribution.success_with_warnings_title') }}</div>
+                    <div class="mt-1">{{ $readiness['warning_message'] ?? __('exam.global_hall_distribution.success_with_warnings_body') }}</div>
+                </div>
+            @endif
         </div>
 
         <div class="rounded-lg border border-warning-200 bg-warning-50 p-4 text-warning-900 shadow-sm dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
