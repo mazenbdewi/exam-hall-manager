@@ -47,6 +47,7 @@ use Livewire\Livewire;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Facades\Excel;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -251,7 +252,7 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame('لا', $export->collection()->first()[8]);
         $this->assertSame('متوازن', $export->collection()->first()[9]);
         $this->assertSame(
-            ['C' => \PhpOffice\PhpSpreadsheet\Style\NumberFormat::FORMAT_TEXT],
+            ['C' => NumberFormat::FORMAT_TEXT],
             $export->columnFormats(),
         );
     }
@@ -585,6 +586,116 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame($hall->id, $assignment?->exam_hall_id);
         $this->assertSame(InvigilationRole::Secretary, $assignment?->invigilation_role);
         $this->assertStringContainsString('تم استخدام مراقب بديل', (string) $assignment?->notes);
+    }
+
+    #[Test]
+    public function reserve_invigilator_is_not_assigned_to_active_hall_role_even_if_eligible_roles_include_it(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة لا تقبل الاحتياط كرئيس', ExamHallType::Large);
+
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $context['college']->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'allow_role_fallback' => true,
+            'max_assignments_per_day' => 3,
+            'distribution_pattern' => 'balanced',
+            'day_preference' => 'balanced',
+        ]);
+
+        $this->createRequirement($context['college'], ExamHallType::Large, 1, 0, 0, 0);
+
+        Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مراقب احتياط غير صالح كرئيس',
+            'phone' => '0988111101',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Reserve->value,
+            'eligible_roles' => [InvigilationRole::Reserve->value, InvigilationRole::HallHead->value],
+            'is_active' => true,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(0, InvigilatorAssignment::query()->count());
+        $this->assertDatabaseHas('invigilator_unassigned_requirements', [
+            'exam_hall_id' => $hall->id,
+            'invigilation_role' => InvigilationRole::HallHead->value,
+            'shortage_count' => 1,
+        ]);
+    }
+
+    #[Test]
+    public function reserve_hall_requirements_are_reported_as_shortage_without_linking_reserve_to_hall(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة احتياط', ExamHallType::Large);
+        $this->createRequirement($context['college'], ExamHallType::Large, 0, 0, 0, 1);
+        $this->createInvigilators($context['college'], InvigilationRole::Reserve, 1);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(0, InvigilatorAssignment::query()->count());
+        $this->assertDatabaseHas('invigilator_unassigned_requirements', [
+            'exam_hall_id' => $hall->id,
+            'invigilation_role' => InvigilationRole::Reserve->value,
+            'required_count' => 1,
+            'assigned_count' => 0,
+            'shortage_count' => 1,
+            'reason' => 'لا يتم ربط مراقبي الاحتياط بالقاعات في التوزيع الآلي. يجب تحويل المراقب إلى دور فعال قبل استخدامه لتغطية نقص.',
+        ]);
+    }
+
+    #[Test]
+    public function final_validation_blocks_saving_when_existing_manual_assignment_uses_reserve_as_active_role(): void
+    {
+        $context = $this->createSlotContext();
+        $hall = $this->createUsedHall($context['college'], 'قاعة فيها تكليف يدوي غير صالح', ExamHallType::Small);
+        $this->createRequirement($context['college'], ExamHallType::Small, 1, 0, 1, 0);
+
+        $reserve = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'احتياط يدوي',
+            'phone' => '0988111102',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Reserve->value,
+            'is_active' => true,
+        ]);
+
+        $regular = Invigilator::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مراقب آلي صالح',
+            'phone' => '0988111103',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'is_active' => true,
+        ]);
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $context['college']->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $reserve->id,
+            'invigilation_role' => InvigilationRole::HallHead->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForSlot($context['college'], '2026-06-01', '09:00:00');
+
+        $this->assertSame('danger', $result['status']);
+        $this->assertStringContainsString('لا يمكن تكليف مراقب الاحتياط', $result['message']);
+        $this->assertDatabaseHas('invigilator_assignments', [
+            'invigilator_id' => $reserve->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+        $this->assertDatabaseMissing('invigilator_assignments', [
+            'invigilator_id' => $regular->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
     }
 
     #[Test]

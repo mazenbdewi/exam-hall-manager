@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
 class InvigilatorDistributionService
 {
@@ -85,93 +86,125 @@ class InvigilatorDistributionService
         $assignedCount = 0;
         $shortageCount = 0;
 
-        DB::transaction(function () use (
-            $college,
-            $examDate,
-            $startTime,
-            $setting,
-            $firstOffering,
-            $usedHalls,
-            $requirementsByHallType,
-            $overwriteManual,
-            &$assignedCount,
-            &$shortageCount,
-        ): void {
-            $this->clearSlot($college, $examDate, $startTime, $overwriteManual);
+        try {
+            DB::transaction(function () use (
+                $college,
+                $examDate,
+                $startTime,
+                $setting,
+                $firstOffering,
+                $usedHalls,
+                $requirementsByHallType,
+                $overwriteManual,
+                &$assignedCount,
+                &$shortageCount,
+            ): void {
+                $this->clearSlot($college, $examDate, $startTime, $overwriteManual);
 
-            $slotAssignedIds = InvigilatorAssignment::query()
-                ->where('college_id', $college->getKey())
-                ->whereDate('exam_date', $examDate)
-                ->whereTime('start_time', $startTime)
-                ->pluck('invigilator_id')
-                ->all();
+                $slotAssignedIds = InvigilatorAssignment::query()
+                    ->where('college_id', $college->getKey())
+                    ->whereDate('exam_date', $examDate)
+                    ->whereTime('start_time', $startTime)
+                    ->pluck('invigilator_id')
+                    ->all();
 
-            foreach ($usedHalls as $hallAssignment) {
-                $hall = $hallAssignment->examHall;
-                $hallType = $hall->hall_type?->value ?? (string) $hall->hall_type;
-                $requirement = $requirementsByHallType->get($hallType);
+                foreach ($usedHalls as $hallAssignment) {
+                    $hall = $hallAssignment->examHall;
+                    $hallType = $hall->hall_type?->value ?? (string) $hall->hall_type;
+                    $requirement = $requirementsByHallType->get($hallType);
 
-                if (! $requirement) {
-                    $this->recordShortage($college, $examDate, $startTime, $hall->id, InvigilationRole::Regular, 1, 0, __('exam.invigilator_shortage_reasons.missing_hall_requirement'));
+                    if (! $requirement) {
+                        $this->recordShortage($college, $examDate, $startTime, $hall->id, InvigilationRole::Regular, 1, 0, __('exam.invigilator_shortage_reasons.missing_hall_requirement'));
 
-                    continue;
-                }
+                        continue;
+                    }
 
-                foreach ($this->roleRequirements($requirement) as $role => $count) {
-                    $requiredRole = InvigilationRole::from($role);
-                    $assignedForRole = InvigilatorAssignment::query()
-                        ->where('college_id', $college->getKey())
-                        ->whereDate('exam_date', $examDate)
-                        ->whereTime('start_time', $startTime)
-                        ->where('exam_hall_id', $hall->getKey())
-                        ->where('invigilation_role', $role)
-                        ->count();
+                    foreach ($this->roleRequirements($requirement) as $role => $count) {
+                        $requiredRole = InvigilationRole::from($role);
 
-                    for ($index = $assignedForRole; $index < $count; $index++) {
-                        $selection = $this->selectInvigilatorForRequiredRole($college, $requiredRole, $examDate, $startTime, $setting, $slotAssignedIds);
-                        $invigilator = $selection['invigilator'];
-
-                        if (! $invigilator) {
+                        if ($requiredRole === InvigilationRole::Reserve) {
                             continue;
                         }
 
-                        InvigilatorAssignment::query()->create([
-                            'college_id' => $college->getKey(),
-                            'subject_exam_offering_id' => $firstOffering?->getKey(),
-                            'exam_date' => $examDate,
-                            'start_time' => $startTime,
-                            'end_time' => null,
-                            'exam_hall_id' => $hall->getKey(),
-                            'invigilator_id' => $invigilator->getKey(),
-                            'invigilation_role' => $requiredRole->value,
-                            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
-                            'assigned_by' => auth()->id(),
-                            'notes' => $selection['notes'] ?? null,
-                        ]);
+                        $assignedForRole = InvigilatorAssignment::query()
+                            ->where('college_id', $college->getKey())
+                            ->whereDate('exam_date', $examDate)
+                            ->whereTime('start_time', $startTime)
+                            ->where('exam_hall_id', $hall->getKey())
+                            ->where('invigilation_role', $role)
+                            ->count();
 
-                        $slotAssignedIds[] = $invigilator->getKey();
-                        $assignedCount++;
-                        $assignedForRole++;
+                        for ($index = $assignedForRole; $index < $count; $index++) {
+                            $selection = $this->selectInvigilatorForRequiredRole($college, $requiredRole, $examDate, $startTime, $setting, $slotAssignedIds);
+                            $invigilator = $selection['invigilator'];
+
+                            if (! $invigilator) {
+                                continue;
+                            }
+
+                            $this->assertInvigilatorAssignmentIsValid($invigilator, $requiredRole, $setting);
+
+                            InvigilatorAssignment::query()->create([
+                                'college_id' => $college->getKey(),
+                                'subject_exam_offering_id' => $firstOffering?->getKey(),
+                                'exam_date' => $examDate,
+                                'start_time' => $startTime,
+                                'end_time' => null,
+                                'exam_hall_id' => $hall->getKey(),
+                                'invigilator_id' => $invigilator->getKey(),
+                                'invigilation_role' => $requiredRole->value,
+                                'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+                                'assigned_by' => auth()->id(),
+                                'notes' => $selection['notes'] ?? null,
+                            ]);
+
+                            $slotAssignedIds[] = $invigilator->getKey();
+                            $assignedCount++;
+                            $assignedForRole++;
+                        }
                     }
+
+                    $this->recordHallShortagesFromFinalCounts(
+                        college: $college,
+                        examDate: $examDate,
+                        startTime: $startTime,
+                        hallAssignment: $hallAssignment,
+                        requirement: $requirement,
+                        setting: $setting,
+                        slotAssignedIds: $slotAssignedIds,
+                    );
                 }
 
-                $this->recordHallShortagesFromFinalCounts(
-                    college: $college,
-                    examDate: $examDate,
-                    startTime: $startTime,
-                    hallAssignment: $hallAssignment,
-                    requirement: $requirement,
-                    setting: $setting,
-                    slotAssignedIds: $slotAssignedIds,
-                );
-            }
+                $validationErrors = $this->validateSlotAssignments($college, $examDate, $startTime, $usedHalls, $requirementsByHallType, $setting);
 
-            $shortageCount = InvigilatorUnassignedRequirement::query()
-                ->where('college_id', $college->getKey())
-                ->whereDate('exam_date', $examDate)
-                ->whereTime('start_time', $startTime)
-                ->sum('shortage_count');
-        });
+                if ($validationErrors !== []) {
+                    throw new RuntimeException(implode(' ', $validationErrors));
+                }
+
+                $shortageCount = InvigilatorUnassignedRequirement::query()
+                    ->where('college_id', $college->getKey())
+                    ->whereDate('exam_date', $examDate)
+                    ->whereTime('start_time', $startTime)
+                    ->sum('shortage_count');
+            });
+        } catch (RuntimeException $exception) {
+            Log::error('Invigilator distribution failed final validation.', [
+                'college_id' => $college->getKey(),
+                'exam_date' => $examDate,
+                'start_time' => $startTime,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return [
+                'status' => 'danger',
+                'exam_date' => $examDate,
+                'start_time' => $startTime,
+                'halls_count' => $usedHalls->count(),
+                'assigned_count' => 0,
+                'shortage_count' => 0,
+                'message' => $exception->getMessage(),
+            ];
+        }
 
         return [
             'status' => $shortageCount > 0 ? 'partial' : 'success',
@@ -651,7 +684,7 @@ class InvigilatorDistributionService
             ->where('is_active', true)
             ->get();
         $candidates = $activeInvigilators
-            ->filter(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
+            ->filter(fn (Invigilator $invigilator): bool => $this->invigilatorCanServeRequiredRole($invigilator, $role))
             ->values();
         $rejections = [];
         $rejectedIds = [];
@@ -681,14 +714,14 @@ class InvigilatorDistributionService
                 ->where('college_id', $college->getKey())
                 ->where('is_active', false)
                 ->get()
-                ->filter(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
+                ->filter(fn (Invigilator $invigilator): bool => $this->invigilatorCanServeRequiredRole($invigilator, $role))
                 ->count(),
             'wrong_faculty_count' => $all
-                ->filter(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
+                ->filter(fn (Invigilator $invigilator): bool => $this->invigilatorCanServeRequiredRole($invigilator, $role))
                 ->where('college_id', '!=', $college->getKey())
                 ->count(),
             'wrong_role_count' => $activeInvigilators
-                ->reject(fn (Invigilator $invigilator): bool => $invigilator->canServeAs($role))
+                ->reject(fn (Invigilator $invigilator): bool => $this->invigilatorCanServeRequiredRole($invigilator, $role))
                 ->count(),
             'candidates_found' => $candidates->count(),
             'eligible_count' => $eligible->count(),
@@ -742,6 +775,81 @@ class InvigilatorDistributionService
         return array_values(array_unique($reasons));
     }
 
+    protected function invigilatorCanServeRequiredRole(Invigilator $invigilator, InvigilationRole $role): bool
+    {
+        if ($this->invigilatorHasPrimaryReserveRole($invigilator)) {
+            return $role === InvigilationRole::Reserve;
+        }
+
+        return $role !== InvigilationRole::Reserve
+            && $invigilator->canServeAs($role);
+    }
+
+    protected function invigilatorHasPrimaryReserveRole(Invigilator $invigilator): bool
+    {
+        $primaryRole = $invigilator->invigilation_role instanceof InvigilationRole
+            ? $invigilator->invigilation_role->value
+            : (string) $invigilator->invigilation_role;
+
+        return $primaryRole === InvigilationRole::Reserve->value;
+    }
+
+    protected function assignmentRoleIsCompatible(Invigilator $invigilator, InvigilationRole $assignmentRole, InvigilatorDistributionSetting $setting): bool
+    {
+        if ($assignmentRole === InvigilationRole::Reserve || $this->invigilatorHasPrimaryReserveRole($invigilator)) {
+            return false;
+        }
+
+        if ($this->invigilatorCanServeRequiredRole($invigilator, $assignmentRole)) {
+            return true;
+        }
+
+        if (! (bool) $setting->allow_role_fallback) {
+            return false;
+        }
+
+        foreach ($this->fallbackRolesFor($assignmentRole) as $fallbackRole) {
+            if ($this->invigilatorCanServeRequiredRole($invigilator, $fallbackRole)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function assertInvigilatorAssignmentIsValid(Invigilator $invigilator, InvigilationRole $assignmentRole, InvigilatorDistributionSetting $setting): void
+    {
+        if ($this->assignmentRoleIsCompatible($invigilator, $assignmentRole, $setting)) {
+            return;
+        }
+
+        throw new RuntimeException($this->invalidAssignmentMessage($invigilator, $assignmentRole));
+    }
+
+    protected function invalidAssignmentMessage(Invigilator $invigilator, InvigilationRole $assignmentRole): string
+    {
+        if ($this->invigilatorHasPrimaryReserveRole($invigilator)) {
+            return sprintf(
+                'لا يمكن تكليف مراقب الاحتياط "%s" بدور "%s" أو ربطه بقاعة. يجب تحويله أولاً إلى دور مراقبة فعال.',
+                $invigilator->name,
+                $assignmentRole->label(),
+            );
+        }
+
+        if ($assignmentRole === InvigilationRole::Reserve) {
+            return sprintf(
+                'لا يمكن إنشاء تكليف احتياط مرتبط بقاعة للمراقب "%s". الاحتياط يبقى خارج أدوار القاعة الفعلية.',
+                $invigilator->name,
+            );
+        }
+
+        return sprintf(
+            'نوع المراقب "%s" غير متوافق مع الدور المطلوب "%s".',
+            $invigilator->name,
+            $assignmentRole->label(),
+        );
+    }
+
     protected function fallbackRolesFor(InvigilationRole $role): array
     {
         return match ($role) {
@@ -779,6 +887,21 @@ class InvigilatorDistributionService
                 continue;
             }
 
+            if ($requiredRole === InvigilationRole::Reserve) {
+                $this->recordShortage(
+                    college: $college,
+                    examDate: $examDate,
+                    startTime: $startTime,
+                    hallId: (int) $hall->id,
+                    role: $requiredRole,
+                    required: (int) $requiredCount,
+                    assigned: (int) $assignedCount,
+                    reason: 'لا يتم ربط مراقبي الاحتياط بالقاعات في التوزيع الآلي. يجب تحويل المراقب إلى دور فعال قبل استخدامه لتغطية نقص.',
+                );
+
+                continue;
+            }
+
             $diagnostics = $this->candidateDiagnostics($college, $requiredRole, $examDate, $startTime, $setting, $slotAssignedIds);
             $reason = $this->shortageReasonFromDiagnostics($requiredRole, $diagnostics);
 
@@ -804,6 +927,104 @@ class InvigilatorDistributionService
                 reason: $reason,
             );
         }
+    }
+
+    protected function validateSlotAssignments(
+        College $college,
+        string $examDate,
+        string $startTime,
+        Collection $usedHalls,
+        Collection $requirementsByHallType,
+        InvigilatorDistributionSetting $setting,
+    ): array {
+        $errors = [];
+        $assignments = InvigilatorAssignment::query()
+            ->with(['examHall', 'invigilator'])
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', $examDate)
+            ->whereTime('start_time', $startTime)
+            ->get();
+
+        foreach ($assignments as $assignment) {
+            $invigilator = $assignment->invigilator;
+            $assignmentRole = InvigilationRole::tryFrom($this->assignmentRoleValue($assignment));
+
+            if (! $invigilator || ! $assignmentRole) {
+                $errors[] = 'يوجد تكليف مراقبة غير مكتمل أو بدور غير صحيح.';
+
+                continue;
+            }
+
+            if (! $this->assignmentRoleIsCompatible($invigilator, $assignmentRole, $setting)) {
+                $errors[] = $this->invalidAssignmentMessage($invigilator, $assignmentRole);
+            }
+        }
+
+        $duplicateNames = $assignments
+            ->groupBy('invigilator_id')
+            ->filter(fn (Collection $items): bool => $items->count() > 1)
+            ->map(fn (Collection $items): string => (string) ($items->first()->invigilator?->name ?? ''))
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($duplicateNames !== []) {
+            $errors[] = 'لا يمكن تكليف المراقب نفسه أكثر من مرة في نفس الموعد: '.implode('، ', $duplicateNames).'.';
+        }
+
+        foreach ($assignments->pluck('invigilator')->filter()->unique('id') as $invigilator) {
+            $maxAssignments = $invigilator->effectiveMaxAssignments($setting->default_max_assignments_per_invigilator);
+            $totalAssignments = $this->assignmentCount($invigilator);
+
+            if ($maxAssignments <= 0 || $totalAssignments > $maxAssignments) {
+                $errors[] = sprintf('تجاوز المراقب "%s" الحد الأقصى للمراقبات.', $invigilator->name);
+            }
+
+            $dayAssignments = $this->assignmentCount($invigilator, $examDate);
+            $allowMultiplePerDay = $this->allowsMultipleAssignmentsPerDay($invigilator, $setting);
+            $dayLimit = $this->maxAssignmentsPerDay($invigilator, $setting);
+
+            if (! $allowMultiplePerDay && $dayAssignments > 1) {
+                $errors[] = sprintf('لا يسمح للمراقب "%s" بأكثر من مراقبة في اليوم نفسه.', $invigilator->name);
+            }
+
+            if ($dayLimit !== null && $dayAssignments > $dayLimit) {
+                $errors[] = sprintf('تجاوز المراقب "%s" الحد الأقصى اليومي للمراقبات.', $invigilator->name);
+            }
+        }
+
+        foreach ($usedHalls as $hallAssignment) {
+            $hall = $hallAssignment->examHall;
+            $hallType = $hall?->hall_type?->value ?? (string) $hall?->hall_type;
+            $requirement = $requirementsByHallType->get($hallType);
+
+            if (! $hall || ! $requirement || (int) $requirement->hall_head_count <= 0) {
+                continue;
+            }
+
+            $validHallHeads = $assignments
+                ->where('exam_hall_id', $hall->getKey())
+                ->filter(function (InvigilatorAssignment $assignment) use ($setting): bool {
+                    $invigilator = $assignment->invigilator;
+                    $assignmentRole = InvigilationRole::tryFrom($this->assignmentRoleValue($assignment));
+
+                    return $invigilator
+                        && $assignmentRole === InvigilationRole::HallHead
+                        && $this->assignmentRoleIsCompatible($invigilator, $assignmentRole, $setting);
+                })
+                ->count();
+
+            $assignedHallHeads = $assignments
+                ->where('exam_hall_id', $hall->getKey())
+                ->filter(fn (InvigilatorAssignment $assignment): bool => $this->assignmentRoleValue($assignment) === InvigilationRole::HallHead->value)
+                ->count();
+
+            if ($assignedHallHeads > 0 && $validHallHeads < min((int) $requirement->hall_head_count, $assignedHallHeads)) {
+                $errors[] = sprintf('القاعة "%s" تحتوي على رئيس قاعة غير صالح.', $hall->name);
+            }
+        }
+
+        return array_values(array_unique($errors));
     }
 
     protected function score(Invigilator $invigilator, string $examDate, InvigilatorDistributionSetting $setting): array
