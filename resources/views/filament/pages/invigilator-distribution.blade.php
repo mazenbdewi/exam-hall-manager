@@ -214,9 +214,6 @@
                                 تحميل تقرير مسودة التوزيع العادل PDF
                             </x-filament::button>
                         @endif
-                        <x-filament::button size="sm" tag="a" :href="$this->reportsDashboardUrl()" color="gray" icon="heroicon-o-folder-open">
-                            عرض المسودات المحفوظة
-                        </x-filament::button>
                         @if (($fairResult['draft_status'] ?? null) === 'draft' && ! empty($fairResult['draft_id']))
                             <x-filament::button size="sm" color="success" icon="heroicon-o-check" wire:click="approveFairBalancedDraft({{ (int) $fairResult['draft_id'] }})" wire:confirm="{{ __('exam.fair_draft.actions.approve') }}">
                                 اعتماد وتثبيت التوزيع

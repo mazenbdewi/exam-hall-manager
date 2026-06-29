@@ -809,6 +809,7 @@ class InvigilatorDistributionTest extends TestCase
             ->assertSee('تحميل تقرير مسودة التوزيع العادل PDF')
             ->assertSee('اعتماد وتثبيت التوزيع')
             ->assertSee('إلغاء المسودة')
+            ->assertDontSee('عرض المسودات المحفوظة')
             ->assertDontSee('مراقب نتيجة عادلة');
 
         $this->assertSame(1, InvigilatorDistributionDraft::query()->count());
