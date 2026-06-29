@@ -694,6 +694,128 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function normal_distribution_result_card_shows_full_success_summary(): void
+    {
+        config(['audit.async' => false]);
+
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createUsedHall($college, 'قاعة نتيجة ناجحة', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+        $this->createRegularInvigilator($college, 'مراقب نتيجة ناجحة', '0999888101');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->call('runDistribution')
+            ->assertSet('lastNormalDistributionResult.status_label', 'تم التوزيع بنجاح')
+            ->assertSet('lastNormalDistributionResult.total_required', 1)
+            ->assertSet('lastNormalDistributionResult.assigned_count', 1)
+            ->assertSet('lastNormalDistributionResult.uncovered_count', 0)
+            ->assertSee('نتيجة توزيع المراقبين')
+            ->assertSee('تم إسناد جميع مهام المراقبة بنجاح.')
+            ->assertSee('100%')
+            ->assertSee('عرض صفحة التقارير')
+            ->assertSee('إعادة التوزيع');
+    }
+
+    #[Test]
+    public function normal_distribution_result_card_shows_partial_shortage_summary(): void
+    {
+        config(['audit.async' => false]);
+
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createUsedHall($college, 'قاعة نتيجة جزئية', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 2, 0);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+        $this->createRegularInvigilator($college, 'مراقب نتيجة جزئية', '0999888102');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->call('runDistribution')
+            ->assertSet('lastNormalDistributionResult.status_label', 'تم التوزيع مع وجود مهام غير مغطاة')
+            ->assertSet('lastNormalDistributionResult.total_required', 2)
+            ->assertSet('lastNormalDistributionResult.assigned_count', 1)
+            ->assertSet('lastNormalDistributionResult.uncovered_count', 1)
+            ->assertSee('تم تنفيذ التوزيع، لكن بقيت بعض المهام غير مغطاة')
+            ->assertSee('تحميل تقرير المهام غير المغطاة PDF');
+    }
+
+    #[Test]
+    public function last_normal_distribution_result_is_visible_after_refresh(): void
+    {
+        config(['audit.async' => false]);
+
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createUsedHall($college, 'قاعة نتيجة محفوظة', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+        $this->createRegularInvigilator($college, 'مراقب نتيجة محفوظة', '0999888103');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->call('runDistribution');
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->assertSet('lastNormalDistributionResult.status_label', 'تم التوزيع بنجاح')
+            ->assertSee('نتيجة توزيع المراقبين')
+            ->assertSee('تم التوزيع بنجاح');
+    }
+
+    #[Test]
+    public function fair_distribution_result_card_shows_created_draft_summary_without_overwriting_official_distribution(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createUsedHall($college, 'قاعة نتيجة عادلة', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+        $this->createRegularInvigilator($college, 'مراقب نتيجة عادلة', '0999888104');
+        $user = $this->createSuperAdminUser();
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(InvigilatorDistribution::class)
+            ->set('college_id', $college->id)
+            ->set('from_date', '2026-06-01')
+            ->set('to_date', '2026-06-01')
+            ->call('createFairBalancedDraft')
+            ->assertSet('lastFairDistributionResult.status_label', 'تم إنشاء مسودة التوزيع العادل')
+            ->assertSet('lastFairDistributionResult.draft_status_label', __('exam.fair_draft.statuses.draft'))
+            ->assertSet('lastFairDistributionResult.total_duties', 1)
+            ->assertSee('نتيجة مسودة التوزيع العادل')
+            ->assertSee('مسودة')
+            ->assertSee('تحميل تقرير مسودة التوزيع العادل PDF')
+            ->assertSee('اعتماد وتثبيت التوزيع')
+            ->assertSee('إلغاء المسودة')
+            ->assertDontSee('مراقب نتيجة عادلة');
+
+        $this->assertSame(1, InvigilatorDistributionDraft::query()->count());
+        $this->assertSame(0, InvigilatorAssignment::query()->count());
+    }
+
+    #[Test]
     public function normal_distribution_uses_bulk_optimized_algorithm_for_large_date_ranges(): void
     {
         $context = $this->createSlotContext();
@@ -1086,7 +1208,8 @@ class InvigilatorDistributionTest extends TestCase
             ->set('from_date', '2026-06-01')
             ->set('to_date', '2026-06-01')
             ->assertDontSee(__('exam.fair_draft.saved_drafts'))
-            ->assertDontSee(__('exam.fair_draft.fields.draft_number').' #'.$draft->id)
+            ->assertSee('نتيجة مسودة التوزيع العادل')
+            ->assertSee(__('exam.fair_draft.fields.draft_number').' #'.$draft->id)
             ->assertDontSee('مراقب لا يظهر في الصفحة 1');
     }
 
