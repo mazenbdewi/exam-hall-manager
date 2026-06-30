@@ -409,10 +409,14 @@ class ExamHallDistributionTest extends TestCase
         $this->assertSame('partial', $result['status']);
         $this->assertSame(2, $result['assigned_students_count']);
         $this->assertSame(4, $result['unassigned_students_count']);
-        $this->assertSame('hall_type_capacity_shortage', $result['failure_details'][0]['reason_code']);
+        $this->assertSame('drawing_studio_capacity_insufficient', $result['failure_details'][0]['reason_code']);
         $this->assertSame(6, $result['failure_details'][0]['required_capacity']);
         $this->assertSame(2, $result['failure_details'][0]['available_capacity']);
+        $this->assertSame(0, $result['failure_details'][0]['usable_remaining_capacity']);
         $this->assertSame(4, $result['failure_details'][0]['capacity_shortage']);
+        $this->assertSame([
+            $result['failure_details'][0]['candidate_halls'][0]['hall_id'] => 0,
+        ], $result['failure_details'][0]['remaining_capacity_by_hall']);
         $this->assertStringContainsString('مرسم', $result['failure_details'][0]['reason_message']);
         $this->assertSame(2, $drawingOffering->studentHallAssignments()->count());
         $this->assertTrue(HallAssignment::query()
@@ -420,7 +424,7 @@ class ExamHallDistributionTest extends TestCase
             ->get()
             ->every(fn (HallAssignment $assignment): bool => (bool) $assignment->examHall?->is_drawing_studio));
         $this->assertDatabaseHas('student_distribution_run_issues', [
-            'issue_type' => 'hall_type_capacity_shortage',
+            'issue_type' => 'drawing_studio_capacity_insufficient',
             'affected_students_count' => 4,
         ]);
     }

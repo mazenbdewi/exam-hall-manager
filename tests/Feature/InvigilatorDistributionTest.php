@@ -2438,7 +2438,7 @@ class InvigilatorDistributionTest extends TestCase
         );
 
         $this->assertSame('partial', $result['status']);
-        $this->assertSame('hall_type_required_not_available', $result['failure_details'][0]['reason_code']);
+        $this->assertSame('no_drawing_studio_halls_available', $result['failure_details'][0]['reason_code']);
         $this->assertStringContainsString('مرسم', $result['failure_details'][0]['reason_message']);
         $this->assertSame(0, $result['failure_details'][0]['available_halls_count']);
     }

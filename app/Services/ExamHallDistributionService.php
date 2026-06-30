@@ -19,6 +19,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 class ExamHallDistributionService
 {
@@ -215,7 +216,17 @@ class ExamHallDistributionService
                 separateCarryStudents: $separateCarryStudents,
                 allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
             );
-            $slotStats = $this->slotDistributionStats($slotOfferings, $activeHalls, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage, $separateCarryStudents);
+            $slotStats = $this->slotDistributionStats(
+                $slotOfferings,
+                $activeHalls,
+                $collegeId,
+                $examDate,
+                $examStartTime,
+                $slotCapacity,
+                $slotCapacityShortage,
+                $separateCarryStudents,
+                $result['reason_code'] ?? null,
+            );
             $assignedStudentsCount = $slotStats['distributed_students'];
             $unassignedStudentsCount = $slotStats['unassigned_students'];
 
@@ -300,7 +311,11 @@ class ExamHallDistributionService
             ];
         }
 
-        return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall): array {
+        $distributionStage = 'assignment_planning';
+        $selectedHallsBeforeFailure = collect();
+
+        try {
+            return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall, &$distributionStage, &$selectedHallsBeforeFailure): array {
             $this->clearSlotDistribution(
                 collegeId: $slot['college_id'],
                 examDate: $slot['exam_date'],
@@ -397,6 +412,17 @@ class ExamHallDistributionService
                     continue;
                 }
 
+                $selectedHallsBeforeFailure->push([
+                    'hall_id' => $hall->getKey(),
+                    'hall_name' => $this->sanitizeString($hall->name),
+                    'capacity' => (int) $hall->capacity,
+                    'assigned_students_count' => $hallAssignedStudentsCount,
+                    'remaining_capacity' => max(0, (int) $hall->capacity - $hallAssignedStudentsCount),
+                    'subject_counts' => $subjectCounts,
+                    'is_drawing_studio' => $this->isDrawingStudio($hall),
+                ]);
+
+                $distributionStage = 'hall_assignment_insert_failed';
                 $hallAssignment = HallAssignment::query()->create([
                     'exam_hall_id' => $hall->getKey(),
                     'exam_date' => $slot['exam_date'],
@@ -415,6 +441,7 @@ class ExamHallDistributionService
                     ]);
                 }
 
+                $distributionStage = 'student_assignment_insert_failed';
                 ExamStudentHallAssignment::query()->insert(
                     collect($studentAssignmentRows)
                         ->map(fn (array $row): array => [
@@ -428,6 +455,7 @@ class ExamHallDistributionService
 
                 $assignedStudentsCount += $hallAssignedStudentsCount;
                 $usedHallsCount++;
+                $distributionStage = 'assignment_planning';
             }
 
             $unassignedStudentsCount = max(0, $totalStudents - $assignedStudentsCount);
@@ -454,7 +482,37 @@ class ExamHallDistributionService
                 'unassigned_students_count' => $unassignedStudentsCount,
                 'used_halls_count' => $usedHallsCount,
             ];
-        });
+            });
+        } catch (Throwable $exception) {
+            $reasonCode = $this->classifyDistributionException($exception, $distributionStage);
+            $this->logHallDistributionThrowable(
+                exception: $exception,
+                reasonCode: $reasonCode,
+                slot: $slot,
+                slotOfferings: $slotOfferings,
+                candidateHalls: $availableHalls,
+                selectedHalls: $selectedHallsBeforeFailure,
+                allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
+                stage: $distributionStage,
+            );
+
+            return [
+                'status' => 'danger',
+                'message' => $this->distributionFailureReasonMessage(
+                    reasonCode: $reasonCode,
+                    offering: $slotOfferings->first(),
+                    studentsCount: (int) $totalStudents,
+                    availableCapacity: (int) $availableHalls->sum('capacity'),
+                    capacityShortage: 0,
+                    suitableHallsCount: $availableHalls->count(),
+                    busyHallsCount: 0,
+                ),
+                'reason_code' => $reasonCode,
+                'assigned_students_count' => 0,
+                'unassigned_students_count' => $totalStudents,
+                'used_halls_count' => 0,
+            ];
+        }
     }
 
     protected function distributeSlotWithCarrySeparation(
@@ -1342,6 +1400,7 @@ class ExamHallDistributionService
         int $slotCapacity,
         int $slotCapacityShortage,
         bool $separateCarryStudents = false,
+        ?string $fallbackReasonCode = null,
     ): array {
         $assignmentCounts = ExamStudentHallAssignment::query()
             ->whereIn('subject_exam_offering_id', $slotOfferings->pluck('id'))
@@ -1381,6 +1440,7 @@ class ExamHallDistributionService
                 activeHalls: $activeHalls,
                 assignedStudents: $assigned,
                 unassignedStudents: $unassigned,
+                fallbackReasonCode: $fallbackReasonCode,
             );
             $issue = [
                 'exam_date' => $examDate,
@@ -1725,7 +1785,10 @@ class ExamHallDistributionService
         $suitableHalls = $this->suitableHallsForOffering($offering, $slotOfferings, $activeHalls);
         $availableCapacity = (int) $suitableHalls->sum('capacity');
         $requiredCapacity = $studentsCount;
-        $capacityShortage = max(0, $requiredCapacity - $availableCapacity);
+        $hallCapacityProfile = $this->hallCapacityProfileForOffering($offering, $suitableHalls);
+        $remainingStudents = max(0, $studentsCount - $assignedStudents);
+        $usableRemainingCapacity = (int) $hallCapacityProfile['usable_remaining_capacity'];
+        $capacityShortage = max(0, $remainingStudents - $usableRemainingCapacity);
         $busyHallsCount = $this->busyHallsCountForOffering($offering, $suitableHalls);
         $invalidCapacityHallsCount = $suitableHalls
             ->filter(fn (ExamHall $hall): bool => (int) $hall->capacity <= 0)
@@ -1744,9 +1807,11 @@ class ExamHallDistributionService
             activeHallsCount: $activeHalls->count(),
             suitableHallsCount: $suitableHalls->count(),
             availableCapacity: $availableCapacity,
+            usableRemainingCapacity: $usableRemainingCapacity,
             capacityShortage: $capacityShortage,
             invalidCapacityHallsCount: $invalidCapacityHallsCount,
             busyHallsCount: $busyHallsCount,
+            occupiedHallsCount: (int) $hallCapacityProfile['occupied_halls_count'],
             fallbackReasonCode: $fallbackReasonCode,
             rosterDiagnostics: $rosterDiagnostics,
         );
@@ -1779,10 +1844,16 @@ class ExamHallDistributionService
             'total_suitable_halls_count' => $suitableHalls->count(),
             'busy_halls_count' => $busyHallsCount,
             'effectively_available_halls_count' => max(0, $suitableHalls->count() - $busyHallsCount),
+            'occupied_halls_count' => (int) $hallCapacityProfile['occupied_halls_count'],
             'all_halls_count' => $allHallsCount,
             'inactive_halls_count' => $inactiveHallsCount,
             'invalid_capacity_halls_count' => $invalidCapacityHallsCount,
             'available_capacity' => $availableCapacity,
+            'usable_remaining_capacity' => $usableRemainingCapacity,
+            'used_capacity_in_candidate_halls' => (int) $hallCapacityProfile['used_capacity'],
+            'candidate_halls' => $hallCapacityProfile['candidate_halls'],
+            'occupied_halls' => $hallCapacityProfile['occupied_halls'],
+            'remaining_capacity_by_hall' => $hallCapacityProfile['remaining_capacity_by_hall'],
             'required_capacity' => $requiredCapacity,
             'capacity_shortage' => $capacityShortage,
             'reason_code' => $reasonCode,
@@ -1838,6 +1909,69 @@ class ExamHallDistributionService
             ->count();
     }
 
+    protected function hallCapacityProfileForOffering(SubjectExamOffering $offering, Collection $suitableHalls): array
+    {
+        if ($suitableHalls->isEmpty() || ! $offering->exam_date || blank($offering->exam_start_time)) {
+            return [
+                'usable_remaining_capacity' => 0,
+                'used_capacity' => 0,
+                'occupied_halls_count' => 0,
+                'candidate_halls' => [],
+                'occupied_halls' => [],
+                'remaining_capacity_by_hall' => [],
+            ];
+        }
+
+        $hallAssignments = HallAssignment::query()
+            ->whereIn('exam_hall_id', $suitableHalls->pluck('id'))
+            ->whereDate('exam_date', $offering->exam_date->format('Y-m-d'))
+            ->whereTime('exam_start_time', $this->normalizeExamStartTime($offering->exam_start_time))
+            ->get()
+            ->keyBy('exam_hall_id');
+
+        $candidateHalls = [];
+        $occupiedHalls = [];
+        $remainingCapacityByHall = [];
+        $usableRemainingCapacity = 0;
+        $usedCapacity = 0;
+
+        foreach ($suitableHalls as $hall) {
+            $assignment = $hallAssignments->get($hall->getKey());
+            $usedSeats = (int) ($assignment?->assigned_students_count ?? 0);
+            $remainingCapacity = $assignment
+                ? max(0, (int) $assignment->remaining_capacity)
+                : max(0, (int) $hall->capacity);
+
+            $hallSummary = [
+                'hall_id' => $hall->getKey(),
+                'name' => $this->sanitizeString($hall->name),
+                'capacity' => (int) $hall->capacity,
+                'used_capacity' => $usedSeats,
+                'remaining_capacity' => $remainingCapacity,
+                'is_drawing_studio' => $this->isDrawingStudio($hall),
+                'assignment_id' => $assignment?->getKey(),
+            ];
+
+            $candidateHalls[] = $hallSummary;
+            $remainingCapacityByHall[$hall->getKey()] = $remainingCapacity;
+            $usableRemainingCapacity += $remainingCapacity;
+            $usedCapacity += $usedSeats;
+
+            if ($assignment !== null && $usedSeats > 0) {
+                $occupiedHalls[] = $hallSummary;
+            }
+        }
+
+        return [
+            'usable_remaining_capacity' => $usableRemainingCapacity,
+            'used_capacity' => $usedCapacity,
+            'occupied_halls_count' => count($occupiedHalls),
+            'candidate_halls' => $candidateHalls,
+            'occupied_halls' => $occupiedHalls,
+            'remaining_capacity_by_hall' => $remainingCapacityByHall,
+        ];
+    }
+
     protected function resolveDistributionFailureReasonCode(
         SubjectExamOffering $offering,
         int $studentsCount,
@@ -1845,12 +1979,18 @@ class ExamHallDistributionService
         int $activeHallsCount,
         int $suitableHallsCount,
         int $availableCapacity,
+        int $usableRemainingCapacity,
         int $capacityShortage,
         int $invalidCapacityHallsCount,
         int $busyHallsCount,
+        int $occupiedHallsCount,
         ?string $fallbackReasonCode = null,
         ?array $rosterDiagnostics = null,
     ): string {
+        if ($fallbackReasonCode && $fallbackReasonCode !== 'capacity_shortage') {
+            return $fallbackReasonCode;
+        }
+
         if (! $offering->exam_date || blank($offering->exam_start_time)) {
             return 'missing_exam_slot';
         }
@@ -1880,29 +2020,35 @@ class ExamHallDistributionService
 
         if ($suitableHallsCount === 0) {
             return $this->isDrawingSubjectOffering($offering)
-                ? 'hall_type_required_not_available'
+                ? 'no_drawing_studio_halls_available'
                 : 'no_available_halls';
         }
 
-        if ($invalidCapacityHallsCount > 0 && $availableCapacity <= 0) {
-            return 'invalid_hall_capacity';
+        if ($invalidCapacityHallsCount > 0 && $usableRemainingCapacity <= 0) {
+            return 'invalid_hall_capacity_data';
         }
 
-        if ($busyHallsCount >= $suitableHallsCount && $assignedStudents === 0 && $availableCapacity <= 0) {
+        if ($this->isDrawingSubjectOffering($offering) && $occupiedHallsCount >= $suitableHallsCount && $assignedStudents === 0 && $usableRemainingCapacity <= 0) {
+            return 'drawing_studio_halls_occupied';
+        }
+
+        if ($busyHallsCount >= $suitableHallsCount && $assignedStudents === 0 && $usableRemainingCapacity <= 0) {
             return 'all_halls_busy';
         }
 
         if ($capacityShortage > 0 && $this->isDrawingSubjectOffering($offering)) {
-            return 'hall_type_capacity_shortage';
+            return 'drawing_studio_capacity_insufficient';
         }
 
         if ($capacityShortage > 0) {
             return (bool) $offering->is_pinned ? 'pinned_exam_no_capacity' : 'insufficient_capacity';
         }
 
-        return $fallbackReasonCode && $fallbackReasonCode !== 'capacity_shortage'
-            ? $fallbackReasonCode
-            : 'unknown_distribution_error';
+        if ($assignedStudents < $studentsCount && $availableCapacity >= $studentsCount && $usableRemainingCapacity < max(0, $studentsCount - $assignedStudents)) {
+            return 'available_capacity_mismatch';
+        }
+
+        return 'unknown_distribution_error';
     }
 
     protected function distributionFailureReasonMessage(
@@ -1939,6 +2085,20 @@ class ExamHallDistributionService
                 'capacity' => $availableCapacity,
                 'shortage' => $capacityShortage,
             ]),
+            'no_drawing_studio_halls_available' => __('exam.global_hall_distribution.failure_reasons.no_drawing_studio_halls_available'),
+            'drawing_studio_halls_occupied' => __('exam.global_hall_distribution.failure_reasons.drawing_studio_halls_occupied'),
+            'drawing_studio_capacity_insufficient' => __('exam.global_hall_distribution.failure_reasons.drawing_studio_capacity_insufficient', [
+                'students' => $studentsCount,
+                'capacity' => $availableCapacity,
+                'remaining' => max(0, $availableCapacity - $capacityShortage),
+                'shortage' => $capacityShortage,
+            ]),
+            'hall_reservation_conflict' => __('exam.global_hall_distribution.failure_reasons.hall_reservation_conflict'),
+            'available_capacity_mismatch' => __('exam.global_hall_distribution.failure_reasons.available_capacity_mismatch'),
+            'student_assignment_insert_failed' => __('exam.global_hall_distribution.failure_reasons.student_assignment_insert_failed'),
+            'hall_assignment_insert_failed' => __('exam.global_hall_distribution.failure_reasons.hall_assignment_insert_failed'),
+            'invalid_hall_capacity_data' => __('exam.global_hall_distribution.failure_reasons.invalid_hall_capacity_data'),
+            'invalid_subject_or_roster_data' => __('exam.global_hall_distribution.failure_reasons.invalid_subject_or_roster_data'),
             'all_halls_busy' => __('exam.global_hall_distribution.failure_reasons.all_halls_busy', [
                 'total' => $suitableHallsCount,
                 'busy' => $busyHallsCount,
@@ -1969,6 +2129,15 @@ class ExamHallDistributionService
             'missing_exam_slot' => __('exam.global_hall_distribution.failure_actions.set_exam_slot'),
             'hall_type_required_not_available' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
             'hall_type_capacity_shortage' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
+            'no_drawing_studio_halls_available',
+            'drawing_studio_halls_occupied',
+            'drawing_studio_capacity_insufficient' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
+            'hall_reservation_conflict' => __('exam.global_hall_distribution.failure_actions.move_exam_or_free_halls'),
+            'available_capacity_mismatch' => __('exam.global_hall_distribution.failure_actions.review_logs'),
+            'student_assignment_insert_failed',
+            'hall_assignment_insert_failed' => __('exam.global_hall_distribution.failure_actions.review_logs'),
+            'invalid_hall_capacity_data' => __('exam.global_hall_distribution.failure_actions.set_hall_capacity'),
+            'invalid_subject_or_roster_data' => __('exam.global_hall_distribution.failure_actions.review_data'),
             'all_halls_busy' => __('exam.global_hall_distribution.failure_actions.move_exam_or_free_halls'),
             'invalid_hall_capacity' => __('exam.global_hall_distribution.failure_actions.set_hall_capacity'),
             'pinned_exam_no_capacity' => __('exam.global_hall_distribution.failure_actions.unpin_or_add_capacity'),
@@ -2141,6 +2310,99 @@ class ExamHallDistributionService
         ]);
     }
 
+    protected function classifyDistributionException(Throwable $exception, ?string $stage = null): string
+    {
+        if (in_array($stage, ['student_assignment_insert_failed', 'hall_assignment_insert_failed'], true)) {
+            return $stage;
+        }
+
+        $message = $exception->getMessage();
+
+        if (str_contains($message, 'exam_student_hall_assignments')) {
+            return 'student_assignment_insert_failed';
+        }
+
+        if (str_contains($message, 'hall_assignments') || str_contains($message, 'hall_assignment_subjects')) {
+            return 'hall_assignment_insert_failed';
+        }
+
+        if (str_contains($message, 'subject_exam_rosters') || str_contains($message, 'exam_students')) {
+            return 'invalid_subject_or_roster_data';
+        }
+
+        return 'unknown_distribution_error';
+    }
+
+    protected function logHallDistributionThrowable(
+        Throwable $exception,
+        string $reasonCode,
+        array $slot,
+        Collection $slotOfferings,
+        Collection $candidateHalls,
+        Collection $selectedHalls,
+        bool $allowMultipleSubjectsPerHall,
+        string $stage,
+    ): void {
+        $candidateHallSummaries = $candidateHalls
+            ->map(fn (ExamHall $hall): array => [
+                'hall_id' => $hall->getKey(),
+                'name' => $this->sanitizeString($hall->name),
+                'capacity' => (int) $hall->capacity,
+                'is_drawing_studio' => $this->isDrawingStudio($hall),
+            ])
+            ->values()
+            ->all();
+
+        $occupiedHalls = HallAssignment::query()
+            ->where('college_id', $slot['college_id'])
+            ->whereDate('exam_date', $slot['exam_date'])
+            ->whereTime('exam_start_time', $slot['exam_start_time'])
+            ->with('examHall')
+            ->get()
+            ->map(fn (HallAssignment $assignment): array => [
+                'assignment_id' => $assignment->getKey(),
+                'hall_id' => $assignment->exam_hall_id,
+                'hall_name' => $this->sanitizeString($assignment->examHall?->name ?? ''),
+                'total_capacity' => (int) $assignment->total_capacity,
+                'assigned_students_count' => (int) $assignment->assigned_students_count,
+                'remaining_capacity' => (int) $assignment->remaining_capacity,
+                'is_drawing_studio' => (bool) ($assignment->examHall?->is_drawing_studio ?? false),
+            ])
+            ->values()
+            ->all();
+
+        $slotOfferings->each(function (SubjectExamOffering $offering) use ($exception, $reasonCode, $slot, $candidateHallSummaries, $occupiedHalls, $selectedHalls, $allowMultipleSubjectsPerHall, $stage): void {
+            $offering->loadMissing('subject.department');
+
+            Log::error('Student hall distribution throwable captured', [
+                'reason_code' => $reasonCode,
+                'stage' => $stage,
+                'exception_class' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
+                'exception_trace' => $exception->getTraceAsString(),
+                'college_id' => $slot['college_id'],
+                'offering_id' => $offering->getKey(),
+                'subject_name' => $offering->subject?->name,
+                'department' => $offering->subject?->department?->name,
+                'exam_date' => $slot['exam_date'],
+                'exam_time' => $slot['exam_start_time'],
+                'required_capacity' => (int) ($offering->exam_students_count ?? $offering->examStudents()->count()),
+                'candidate_capacity' => collect($candidateHallSummaries)->sum('capacity'),
+                'candidate_halls_count' => count($candidateHallSummaries),
+                'candidate_halls' => $candidateHallSummaries,
+                'occupied_halls' => $occupiedHalls,
+                'selected_halls_before_failure' => $selectedHalls->values()->all(),
+                'requires_drawing_studio' => $this->isDrawingSubjectOffering($offering),
+                'allow_multiple_subjects_per_hall' => $allowMultipleSubjectsPerHall,
+                'remaining_capacity_by_hall' => collect($candidateHallSummaries)
+                    ->mapWithKeys(fn (array $hall): array => [$hall['hall_id'] => $hall['capacity']])
+                    ->all(),
+            ]);
+        });
+    }
+
     protected function withLegacyGlobalDistributionKeys(array $summary): array
     {
         return [
@@ -2288,9 +2550,17 @@ class ExamHallDistributionService
                 'exam_period' => $detail['start_time'] ?? null,
                 'required_capacity' => $detail['required_capacity'] ?? null,
                 'available_capacity' => $detail['available_capacity'] ?? null,
+                'usable_remaining_capacity' => $detail['usable_remaining_capacity'] ?? null,
+                'used_capacity_in_candidate_halls' => $detail['used_capacity_in_candidate_halls'] ?? null,
                 'available_halls_count' => $detail['available_halls_count'] ?? null,
+                'occupied_halls_count' => $detail['occupied_halls_count'] ?? null,
                 'reason_code' => $detail['reason_code'] ?? 'unknown_distribution_error',
                 'reason_message' => $detail['reason_message'] ?? null,
+                'candidate_halls' => $detail['candidate_halls'] ?? [],
+                'occupied_halls' => $detail['occupied_halls'] ?? [],
+                'remaining_capacity_by_hall' => $detail['remaining_capacity_by_hall'] ?? [],
+                'requires_drawing_studio' => $detail['is_drawing_subject'] ?? false,
+                'roster_diagnostics' => $detail['roster_diagnostics'] ?? [],
             ]);
         });
     }
