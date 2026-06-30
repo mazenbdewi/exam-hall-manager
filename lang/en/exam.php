@@ -168,6 +168,23 @@ return array_replace_recursive($arabic, [
         'suggested_action' => 'Suggested action',
         'busy_halls_summary' => 'Busy: :busy of :total',
         'capacity_shortage_sentence' => 'Students: :students, remaining usable suitable capacity: :capacity. Actual shortage: :shortage seats.',
+        'drawing_studio_sharing_rule' => 'This subject requires a drawing studio/lab. It may share the same studio only with other drawing subjects when capacity remains, and must not be mixed with normal subjects.',
+        'drawing_studio_capacity' => 'Drawing studio/lab hall capacity',
+        'drawing_subject_used_capacity' => 'Capacity used by drawing subjects',
+        'drawing_subject_usable_remaining_capacity' => 'Remaining capacity available only to drawing subjects',
+        'candidate_halls_compatibility' => 'Candidate hall compatibility',
+        'hall_subject_mix' => [
+            'empty' => 'Empty',
+            'drawing_only' => 'Contains drawing subjects only',
+            'normal_only' => 'Contains normal subjects',
+            'mixed_drawing_and_normal' => 'Contains drawing and normal subjects',
+        ],
+        'hall_exclusion_reasons' => [
+            'drawing_subject_requires_studio' => 'Excluded because drawing subjects can only be assigned to a drawing studio/lab.',
+            'normal_subject_studio_setting_disabled' => 'Excluded because using drawing studios for normal subjects is disabled.',
+            'contains_normal_subjects' => 'Excluded because this hall contains normal subjects and cannot be mixed with a drawing subject.',
+            'contains_drawing_subjects' => 'Excluded because this hall contains drawing subjects, so remaining capacity is reserved for drawing subjects only.',
+        ],
         'required_hall_types' => [
             'drawing_studio' => 'Drawing studio / lab',
             'normal_hall' => 'Normal hall',

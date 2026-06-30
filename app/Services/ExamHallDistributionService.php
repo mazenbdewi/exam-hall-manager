@@ -788,7 +788,7 @@ class ExamHallDistributionService
         bool $slotHasDrawingSubjects,
         bool $allowNormalSubjectsInDrawingStudios,
     ): ?SubjectExamOffering {
-        return $slotOfferings
+        return $this->orderedSlotOfferingsForHall($slotOfferings, $hall, $remainingCounts)
             ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $subjectCounts, $visitedOfferingIds, $hall, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings, $allowNormalSubjectsInDrawingStudios): bool {
                 $offeringId = $slotOffering->getKey();
 
@@ -1858,6 +1858,15 @@ class ExamHallDistributionService
             'actual_remaining_usable_capacity' => $usableRemainingCapacity,
             'used_capacity_in_candidate_halls' => $usedCapacity,
             'reserved_or_used_capacity' => $usedCapacity,
+            'drawing_studio_capacity' => $this->isDrawingSubjectOffering($offering) ? $nominalCapacity : null,
+            'drawing_subject_used_capacity' => (int) $hallCapacityProfile['drawing_subject_used_capacity'],
+            'non_drawing_subject_used_capacity' => (int) $hallCapacityProfile['non_drawing_subject_used_capacity'],
+            'drawing_subject_usable_remaining_capacity' => $this->isDrawingSubjectOffering($offering)
+                ? $usableRemainingCapacity
+                : null,
+            'drawing_studio_sharing_rule' => $this->isDrawingSubjectOffering($offering)
+                ? __('exam.global_hall_distribution.drawing_studio_sharing_rule')
+                : null,
             'candidate_halls' => $hallCapacityProfile['candidate_halls'],
             'occupied_halls' => $hallCapacityProfile['occupied_halls'],
             'remaining_capacity_by_hall' => $hallCapacityProfile['remaining_capacity_by_hall'],
@@ -1888,17 +1897,12 @@ class ExamHallDistributionService
         Collection $activeHalls,
     ): Collection {
         $isDrawingSubject = $this->isDrawingSubjectOffering($offering);
-        $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
         $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios((int) $offering->subject?->college_id);
 
         return $activeHalls
-            ->filter(function (ExamHall $hall) use ($isDrawingSubject, $slotHasDrawingSubjects, $allowNormalSubjectsInDrawingStudios): bool {
+            ->filter(function (ExamHall $hall) use ($isDrawingSubject, $allowNormalSubjectsInDrawingStudios): bool {
                 if ($isDrawingSubject) {
                     return $this->isDrawingStudio($hall);
-                }
-
-                if ($slotHasDrawingSubjects) {
-                    return ! $this->isDrawingStudio($hall);
                 }
 
                 return $allowNormalSubjectsInDrawingStudios || ! $this->isDrawingStudio($hall);
@@ -1925,6 +1929,8 @@ class ExamHallDistributionService
             return [
                 'usable_remaining_capacity' => 0,
                 'used_capacity' => 0,
+                'drawing_subject_used_capacity' => 0,
+                'non_drawing_subject_used_capacity' => 0,
                 'occupied_halls_count' => 0,
                 'candidate_halls' => [],
                 'occupied_halls' => [],
@@ -1936,6 +1942,7 @@ class ExamHallDistributionService
             ->whereIn('exam_hall_id', $suitableHalls->pluck('id'))
             ->whereDate('exam_date', $offering->exam_date->format('Y-m-d'))
             ->whereTime('exam_start_time', $this->normalizeExamStartTime($offering->exam_start_time))
+            ->with('assignmentSubjects.subjectExamOffering.subject')
             ->get()
             ->keyBy('exam_hall_id');
 
@@ -1944,13 +1951,19 @@ class ExamHallDistributionService
         $remainingCapacityByHall = [];
         $usableRemainingCapacity = 0;
         $usedCapacity = 0;
+        $drawingSubjectUsedCapacity = 0;
+        $nonDrawingSubjectUsedCapacity = 0;
 
         foreach ($suitableHalls as $hall) {
             $assignment = $hallAssignments->get($hall->getKey());
+            $compatibility = $this->hallCompatibilityForOffering($offering, $hall, $assignment);
             $usedSeats = (int) ($assignment?->assigned_students_count ?? 0);
-            $remainingCapacity = $assignment
+            $rawRemainingCapacity = $assignment
                 ? max(0, (int) $assignment->remaining_capacity)
                 : max(0, (int) $hall->capacity);
+            $remainingCapacity = $compatibility['is_compatible'] ? $rawRemainingCapacity : 0;
+            $drawingSubjectUsedCapacity += (int) $compatibility['drawing_subject_used_capacity'];
+            $nonDrawingSubjectUsedCapacity += (int) $compatibility['non_drawing_subject_used_capacity'];
 
             $hallSummary = [
                 'hall_id' => $hall->getKey(),
@@ -1958,8 +1971,10 @@ class ExamHallDistributionService
                 'capacity' => (int) $hall->capacity,
                 'used_capacity' => $usedSeats,
                 'remaining_capacity' => $remainingCapacity,
+                'raw_remaining_capacity' => $rawRemainingCapacity,
                 'is_drawing_studio' => $this->isDrawingStudio($hall),
                 'assignment_id' => $assignment?->getKey(),
+                ...$compatibility,
             ];
 
             $candidateHalls[] = $hallSummary;
@@ -1975,10 +1990,79 @@ class ExamHallDistributionService
         return [
             'usable_remaining_capacity' => $usableRemainingCapacity,
             'used_capacity' => $usedCapacity,
+            'drawing_subject_used_capacity' => $drawingSubjectUsedCapacity,
+            'non_drawing_subject_used_capacity' => $nonDrawingSubjectUsedCapacity,
             'occupied_halls_count' => count($occupiedHalls),
             'candidate_halls' => $candidateHalls,
             'occupied_halls' => $occupiedHalls,
             'remaining_capacity_by_hall' => $remainingCapacityByHall,
+        ];
+    }
+
+    protected function hallCompatibilityForOffering(
+        SubjectExamOffering $offering,
+        ExamHall $hall,
+        ?HallAssignment $assignment,
+    ): array {
+        $isDrawingSubject = $this->isDrawingSubjectOffering($offering);
+        $isDrawingStudio = $this->isDrawingStudio($hall);
+        $allowNormalSubjectsInDrawingStudios = $this->allowNormalSubjectsInDrawingStudios((int) $offering->subject?->college_id);
+        $drawingSubjectUsedCapacity = 0;
+        $nonDrawingSubjectUsedCapacity = 0;
+
+        foreach ($assignment?->assignmentSubjects ?? [] as $assignmentSubject) {
+            $assignedCount = (int) $assignmentSubject->assigned_students_count;
+
+            $assignmentOffering = $assignmentSubject->subjectExamOffering;
+
+            if ($assignmentOffering && $this->isDrawingSubjectOffering($assignmentOffering)) {
+                $drawingSubjectUsedCapacity += $assignedCount;
+            } else {
+                $nonDrawingSubjectUsedCapacity += $assignedCount;
+            }
+        }
+
+        $hasDrawingSubjects = $drawingSubjectUsedCapacity > 0;
+        $hasNonDrawingSubjects = $nonDrawingSubjectUsedCapacity > 0;
+        $isCompatible = true;
+        $exclusionReason = null;
+
+        if ($isDrawingSubject && ! $isDrawingStudio) {
+            $isCompatible = false;
+            $exclusionReason = __('exam.global_hall_distribution.hall_exclusion_reasons.drawing_subject_requires_studio');
+        } elseif (! $isDrawingSubject && $isDrawingStudio && ! $allowNormalSubjectsInDrawingStudios) {
+            $isCompatible = false;
+            $exclusionReason = __('exam.global_hall_distribution.hall_exclusion_reasons.normal_subject_studio_setting_disabled');
+        } elseif ($isDrawingSubject && $hasNonDrawingSubjects) {
+            $isCompatible = false;
+            $exclusionReason = __('exam.global_hall_distribution.hall_exclusion_reasons.contains_normal_subjects');
+        } elseif (! $isDrawingSubject && $hasDrawingSubjects) {
+            $isCompatible = false;
+            $exclusionReason = __('exam.global_hall_distribution.hall_exclusion_reasons.contains_drawing_subjects');
+        }
+
+        return [
+            'is_compatible' => $isCompatible,
+            'contains_drawing_subjects' => $hasDrawingSubjects,
+            'contains_non_drawing_subjects' => $hasNonDrawingSubjects,
+            'drawing_subject_used_capacity' => $drawingSubjectUsedCapacity,
+            'non_drawing_subject_used_capacity' => $nonDrawingSubjectUsedCapacity,
+            'drawing_compatible_remaining_capacity' => $isDrawingSubject && $isCompatible
+                ? max(0, (int) ($assignment?->remaining_capacity ?? $hall->capacity))
+                : 0,
+            'hall_subject_mix_key' => match (true) {
+                $hasDrawingSubjects && $hasNonDrawingSubjects => 'mixed_drawing_and_normal',
+                $hasDrawingSubjects => 'drawing_only',
+                $hasNonDrawingSubjects => 'normal_only',
+                default => 'empty',
+            },
+            'hall_subject_mix_label' => match (true) {
+                $hasDrawingSubjects && $hasNonDrawingSubjects => __('exam.global_hall_distribution.hall_subject_mix.mixed_drawing_and_normal'),
+                $hasDrawingSubjects => __('exam.global_hall_distribution.hall_subject_mix.drawing_only'),
+                $hasNonDrawingSubjects => __('exam.global_hall_distribution.hall_subject_mix.normal_only'),
+                default => __('exam.global_hall_distribution.hall_subject_mix.empty'),
+            },
+            'exclusion_reason' => $exclusionReason,
         ];
     }
 
@@ -2748,7 +2832,7 @@ class ExamHallDistributionService
         bool $slotHasDrawingSubjects,
         bool $allowNormalSubjectsInDrawingStudios,
     ): ?SubjectExamOffering {
-        return $slotOfferings
+        return $this->orderedSlotOfferingsForHall($slotOfferings, $hall, $remainingCounts)
             ->first(function (SubjectExamOffering $slotOffering) use ($remainingCounts, $usedOfferingIds, $hall, $subjectCounts, $maxSubjectsPerHall, $slotHasDrawingSubjects, $slotOfferings, $allowNormalSubjectsInDrawingStudios): bool {
                 if (in_array($slotOffering->getKey(), $usedOfferingIds, true)) {
                     return false;
@@ -2768,6 +2852,41 @@ class ExamHallDistributionService
                     allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
                 );
             });
+    }
+
+    protected function orderedSlotOfferingsForHall(Collection $slotOfferings, ExamHall $hall, array $remainingCounts): Collection
+    {
+        if (! $this->isDrawingStudio($hall)) {
+            return $slotOfferings;
+        }
+
+        return $slotOfferings
+            ->sort(function (SubjectExamOffering $first, SubjectExamOffering $second) use ($remainingCounts): int {
+                $firstHasRemaining = (int) ($remainingCounts[$first->getKey()] ?? 0) > 0;
+                $secondHasRemaining = (int) ($remainingCounts[$second->getKey()] ?? 0) > 0;
+                $remainingComparison = ((int) ! $firstHasRemaining) <=> ((int) ! $secondHasRemaining);
+
+                if ($remainingComparison !== 0) {
+                    return $remainingComparison;
+                }
+
+                $drawingComparison = ((int) ! $this->isDrawingSubjectOffering($first))
+                    <=> ((int) ! $this->isDrawingSubjectOffering($second));
+
+                if ($drawingComparison !== 0) {
+                    return $drawingComparison;
+                }
+
+                $studentsComparison = ((int) ($second->exam_students_count ?? 0))
+                    <=> ((int) ($first->exam_students_count ?? 0));
+
+                if ($studentsComparison !== 0) {
+                    return $studentsComparison;
+                }
+
+                return strcmp($first->subject?->name ?? '', $second->subject?->name ?? '');
+            })
+            ->values();
     }
 
     protected function maxSubjectsPerHall(bool $allowMultipleSubjectsPerHall): int
@@ -2843,10 +2962,6 @@ class ExamHallDistributionService
         $isDrawingStudio = $this->isDrawingStudio($hall);
 
         if ($isDrawingSubject && ! $isDrawingStudio) {
-            return false;
-        }
-
-        if (! $isDrawingSubject && $slotHasDrawingSubjects && $isDrawingStudio) {
             return false;
         }
 

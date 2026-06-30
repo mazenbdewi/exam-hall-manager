@@ -217,6 +217,32 @@
                                         <td class="px-3 py-3">{{ $detail['reason_message'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ $detail['suggested_action'] ?? '—' }}</td>
                                         <td class="px-3 py-3">
+                                            @if (filled($detail['drawing_studio_sharing_rule'] ?? null))
+                                                <div class="mb-2 max-w-sm text-xs leading-5 text-warning-700 dark:text-warning-300">
+                                                    {{ $detail['drawing_studio_sharing_rule'] }}
+                                                </div>
+                                                <div class="mb-2 grid max-w-sm gap-1 text-xs text-gray-600 dark:text-gray-300">
+                                                    <div>{{ __('exam.global_hall_distribution.drawing_studio_capacity') }}: {{ $detail['drawing_studio_capacity'] ?? 0 }}</div>
+                                                    <div>{{ __('exam.global_hall_distribution.drawing_subject_used_capacity') }}: {{ $detail['drawing_subject_used_capacity'] ?? 0 }}</div>
+                                                    <div>{{ __('exam.global_hall_distribution.drawing_subject_usable_remaining_capacity') }}: {{ $detail['drawing_subject_usable_remaining_capacity'] ?? 0 }}</div>
+                                                </div>
+                                            @endif
+                                            @if (! empty($detail['candidate_halls'] ?? []))
+                                                <div class="mb-2 max-w-sm text-xs leading-5 text-gray-600 dark:text-gray-300">
+                                                    <div class="font-medium text-gray-800 dark:text-gray-100">{{ __('exam.global_hall_distribution.candidate_halls_compatibility') }}</div>
+                                                    @foreach (collect($detail['candidate_halls'])->take(6) as $hall)
+                                                        <div class="mt-1">
+                                                            {{ $hall['name'] ?? '—' }}:
+                                                            {{ __('exam.fields.capacity') }} {{ $hall['capacity'] ?? 0 }},
+                                                            {{ __('exam.fields.remaining_capacity') }} {{ $hall['raw_remaining_capacity'] ?? $hall['remaining_capacity'] ?? 0 }},
+                                                            {{ $hall['hall_subject_mix_label'] ?? '—' }}
+                                                            @if (filled($hall['exclusion_reason'] ?? null))
+                                                                - {{ $hall['exclusion_reason'] }}
+                                                            @endif
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            @endif
                                             @if (filled($detail['student_resolution_diagnostic'] ?? null))
                                                 <div class="mb-2 max-w-sm text-xs leading-5 text-gray-600 dark:text-gray-300">
                                                     {{ $detail['student_resolution_diagnostic'] }}

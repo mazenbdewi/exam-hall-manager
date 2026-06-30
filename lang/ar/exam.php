@@ -538,6 +538,23 @@ return [
         'suggested_action' => 'الإجراء المقترح',
         'busy_halls_summary' => 'المشغولة: :busy من :total',
         'capacity_shortage_sentence' => 'عدد الطلاب :students، بينما السعة المتبقية القابلة للاستخدام في القاعات المناسبة هي :capacity فقط. النقص الفعلي: :shortage مقعدًا.',
+        'drawing_studio_sharing_rule' => 'هذه المادة تحتاج مرسم/مخبر. يمكن دمجها فقط مع مواد رسم أخرى داخل نفس المرسم عند وجود سعة متبقية، ولا يجوز دمجها مع مواد عادية.',
+        'drawing_studio_capacity' => 'سعة قاعات المرسم/المخبر',
+        'drawing_subject_used_capacity' => 'السعة المستخدمة من مواد الرسم',
+        'drawing_subject_usable_remaining_capacity' => 'السعة المتبقية المتاحة لمواد الرسم فقط',
+        'candidate_halls_compatibility' => 'توافق القاعات المرشحة',
+        'hall_subject_mix' => [
+            'empty' => 'فارغة',
+            'drawing_only' => 'تحتوي مواد رسم فقط',
+            'normal_only' => 'تحتوي مواد عادية',
+            'mixed_drawing_and_normal' => 'تحتوي مواد رسم ومواد عادية',
+        ],
+        'hall_exclusion_reasons' => [
+            'drawing_subject_requires_studio' => 'مستبعدة لأن مادة الرسم لا توزع إلا في مرسم/مخبر.',
+            'normal_subject_studio_setting_disabled' => 'مستبعدة لأن إعداد استخدام المراسم للمواد العادية غير مفعّل.',
+            'contains_normal_subjects' => 'مستبعدة لأنها تحتوي مواد عادية، ولا يجوز دمجها مع مادة رسم.',
+            'contains_drawing_subjects' => 'مستبعدة لأنها تحتوي مواد رسم، والسعة المتبقية فيها مخصصة لمواد الرسم فقط.',
+        ],
         'required_hall_types' => [
             'drawing_studio' => 'مرسم - مخبر',
             'normal_hall' => 'قاعة عادية',

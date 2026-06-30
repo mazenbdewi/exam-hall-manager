@@ -86,6 +86,39 @@
                 @endforeach
             </tbody>
         </table>
+        @foreach ($failureDetails as $detail)
+            @if (filled($detail['drawing_studio_sharing_rule'] ?? null) || ! empty($detail['candidate_halls'] ?? []))
+                <table class="grid">
+                    <tbody>
+                        <tr>
+                            <th>{{ $detail['subject_name'] ?? '—' }}</th>
+                            <td>
+                                @if (filled($detail['drawing_studio_sharing_rule'] ?? null))
+                                    <div>{{ $detail['drawing_studio_sharing_rule'] }}</div>
+                                    <div>{{ __('exam.global_hall_distribution.drawing_studio_capacity') }}: {{ $detail['drawing_studio_capacity'] ?? 0 }}</div>
+                                    <div>{{ __('exam.global_hall_distribution.drawing_subject_used_capacity') }}: {{ $detail['drawing_subject_used_capacity'] ?? 0 }}</div>
+                                    <div>{{ __('exam.global_hall_distribution.drawing_subject_usable_remaining_capacity') }}: {{ $detail['drawing_subject_usable_remaining_capacity'] ?? 0 }}</div>
+                                @endif
+                                @if (! empty($detail['candidate_halls'] ?? []))
+                                    <div>{{ __('exam.global_hall_distribution.candidate_halls_compatibility') }}</div>
+                                    @foreach (collect($detail['candidate_halls'])->take(6) as $hall)
+                                        <div>
+                                            {{ $hall['name'] ?? '—' }}:
+                                            {{ __('exam.fields.capacity') }} {{ $hall['capacity'] ?? 0 }},
+                                            {{ __('exam.fields.remaining_capacity') }} {{ $hall['raw_remaining_capacity'] ?? $hall['remaining_capacity'] ?? 0 }},
+                                            {{ $hall['hall_subject_mix_label'] ?? '—' }}
+                                            @if (filled($hall['exclusion_reason'] ?? null))
+                                                - {{ $hall['exclusion_reason'] }}
+                                            @endif
+                                        </div>
+                                    @endforeach
+                                @endif
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            @endif
+        @endforeach
     @endif
 
     <table class="grid">
