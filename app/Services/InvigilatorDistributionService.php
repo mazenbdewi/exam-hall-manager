@@ -57,7 +57,27 @@ class InvigilatorDistributionService
             ];
         }
 
-        $result = $this->distributeForFacultyOptimized($college, $fromDateString, $toDateString, $overwriteManual, $context);
+        try {
+            $result = $this->distributeForFacultyOptimized($college, $fromDateString, $toDateString, $overwriteManual, $context);
+        } catch (\Throwable $exception) {
+            if ($this->isDuplicateInvigilatorAssignmentException($exception)) {
+                Log::error('Invigilator distribution failed because duplicate generated assignments reached persistence.', [
+                    ...$context,
+                    'message' => $exception->getMessage(),
+                ]);
+
+                return [
+                    'status' => 'danger',
+                    'slots_count' => 0,
+                    'assigned_count' => 0,
+                    'shortage_count' => 0,
+                    'message' => __('exam.notifications.invigilator_distribution_duplicate_generated_assignments'),
+                    'results' => [],
+                ];
+            }
+
+            throw $exception;
+        }
 
         $this->logDistributionTiming('total distribution', $startedAt, [
             ...$context,
@@ -123,12 +143,38 @@ class InvigilatorDistributionService
 
         $stageStartedAt = hrtime(true);
         $invigilatorIds = $invigilators->pluck('id')->all();
-        $existingAssignments = $invigilatorIds === []
-            ? collect()
-            : InvigilatorAssignment::query()
+        $manualAssignmentRangeScope = fn (Builder $query): Builder => $query
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->where('assignment_status', InvigilatorAssignmentStatus::Manual->value);
+
+        $existingAssignmentsQuery = InvigilatorAssignment::query()
+            ->select(['id', 'college_id', 'exam_date', 'start_time', 'exam_hall_id', 'invigilator_id', 'invigilation_role', 'assignment_status']);
+
+        if ($invigilatorIds !== []) {
+            $existingAssignmentsQuery->where(fn (Builder $query): Builder => $query
                 ->whereIn('invigilator_id', $invigilatorIds)
-                ->select(['id', 'college_id', 'exam_date', 'start_time', 'exam_hall_id', 'invigilator_id', 'invigilation_role', 'assignment_status'])
-                ->get();
+                ->orWhere(fn (Builder $manualQuery): Builder => $manualAssignmentRangeScope($manualQuery)));
+        } else {
+            $existingAssignmentsQuery->where(fn (Builder $query): Builder => $manualAssignmentRangeScope($query));
+        }
+
+        $existingAssignments = $existingAssignmentsQuery->get();
+        $existingAssignmentBlockerKeys = InvigilatorAssignment::withTrashed()
+            ->where('college_id', $college->getKey())
+            ->whereDate('exam_date', '>=', $fromDate)
+            ->whereDate('exam_date', '<=', $toDate)
+            ->get(['exam_date', 'start_time', 'exam_hall_id', 'invigilator_id'])
+            ->mapWithKeys(fn (InvigilatorAssignment $assignment): array => [
+                $this->assignmentUniqueKey(
+                    (int) $assignment->exam_hall_id,
+                    $assignment->exam_date->format('Y-m-d'),
+                    $this->normalizeTime((string) $assignment->start_time),
+                    (int) $assignment->invigilator_id,
+                ) => true,
+            ])
+            ->all();
         $manualAssignmentsInRange = $existingAssignments
             ->where('college_id', $college->getKey())
             ->filter(fn (InvigilatorAssignment $assignment): bool => $assignment->exam_date->format('Y-m-d') >= $fromDate && $assignment->exam_date->format('Y-m-d') <= $toDate);
@@ -142,7 +188,7 @@ class InvigilatorDistributionService
         $dayCounts = [];
         $slotAssigned = [];
         $assignedByHallRole = [];
-        $existingAssignmentKeys = [];
+        $existingAssignmentKeys = $existingAssignmentBlockerKeys;
 
         foreach ($existingAssignments as $assignment) {
             $invigilatorId = (int) $assignment->invigilator_id;
@@ -270,6 +316,18 @@ class InvigilatorDistributionService
                         $assignmentKey = $this->assignmentUniqueKey((int) $hall->id, $examDate, $startTime, $invigilatorId);
 
                         if (isset($existingAssignmentKeys[$assignmentKey]) || isset($plannedAssignmentKeys[$assignmentKey])) {
+                            $this->logSkippedDuplicateGeneratedAssignment(
+                                hallId: (int) $hall->id,
+                                hallName: (string) $hall->name,
+                                examDate: $examDate,
+                                startTime: $startTime,
+                                invigilatorId: $invigilatorId,
+                                invigilatorName: (string) $invigilator->name,
+                                role: $requiredRole,
+                                sourceStep: isset($plannedAssignmentKeys[$assignmentKey])
+                                    ? 'optimized_assignment_loop_planned_duplicate'
+                                    : 'optimized_assignment_loop_existing_assignment',
+                            );
                             $slotAssigned[$slotKey][$invigilatorId] = true;
                             $index--;
 
@@ -288,6 +346,8 @@ class InvigilatorDistributionService
                             'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
                             'assigned_by' => auth()->id(),
                             'notes' => $selection['notes'],
+                            'exam_hall_name' => (string) $hall->name,
+                            'invigilator_name' => (string) $invigilator->name,
                             'created_at' => $now,
                             'updated_at' => $now,
                         ];
@@ -314,11 +374,14 @@ class InvigilatorDistributionService
             'shortage_rows_count' => count($shortageRows),
         ]);
 
+        $assignmentRows = $this->deduplicateGeneratedAssignmentRows($assignmentRows, $context);
+
         $stageStartedAt = hrtime(true);
         $savedAssignmentsCount = 0;
         DB::transaction(function () use ($assignmentRows, $shortageRows, &$savedAssignmentsCount): void {
             foreach (array_chunk($assignmentRows, 1000) as $chunk) {
-                $savedAssignmentsCount += InvigilatorAssignment::query()->insertOrIgnore($chunk);
+                InvigilatorAssignment::query()->insert($chunk);
+                $savedAssignmentsCount += count($chunk);
             }
 
             foreach (array_chunk($shortageRows, 1000) as $chunk) {
@@ -840,6 +903,79 @@ class InvigilatorDistributionService
     protected function assignmentUniqueKey(int $hallId, string $examDate, string $startTime, int $invigilatorId): string
     {
         return $hallId.'|'.substr($examDate, 0, 10).'|'.$this->normalizeTime($startTime).'|'.$invigilatorId;
+    }
+
+    protected function assignmentUniqueKeyFromRow(array $row): string
+    {
+        return $this->assignmentUniqueKey(
+            (int) $row['exam_hall_id'],
+            (string) $row['exam_date'],
+            (string) $row['start_time'],
+            (int) $row['invigilator_id'],
+        );
+    }
+
+    protected function deduplicateGeneratedAssignmentRows(array $assignmentRows, array $context = []): array
+    {
+        $uniqueRows = [];
+        $seenKeys = [];
+
+        foreach ($assignmentRows as $row) {
+            $assignmentKey = $this->assignmentUniqueKeyFromRow($row);
+
+            if (isset($seenKeys[$assignmentKey])) {
+                $this->logSkippedDuplicateGeneratedAssignment(
+                    hallId: (int) $row['exam_hall_id'],
+                    hallName: (string) ($row['exam_hall_name'] ?? ''),
+                    examDate: (string) $row['exam_date'],
+                    startTime: (string) $row['start_time'],
+                    invigilatorId: (int) $row['invigilator_id'],
+                    invigilatorName: (string) ($row['invigilator_name'] ?? ''),
+                    role: InvigilationRole::from((string) $row['invigilation_role']),
+                    sourceStep: 'optimized_pre_insert_deduplication',
+                    context: $context,
+                );
+
+                continue;
+            }
+
+            $seenKeys[$assignmentKey] = true;
+            unset($row['exam_hall_name'], $row['invigilator_name']);
+            $uniqueRows[] = $row;
+        }
+
+        return $uniqueRows;
+    }
+
+    protected function logSkippedDuplicateGeneratedAssignment(
+        int $hallId,
+        string $hallName,
+        string $examDate,
+        string $startTime,
+        int $invigilatorId,
+        string $invigilatorName,
+        InvigilationRole $role,
+        string $sourceStep,
+        array $context = [],
+    ): void {
+        Log::warning('Skipped duplicate generated invigilator assignment before bulk insert.', [
+            ...$context,
+            'hall_id' => $hallId,
+            'hall_name' => $hallName,
+            'exam_date' => substr($examDate, 0, 10),
+            'start_time' => $this->normalizeTime($startTime),
+            'invigilator_id' => $invigilatorId,
+            'invigilator_name' => $invigilatorName,
+            'role' => $role->value,
+            'source_step' => $sourceStep,
+            'unique_key' => $this->assignmentUniqueKey($hallId, $examDate, $startTime, $invigilatorId),
+        ]);
+    }
+
+    protected function isDuplicateInvigilatorAssignmentException(\Throwable $exception): bool
+    {
+        return str_contains($exception->getMessage(), 'invigilator_assignments_hall_slot_invigilator_unique')
+            || str_contains($exception->getMessage(), 'Duplicate entry');
     }
 
     protected function logDistributionTiming(string $stage, int $startedAt, array $context = []): void

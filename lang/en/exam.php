@@ -45,6 +45,7 @@ return array_replace_recursive($arabic, [
     ],
     'notifications' => [
         'drawing_studio_capacity_shortage' => 'There are not enough drawing studios - labs to distribute the drawing subject.',
+        'invigilator_distribution_duplicate_generated_assignments' => 'The invigilator distribution could not be saved because duplicate generated assignments were detected. Review the system log, then rerun distribution after correcting the algorithm.',
     ],
     'diagnosis' => [
         'invigilator_role_shortage' => 'There are :assignments uncovered :role duties. Minimum observers to add: :observers.',

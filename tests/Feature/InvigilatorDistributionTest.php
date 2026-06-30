@@ -938,6 +938,249 @@ class InvigilatorDistributionTest extends TestCase
     }
 
     #[Test]
+    public function redistribution_clears_previous_generated_assignments_before_inserting_replacement_rows(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $hall = $this->createUsedHall($college, 'قاعة تنظيف التوزيع', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'allow_role_fallback' => false,
+        ]);
+        $oldInvigilator = $this->createRegularInvigilator($college, 'مراقب مولد قديم', '0999555511', 10);
+        $newInvigilator = $this->createRegularInvigilator($college, 'مراقب مولد جديد', '0999555512', 10);
+        $oldInvigilator->update(['is_active' => false]);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+
+        $oldAssignment = InvigilatorAssignment::query()->create([
+            'college_id' => $college->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $oldInvigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(1, $result['assigned_count']);
+        $this->assertFalse(InvigilatorAssignment::withTrashed()->whereKey($oldAssignment->id)->exists());
+        $this->assertSame(1, InvigilatorAssignment::query()->count());
+        $this->assertDatabaseHas('invigilator_assignments', [
+            'invigilator_id' => $newInvigilator->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+        $this->assertFalse($this->hasDuplicateHallSlotInvigilatorAssignments());
+    }
+
+    #[Test]
+    public function redistribution_preserves_inactive_manual_assignments_and_counts_them_as_occupied(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $hall = $this->createUsedHall($college, 'قاعة يدوي غير فعال', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'allow_role_fallback' => false,
+        ]);
+        $manualInvigilator = $this->createRegularInvigilator($college, 'مراقب يدوي غير فعال', '0999555521', 10);
+        $automaticInvigilator = $this->createRegularInvigilator($college, 'مراقب لا يجب اختياره', '0999555522', 10);
+        $manualInvigilator->update(['is_active' => false]);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+
+        InvigilatorAssignment::query()->create([
+            'college_id' => $college->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $manualInvigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+
+        $result = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(0, $result['assigned_count']);
+        $this->assertSame(0, $result['shortage_count']);
+        $this->assertSame(1, InvigilatorAssignment::query()->count());
+        $this->assertDatabaseHas('invigilator_assignments', [
+            'invigilator_id' => $manualInvigilator->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Manual->value,
+        ]);
+        $this->assertDatabaseMissing('invigilator_assignments', [
+            'invigilator_id' => $automaticInvigilator->id,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+    }
+
+    #[Test]
+    public function optimized_distribution_does_not_assign_same_invigilator_twice_to_same_hall_slot_across_role_passes(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createUsedHall($college, 'قاعة أدوار متعددة', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 1, 1, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'allow_role_fallback' => true,
+        ]);
+        $this->createInvigilators($college, InvigilationRole::HallHead, 1);
+        $this->createInvigilators($college, InvigilationRole::Secretary, 1);
+        $this->createInvigilators($college, InvigilationRole::Regular, 1);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01');
+
+        $result = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(3, $result['assigned_count']);
+        $this->assertSame(3, InvigilatorAssignment::query()->count());
+        $this->assertFalse($this->hasDuplicateHallSlotInvigilatorAssignments());
+        $this->assertFalse($this->hasDuplicateInvigilatorSlotAssignments());
+    }
+
+    #[Test]
+    public function optimized_distribution_can_be_rerun_for_same_range_without_duplicate_assignments(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $this->createUsedHall($college, 'قاعة إعادة 1', ExamHallType::Small);
+        $this->createUsedHall($college, 'قاعة إعادة 2', ExamHallType::Small);
+        $this->createRequirement($college, ExamHallType::Small, 0, 0, 1, 0);
+        InvigilatorDistributionSetting::query()->create([
+            'college_id' => $college->id,
+            'default_max_assignments_per_invigilator' => 10,
+            'allow_multiple_assignments_per_day' => true,
+            'max_assignments_per_day' => 3,
+            'allow_role_fallback' => false,
+        ]);
+        $this->createRegularInvigilator($college, 'مراقب إعادة 1', '0999555601', 10);
+        $this->createRegularInvigilator($college, 'مراقب إعادة 2', '0999555602', 10);
+        $this->createSuccessfulStudentDistributionRun($college, '2026-06-01', '2026-06-01', usedHalls: 2);
+
+        $firstResult = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+        $secondResult = app(InvigilatorDistributionService::class)->distributeForFaculty(
+            $college,
+            Carbon::parse('2026-06-01'),
+            Carbon::parse('2026-06-01'),
+        );
+
+        $this->assertSame('success', $firstResult['status']);
+        $this->assertSame('success', $secondResult['status']);
+        $this->assertSame(2, $firstResult['assigned_count']);
+        $this->assertSame(2, $secondResult['assigned_count']);
+        $this->assertSame(2, InvigilatorAssignment::query()->count());
+        $this->assertFalse($this->hasDuplicateHallSlotInvigilatorAssignments());
+    }
+
+    #[Test]
+    public function generated_assignment_rows_are_unique_before_bulk_insert(): void
+    {
+        $service = app(InvigilatorDistributionService::class);
+        $method = new \ReflectionMethod($service, 'deduplicateGeneratedAssignmentRows');
+        $method->setAccessible(true);
+        $timestamp = now();
+        $duplicateRows = [
+            [
+                'college_id' => 1,
+                'subject_exam_offering_id' => null,
+                'exam_date' => '2026-07-23',
+                'start_time' => '10:00:00',
+                'end_time' => null,
+                'exam_hall_id' => 60,
+                'exam_hall_name' => 'قاعة 60',
+                'invigilator_id' => 319,
+                'invigilator_name' => 'مراقب مكرر',
+                'invigilation_role' => InvigilationRole::Regular->value,
+                'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+                'assigned_by' => null,
+                'notes' => null,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ],
+            [
+                'college_id' => 1,
+                'subject_exam_offering_id' => null,
+                'exam_date' => '2026-07-23',
+                'start_time' => '10:00:00',
+                'end_time' => null,
+                'exam_hall_id' => 60,
+                'exam_hall_name' => 'قاعة 60',
+                'invigilator_id' => 319,
+                'invigilator_name' => 'مراقب مكرر',
+                'invigilation_role' => InvigilationRole::Secretary->value,
+                'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+                'assigned_by' => null,
+                'notes' => null,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ],
+        ];
+
+        $uniqueRows = $method->invoke($service, $duplicateRows, ['college_id' => 1]);
+
+        $this->assertCount(1, $uniqueRows);
+        $this->assertSame(60, $uniqueRows[0]['exam_hall_id']);
+        $this->assertSame(319, $uniqueRows[0]['invigilator_id']);
+        $this->assertArrayNotHasKey('exam_hall_name', $uniqueRows[0]);
+        $this->assertArrayNotHasKey('invigilator_name', $uniqueRows[0]);
+    }
+
+    #[Test]
+    public function invigilator_assignment_unique_database_constraint_remains_in_place(): void
+    {
+        $context = $this->createSlotContext();
+        $college = $context['college'];
+        $hall = $this->createUsedHall($college, 'قاعة قيد فريد', ExamHallType::Small);
+        $invigilator = $this->createRegularInvigilator($college, 'مراقب قيد فريد', '0999555701', 10);
+
+        $payload = [
+            'college_id' => $college->id,
+            'exam_date' => '2026-06-01',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $hall->id,
+            'invigilator_id' => $invigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ];
+
+        InvigilatorAssignment::query()->create($payload);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        InvigilatorAssignment::query()->create($payload);
+    }
+
+    #[Test]
     public function fair_distribution_button_uses_selected_date_range_and_keeps_official_distribution_unchanged(): void
     {
         $context = $this->createSlotContext();
@@ -2817,6 +3060,24 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertFalse($duplicatePhones);
         $this->assertDatabaseHas('invigilator_distribution_settings', ['college_id' => $college->id]);
         $this->assertSame(3, InvigilatorHallRequirement::query()->where('college_id', $college->id)->count());
+    }
+
+    protected function hasDuplicateHallSlotInvigilatorAssignments(): bool
+    {
+        return InvigilatorAssignment::query()
+            ->select('exam_hall_id', 'exam_date', 'start_time', 'invigilator_id', DB::raw('count(*) as aggregate'))
+            ->groupBy('exam_hall_id', 'exam_date', 'start_time', 'invigilator_id')
+            ->havingRaw('count(*) > 1')
+            ->exists();
+    }
+
+    protected function hasDuplicateInvigilatorSlotAssignments(): bool
+    {
+        return InvigilatorAssignment::query()
+            ->select('invigilator_id', 'exam_date', 'start_time', DB::raw('count(*) as aggregate'))
+            ->groupBy('invigilator_id', 'exam_date', 'start_time')
+            ->havingRaw('count(*) > 1')
+            ->exists();
     }
 
     protected function createSlotContext(): array

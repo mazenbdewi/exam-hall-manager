@@ -398,6 +398,7 @@ return [
         'invigilator_distribution_warning' => 'توزيع المراقبين يحتاج إلى مراجعة',
         'invigilator_distribution_blocked' => 'لا يمكن تنفيذ توزيع المراقبين',
         'invigilator_distribution_completed_with_shortage' => 'تم توزيع المراقبين مع وجود نقص مقداره :count.',
+        'invigilator_distribution_duplicate_generated_assignments' => 'تعذر حفظ توزيع المراقبين بسبب وجود تكليفات مكررة تم توليدها. تمت حماية قاعدة البيانات من التكرار، يرجى إعادة المحاولة بعد تصحيح الخوارزمية.',
         'no_invigilator_shortage' => 'لا توجد مهام مراقبة غير مغطاة ضمن الفترة المحددة.',
         'invigilator_distribution_no_used_halls' => 'لا توجد قاعات مستخدمة ضمن الفترة المحددة. تأكد من تنفيذ توزيع الطلاب على القاعات أولاً.',
     ],
