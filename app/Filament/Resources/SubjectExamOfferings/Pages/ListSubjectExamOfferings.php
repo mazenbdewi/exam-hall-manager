@@ -3,7 +3,11 @@
 namespace App\Filament\Resources\SubjectExamOfferings\Pages;
 
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
+use App\Services\SubjectExamOfferingRosterSyncService;
+use App\Support\ExamCollegeScope;
+use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\RenderHook;
@@ -44,6 +48,34 @@ class ListSubjectExamOfferings extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('syncRosters')
+                ->label('مزامنة قوائم الطلاب مع البرامج الامتحانية')
+                ->icon('heroicon-o-arrow-path')
+                ->color('gray')
+                ->requiresConfirmation()
+                ->modalHeading('مزامنة قوائم الطلاب مع البرامج الامتحانية')
+                ->modalDescription('سيتم تحديث طلاب البرامج الامتحانية من قوائم الطلاب الجاهزة المطابقة دون فتح كل برنامج أو قائمة يدوياً.')
+                ->action(function (): void {
+                    $filters = [];
+
+                    if (! ExamCollegeScope::isSuperAdmin() && ExamCollegeScope::currentCollegeId()) {
+                        $filters['college_id'] = ExamCollegeScope::currentCollegeId();
+                    }
+
+                    $summary = app(SubjectExamOfferingRosterSyncService::class)->syncOfferings($filters);
+
+                    Notification::make()
+                        ->title('تمت مزامنة قوائم الطلاب')
+                        ->body(implode(' | ', [
+                            'البرامج المفحوصة: '.$summary['offerings_scanned'],
+                            'القوائم المطابقة: '.$summary['rosters_matched'],
+                            'الطلاب المزامنون: '.$summary['students_synced'],
+                            'بدون قائمة جاهزة: '.$summary['offerings_without_ready_roster'],
+                            'الأخطاء: '.$summary['errors_count'],
+                        ]))
+                        ->color($summary['errors_count'] > 0 ? 'warning' : 'success')
+                        ->send();
+                }),
             CreateAction::make()
                 ->label('إضافة مادة امتحانية')
                 ->icon('heroicon-o-plus-circle'),

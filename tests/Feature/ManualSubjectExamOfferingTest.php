@@ -8,6 +8,7 @@ use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
 use App\Filament\Resources\SubjectExamOfferings\Pages\CreateSubjectExamOffering;
 use App\Filament\Resources\SubjectExamOfferings\Pages\EditSubjectExamOffering;
+use App\Filament\Resources\SubjectExamOfferings\Pages\ListSubjectExamOfferings;
 use App\Filament\Resources\SubjectExamOfferings\RelationManagers\CarryStudentsRelationManager;
 use App\Filament\Resources\SubjectExamOfferings\RelationManagers\RegularStudentsRelationManager;
 use App\Models\AcademicYear;
@@ -27,6 +28,7 @@ use App\Support\RoleNames;
 use App\Support\ShieldPermission;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
@@ -147,6 +149,73 @@ class ManualSubjectExamOfferingTest extends TestCase
             ->orderBy('student_number')
             ->pluck('student_number')
             ->all());
+    }
+
+    #[Test]
+    public function bulk_sync_scans_existing_offerings_and_links_matching_ready_rosters(): void
+    {
+        $context = $this->createAcademicContext();
+        $matchedSubject = $this->createSubject($context, 'مادة لها قائمة');
+        $unmatchedSubject = $this->createSubject($context, 'مادة بدون قائمة جاهزة');
+        $this->createOffering($context, $matchedSubject);
+        $this->createOffering($context, $unmatchedSubject);
+        $this->createRoster($context, $matchedSubject, [
+            ['BULK-001', 'طالب أول', ExamStudentType::Regular->value],
+            ['BULK-002', 'طالب ثان', ExamStudentType::Carry->value],
+        ]);
+
+        $summary = app(SubjectExamOfferingRosterSyncService::class)->syncOfferings();
+
+        $this->assertSame(2, $summary['offerings_scanned']);
+        $this->assertSame(1, $summary['rosters_matched']);
+        $this->assertSame(2, $summary['students_synced']);
+        $this->assertSame(1, $summary['offerings_without_ready_roster']);
+        $this->assertSame(0, $summary['errors_count']);
+        $this->assertSame(2, ExamStudent::query()->count());
+    }
+
+    #[Test]
+    public function bulk_sync_artisan_command_supports_subject_filter(): void
+    {
+        $context = $this->createAcademicContext();
+        $targetSubject = $this->createSubject($context, 'مادة الأمر');
+        $otherSubject = $this->createSubject($context, 'مادة خارج الفلتر');
+        $this->createOffering($context, $targetSubject);
+        $this->createOffering($context, $otherSubject);
+        $this->createRoster($context, $targetSubject, [
+            ['CMD-001', 'طالب الأمر', ExamStudentType::Regular->value],
+        ]);
+        $this->createRoster($context, $otherSubject, [
+            ['CMD-OTHER', 'طالب آخر', ExamStudentType::Regular->value],
+        ]);
+
+        $exitCode = Artisan::call('exam-offerings:sync-rosters', [
+            '--subject-id' => $targetSubject->id,
+        ]);
+
+        $this->assertSame(0, $exitCode);
+        $this->assertDatabaseHas('exam_students', ['student_number' => 'CMD-001']);
+        $this->assertDatabaseMissing('exam_students', ['student_number' => 'CMD-OTHER']);
+    }
+
+    #[Test]
+    public function list_page_sync_action_syncs_accessible_offerings_without_editing_each_record(): void
+    {
+        $context = $this->createAcademicContext();
+        $subject = $this->createSubject($context, 'مادة زر المزامنة');
+        $offering = $this->createOffering($context, $subject);
+        $this->createRoster($context, $subject, [
+            ['ACTION-001', 'طالب الزر', ExamStudentType::Regular->value],
+        ]);
+        $user = $this->adminUser($context['college']);
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(ListSubjectExamOfferings::class)
+            ->callAction('syncRosters');
+
+        $this->assertSame(1, $offering->refresh()->examStudents()->count());
     }
 
     protected function createAcademicContext(): array
