@@ -54,8 +54,12 @@
                     <th>{{ __('exam.fields.students_count') }}</th>
                     <th>{{ __('exam.fields.period') }}</th>
                     <th>{{ __('exam.global_hall_distribution.required_hall_type') }}</th>
-                    <th>{{ __('exam.fields.available_capacity') }}</th>
+                    <th>{{ __('exam.fields.nominal_capacity') }}</th>
+                    <th>{{ __('exam.fields.reserved_or_used_capacity') }}</th>
+                    <th>{{ __('exam.fields.usable_remaining_capacity') }}</th>
                     <th>{{ __('exam.global_hall_distribution.required_capacity') }}</th>
+                    <th>{{ __('exam.fields.actual_shortage') }}</th>
+                    <th>{{ __('exam.fields.surplus_capacity') }}</th>
                     <th>{{ __('exam.global_hall_distribution.reason_code') }}</th>
                     <th>{{ __('exam.fields.reason') }}</th>
                     <th>{{ __('exam.global_hall_distribution.suggested_action') }}</th>
@@ -69,8 +73,12 @@
                         <td>{{ $detail['students_count'] ?? 0 }}</td>
                         <td>{{ ($detail['exam_date'] ?? '—').' '.substr((string) ($detail['start_time'] ?? ''), 0, 5) }}</td>
                         <td>{{ $detail['required_hall_type'] ?? '—' }}</td>
-                        <td>{{ $detail['available_capacity'] ?? 0 }}</td>
+                        <td>{{ $detail['nominal_capacity'] ?? $detail['available_capacity'] ?? 0 }}</td>
+                        <td>{{ $detail['reserved_or_used_capacity'] ?? $detail['used_capacity_in_candidate_halls'] ?? 0 }}</td>
+                        <td>{{ $detail['usable_remaining_capacity'] ?? $detail['available_capacity'] ?? 0 }}</td>
                         <td>{{ $detail['required_capacity'] ?? 0 }}</td>
+                        <td>{{ $detail['actual_shortage'] ?? $detail['capacity_shortage'] ?? 0 }}</td>
+                        <td>{{ $detail['surplus_capacity'] ?? 0 }}</td>
                         <td>{{ $detail['reason_code'] ?? 'unknown_distribution_error' }}</td>
                         <td>{{ $detail['reason_message'] ?? '—' }}</td>
                         <td>{{ $detail['suggested_action'] ?? '—' }}</td>

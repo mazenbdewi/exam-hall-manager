@@ -502,7 +502,8 @@ class ExamHallDistributionService
                     reasonCode: $reasonCode,
                     offering: $slotOfferings->first(),
                     studentsCount: (int) $totalStudents,
-                    availableCapacity: (int) $availableHalls->sum('capacity'),
+                    nominalCapacity: (int) $availableHalls->sum('capacity'),
+                    usableRemainingCapacity: (int) $availableHalls->sum('capacity'),
                     capacityShortage: 0,
                     suitableHallsCount: $availableHalls->count(),
                     busyHallsCount: 0,
@@ -1783,12 +1784,14 @@ class ExamHallDistributionService
         $rosterDiagnostics = $studentsCount === 0 ? $this->rosterDiagnosticsForOffering($offering) : [];
         $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
         $suitableHalls = $this->suitableHallsForOffering($offering, $slotOfferings, $activeHalls);
-        $availableCapacity = (int) $suitableHalls->sum('capacity');
+        $nominalCapacity = (int) $suitableHalls->sum('capacity');
         $requiredCapacity = $studentsCount;
         $hallCapacityProfile = $this->hallCapacityProfileForOffering($offering, $suitableHalls);
         $remainingStudents = max(0, $studentsCount - $assignedStudents);
         $usableRemainingCapacity = (int) $hallCapacityProfile['usable_remaining_capacity'];
+        $usedCapacity = (int) $hallCapacityProfile['used_capacity'];
         $capacityShortage = max(0, $remainingStudents - $usableRemainingCapacity);
+        $surplusCapacity = max(0, $usableRemainingCapacity - $remainingStudents);
         $busyHallsCount = $this->busyHallsCountForOffering($offering, $suitableHalls);
         $invalidCapacityHallsCount = $suitableHalls
             ->filter(fn (ExamHall $hall): bool => (int) $hall->capacity <= 0)
@@ -1806,7 +1809,7 @@ class ExamHallDistributionService
             assignedStudents: $assignedStudents,
             activeHallsCount: $activeHalls->count(),
             suitableHallsCount: $suitableHalls->count(),
-            availableCapacity: $availableCapacity,
+            nominalCapacity: $nominalCapacity,
             usableRemainingCapacity: $usableRemainingCapacity,
             capacityShortage: $capacityShortage,
             invalidCapacityHallsCount: $invalidCapacityHallsCount,
@@ -1819,7 +1822,8 @@ class ExamHallDistributionService
             reasonCode: $reasonCode,
             offering: $offering,
             studentsCount: $studentsCount,
-            availableCapacity: $availableCapacity,
+            nominalCapacity: $nominalCapacity,
+            usableRemainingCapacity: $usableRemainingCapacity,
             capacityShortage: $capacityShortage,
             suitableHallsCount: $suitableHalls->count(),
             busyHallsCount: $busyHallsCount,
@@ -1848,14 +1852,20 @@ class ExamHallDistributionService
             'all_halls_count' => $allHallsCount,
             'inactive_halls_count' => $inactiveHallsCount,
             'invalid_capacity_halls_count' => $invalidCapacityHallsCount,
-            'available_capacity' => $availableCapacity,
+            'nominal_capacity' => $nominalCapacity,
+            'available_capacity' => $usableRemainingCapacity,
             'usable_remaining_capacity' => $usableRemainingCapacity,
-            'used_capacity_in_candidate_halls' => (int) $hallCapacityProfile['used_capacity'],
+            'actual_remaining_usable_capacity' => $usableRemainingCapacity,
+            'used_capacity_in_candidate_halls' => $usedCapacity,
+            'reserved_or_used_capacity' => $usedCapacity,
             'candidate_halls' => $hallCapacityProfile['candidate_halls'],
             'occupied_halls' => $hallCapacityProfile['occupied_halls'],
             'remaining_capacity_by_hall' => $hallCapacityProfile['remaining_capacity_by_hall'],
             'required_capacity' => $requiredCapacity,
             'capacity_shortage' => $capacityShortage,
+            'actual_shortage' => $capacityShortage,
+            'surplus_capacity' => $surplusCapacity,
+            'remaining_students_count' => $remainingStudents,
             'reason_code' => $reasonCode,
             'reason_message' => $reasonMessage,
             'suggested_action' => $this->distributionFailureSuggestedAction($reasonCode, $capacityShortage),
@@ -1978,7 +1988,7 @@ class ExamHallDistributionService
         int $assignedStudents,
         int $activeHallsCount,
         int $suitableHallsCount,
-        int $availableCapacity,
+        int $nominalCapacity,
         int $usableRemainingCapacity,
         int $capacityShortage,
         int $invalidCapacityHallsCount,
@@ -2044,7 +2054,11 @@ class ExamHallDistributionService
             return (bool) $offering->is_pinned ? 'pinned_exam_no_capacity' : 'insufficient_capacity';
         }
 
-        if ($assignedStudents < $studentsCount && $availableCapacity >= $studentsCount && $usableRemainingCapacity < max(0, $studentsCount - $assignedStudents)) {
+        if ($assignedStudents < $studentsCount && $usableRemainingCapacity >= max(0, $studentsCount - $assignedStudents)) {
+            return 'remaining_capacity_calculation_mismatch';
+        }
+
+        if ($assignedStudents < $studentsCount && $nominalCapacity >= $studentsCount && $usableRemainingCapacity < max(0, $studentsCount - $assignedStudents)) {
             return 'available_capacity_mismatch';
         }
 
@@ -2055,7 +2069,8 @@ class ExamHallDistributionService
         string $reasonCode,
         SubjectExamOffering $offering,
         int $studentsCount,
-        int $availableCapacity,
+        int $nominalCapacity,
+        int $usableRemainingCapacity,
         int $capacityShortage,
         int $suitableHallsCount,
         int $busyHallsCount,
@@ -2064,7 +2079,7 @@ class ExamHallDistributionService
             'no_available_halls' => __('exam.global_hall_distribution.failure_reasons.no_available_halls'),
             'insufficient_capacity' => __('exam.global_hall_distribution.failure_reasons.insufficient_capacity', [
                 'students' => $studentsCount,
-                'capacity' => $availableCapacity,
+                'capacity' => $usableRemainingCapacity,
                 'shortage' => $capacityShortage,
             ]),
             'missing_student_roster' => __('exam.global_hall_distribution.failure_reasons.missing_student_roster'),
@@ -2077,24 +2092,25 @@ class ExamHallDistributionService
                 ? __('exam.global_hall_distribution.failure_reasons.hall_type_required_not_available')
                 : __('exam.global_hall_distribution.failure_reasons.hall_type_capacity_shortage', [
                     'students' => $studentsCount,
-                    'capacity' => $availableCapacity,
+                    'capacity' => $usableRemainingCapacity,
                     'shortage' => $capacityShortage,
                 ]),
             'hall_type_capacity_shortage' => __('exam.global_hall_distribution.failure_reasons.hall_type_capacity_shortage', [
                 'students' => $studentsCount,
-                'capacity' => $availableCapacity,
+                'capacity' => $usableRemainingCapacity,
                 'shortage' => $capacityShortage,
             ]),
             'no_drawing_studio_halls_available' => __('exam.global_hall_distribution.failure_reasons.no_drawing_studio_halls_available'),
             'drawing_studio_halls_occupied' => __('exam.global_hall_distribution.failure_reasons.drawing_studio_halls_occupied'),
             'drawing_studio_capacity_insufficient' => __('exam.global_hall_distribution.failure_reasons.drawing_studio_capacity_insufficient', [
                 'students' => $studentsCount,
-                'capacity' => $availableCapacity,
-                'remaining' => max(0, $availableCapacity - $capacityShortage),
+                'capacity' => $nominalCapacity,
+                'remaining' => $usableRemainingCapacity,
                 'shortage' => $capacityShortage,
             ]),
             'hall_reservation_conflict' => __('exam.global_hall_distribution.failure_reasons.hall_reservation_conflict'),
             'available_capacity_mismatch' => __('exam.global_hall_distribution.failure_reasons.available_capacity_mismatch'),
+            'remaining_capacity_calculation_mismatch' => __('exam.global_hall_distribution.failure_reasons.remaining_capacity_calculation_mismatch'),
             'student_assignment_insert_failed' => __('exam.global_hall_distribution.failure_reasons.student_assignment_insert_failed'),
             'hall_assignment_insert_failed' => __('exam.global_hall_distribution.failure_reasons.hall_assignment_insert_failed'),
             'invalid_hall_capacity_data' => __('exam.global_hall_distribution.failure_reasons.invalid_hall_capacity_data'),
@@ -2106,7 +2122,7 @@ class ExamHallDistributionService
             'invalid_hall_capacity' => __('exam.global_hall_distribution.failure_reasons.invalid_hall_capacity'),
             'pinned_exam_no_capacity' => __('exam.global_hall_distribution.failure_reasons.pinned_exam_no_capacity', [
                 'students' => $studentsCount,
-                'capacity' => $availableCapacity,
+                'capacity' => $usableRemainingCapacity,
                 'shortage' => $capacityShortage,
             ]),
             'missing_distribution_settings' => __('exam.global_hall_distribution.failure_reasons.missing_distribution_settings'),
@@ -2134,6 +2150,7 @@ class ExamHallDistributionService
             'drawing_studio_capacity_insufficient' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
             'hall_reservation_conflict' => __('exam.global_hall_distribution.failure_actions.move_exam_or_free_halls'),
             'available_capacity_mismatch' => __('exam.global_hall_distribution.failure_actions.review_logs'),
+            'remaining_capacity_calculation_mismatch' => __('exam.global_hall_distribution.failure_actions.review_logs'),
             'student_assignment_insert_failed',
             'hall_assignment_insert_failed' => __('exam.global_hall_distribution.failure_actions.review_logs'),
             'invalid_hall_capacity_data' => __('exam.global_hall_distribution.failure_actions.set_hall_capacity'),

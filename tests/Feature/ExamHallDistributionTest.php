@@ -411,7 +411,8 @@ class ExamHallDistributionTest extends TestCase
         $this->assertSame(4, $result['unassigned_students_count']);
         $this->assertSame('drawing_studio_capacity_insufficient', $result['failure_details'][0]['reason_code']);
         $this->assertSame(6, $result['failure_details'][0]['required_capacity']);
-        $this->assertSame(2, $result['failure_details'][0]['available_capacity']);
+        $this->assertSame(2, $result['failure_details'][0]['nominal_capacity']);
+        $this->assertSame(0, $result['failure_details'][0]['available_capacity']);
         $this->assertSame(0, $result['failure_details'][0]['usable_remaining_capacity']);
         $this->assertSame(4, $result['failure_details'][0]['capacity_shortage']);
         $this->assertSame([
@@ -818,6 +819,97 @@ class ExamHallDistributionTest extends TestCase
         $this->assertSame(1, $run->summary_json['validation']['remaining_capacity'] ?? null);
     }
 
+    #[Test]
+    public function failure_detail_calculates_shortage_from_remaining_usable_capacity_not_nominal_minus_remaining(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'رسم هندسي 1',
+            studentsCount: 258,
+            date: '2026-07-08',
+            startTime: '09:00:00',
+            isDrawingSubject: true,
+        )->loadCount('examStudents');
+
+        $hall = ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم بحري',
+            'location' => 'المبنى البحري',
+            'capacity' => 559,
+            'hall_type' => ExamHallType::Large->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        HallAssignment::query()->create([
+            'exam_hall_id' => $hall->id,
+            'exam_date' => '2026-07-08',
+            'exam_start_time' => '09:00:00',
+            'college_id' => $context['college']->id,
+            'total_capacity' => 559,
+            'assigned_students_count' => 159,
+            'remaining_capacity' => 400,
+        ]);
+
+        $detail = $this->failureDetailForTest($offering, collect([$offering]), collect([$hall]));
+
+        $this->assertSame(258, $detail['students_count']);
+        $this->assertSame(559, $detail['nominal_capacity']);
+        $this->assertSame(159, $detail['reserved_or_used_capacity']);
+        $this->assertSame(400, $detail['available_capacity']);
+        $this->assertSame(400, $detail['usable_remaining_capacity']);
+        $this->assertSame(0, $detail['capacity_shortage']);
+        $this->assertSame(0, $detail['actual_shortage']);
+        $this->assertSame(142, $detail['surplus_capacity']);
+        $this->assertNotSame('drawing_studio_capacity_insufficient', $detail['reason_code']);
+        $this->assertSame('remaining_capacity_calculation_mismatch', $detail['reason_code']);
+    }
+
+    #[Test]
+    public function pinned_failure_detail_does_not_report_no_capacity_when_usable_capacity_covers_students(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'الاقتصاد إدارة المشاريع البرمجية',
+            studentsCount: 207,
+            date: '2026-07-27',
+            startTime: '12:00:00',
+        );
+        $offering->update(['is_pinned' => true]);
+        $offering = $offering->fresh()->loadCount('examStudents');
+
+        $hall = ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة كبيرة',
+            'location' => 'المبنى الرئيسي',
+            'capacity' => 2963,
+            'hall_type' => ExamHallType::Amphitheater->value,
+            'is_drawing_studio' => false,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $detail = $this->failureDetailForTest($offering, collect([$offering]), collect([$hall]));
+
+        $this->assertSame(207, $detail['students_count']);
+        $this->assertSame(2963, $detail['nominal_capacity']);
+        $this->assertSame(2963, $detail['available_capacity']);
+        $this->assertSame(2963, $detail['usable_remaining_capacity']);
+        $this->assertSame(0, $detail['capacity_shortage']);
+        $this->assertSame(0, $detail['actual_shortage']);
+        $this->assertSame(2756, $detail['surplus_capacity']);
+        $this->assertNotContains($detail['reason_code'], [
+            'pinned_exam_no_capacity',
+            'insufficient_capacity',
+            'drawing_studio_capacity_insufficient',
+        ]);
+        $this->assertSame('remaining_capacity_calculation_mismatch', $detail['reason_code']);
+        $this->assertStringContainsString('ليس بسبب نقص السعة', $detail['reason_message']);
+    }
+
     protected function createAcademicContext(): array
     {
         $college = College::query()->create([
@@ -898,5 +990,21 @@ class ExamHallDistributionTest extends TestCase
         }
 
         return $offering;
+    }
+
+    protected function failureDetailForTest(SubjectExamOffering $offering, mixed $slotOfferings, mixed $activeHalls): array
+    {
+        $method = new \ReflectionMethod(ExamHallDistributionService::class, 'distributionFailureDetail');
+        $method->setAccessible(true);
+
+        return $method->invoke(
+            app(ExamHallDistributionService::class),
+            $offering,
+            $slotOfferings,
+            $activeHalls,
+            0,
+            (int) $offering->exam_students_count,
+            null,
+        );
     }
 }

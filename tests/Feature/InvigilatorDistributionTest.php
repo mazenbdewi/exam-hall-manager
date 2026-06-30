@@ -2350,7 +2350,9 @@ class InvigilatorDistributionTest extends TestCase
         $this->assertSame('partial', $result['status']);
         $this->assertSame('insufficient_capacity', $result['failure_details'][0]['reason_code']);
         $this->assertSame(5, $result['failure_details'][0]['required_capacity']);
-        $this->assertSame(3, $result['failure_details'][0]['available_capacity']);
+        $this->assertSame(3, $result['failure_details'][0]['nominal_capacity']);
+        $this->assertSame(0, $result['failure_details'][0]['available_capacity']);
+        $this->assertSame(0, $result['failure_details'][0]['usable_remaining_capacity']);
         $this->assertSame(2, $result['failure_details'][0]['capacity_shortage']);
         $this->assertStringContainsString('عدد الطلاب 5', $result['failure_details'][0]['reason_message']);
 
@@ -2358,7 +2360,8 @@ class InvigilatorDistributionTest extends TestCase
             ->with('Global hall distribution failed', \Mockery::on(fn (array $context): bool => $context['reason_code'] === 'insufficient_capacity'
                 && $context['students_count'] === 5
                 && $context['required_capacity'] === 5
-                && $context['available_capacity'] === 3))
+                && $context['available_capacity'] === 0
+                && $context['usable_remaining_capacity'] === 0))
             ->once();
     }
 
@@ -2682,8 +2685,10 @@ class InvigilatorDistributionTest extends TestCase
             ->assertSee('تفاصيل سبب فشل التوزيع')
             ->assertSee('insufficient_capacity')
             ->assertSee('عدد الطلاب 5')
-            ->assertSee('السعة المتاحة في القاعات المناسبة هي 3')
-            ->assertSee('النقص: 2')
+            ->assertSee('السعة الاسمية')
+            ->assertSee('السعة المتبقية القابلة للاستخدام')
+            ->assertSee('السعة المتبقية القابلة للاستخدام في القاعات المناسبة هي 0')
+            ->assertSee('النقص الفعلي: 2')
             ->assertSee('فتح المادة')
             ->assertDontSee('فشل التوزيع بسبب مشكلة في البيانات أو القاعات');
     }

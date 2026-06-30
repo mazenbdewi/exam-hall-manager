@@ -158,8 +158,12 @@
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.period') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.required_hall_type') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.available_halls') }}</th>
-                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.available_capacity') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.nominal_capacity') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.reserved_or_used_capacity') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.usable_remaining_capacity') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.required_capacity') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.actual_shortage') }}</th>
+                                    <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.surplus_capacity') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.reason_code') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.fields.reason') }}</th>
                                     <th class="px-3 py-2 text-right font-semibold">{{ __('exam.global_hall_distribution.suggested_action') }}</th>
@@ -192,19 +196,23 @@
                                                 </div>
                                             @endif
                                         </td>
-                                        <td class="px-3 py-3">{{ $detail['available_capacity'] ?? 0 }}</td>
+                                        <td class="px-3 py-3">{{ $detail['nominal_capacity'] ?? $detail['available_capacity'] ?? 0 }}</td>
+                                        <td class="px-3 py-3">{{ $detail['reserved_or_used_capacity'] ?? $detail['used_capacity_in_candidate_halls'] ?? 0 }}</td>
+                                        <td class="px-3 py-3">{{ $detail['usable_remaining_capacity'] ?? $detail['available_capacity'] ?? 0 }}</td>
                                         <td class="px-3 py-3">
                                             {{ $detail['required_capacity'] ?? 0 }}
                                             @if ((int) ($detail['capacity_shortage'] ?? 0) > 0)
                                                 <div class="mt-1 text-xs font-medium text-danger-700 dark:text-danger-300">
                                                     {{ __('exam.global_hall_distribution.capacity_shortage_sentence', [
                                                         'students' => $detail['students_count'] ?? 0,
-                                                        'capacity' => $detail['available_capacity'] ?? 0,
+                                                        'capacity' => $detail['usable_remaining_capacity'] ?? $detail['available_capacity'] ?? 0,
                                                         'shortage' => $detail['capacity_shortage'] ?? 0,
                                                     ]) }}
                                                 </div>
                                             @endif
                                         </td>
+                                        <td class="px-3 py-3">{{ $detail['actual_shortage'] ?? $detail['capacity_shortage'] ?? 0 }}</td>
+                                        <td class="px-3 py-3">{{ $detail['surplus_capacity'] ?? 0 }}</td>
                                         <td class="px-3 py-3 font-mono text-xs">{{ $detail['reason_code'] ?? 'unknown_distribution_error' }}</td>
                                         <td class="px-3 py-3">{{ $detail['reason_message'] ?? '—' }}</td>
                                         <td class="px-3 py-3">{{ $detail['suggested_action'] ?? '—' }}</td>
