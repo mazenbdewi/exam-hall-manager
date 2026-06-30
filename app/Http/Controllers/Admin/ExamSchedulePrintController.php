@@ -21,6 +21,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
@@ -55,13 +56,54 @@ class ExamSchedulePrintController extends Controller
         $fixedProgram = $this->latestMatchingFixedProgram($request);
 
         if (! $fixedProgram) {
-            return redirect(FixedExamProgramResource::getUrl('index'));
+            return $this->printReadyOfferings($request);
         }
 
         return redirect()->route('filament.adminpanel.fixed-exam-programs.print', [
             'fixedExamProgram' => $fixedProgram,
             'download' => $request->boolean('download') ? 1 : null,
         ]);
+    }
+
+    protected function printReadyOfferings(Request $request): Response|StreamedResponse
+    {
+        $filters = $this->normalizedFinalFilters($request);
+
+        Log::info('Ready exam program print requested.', [
+            'user_id' => auth()->id(),
+            'filters' => $filters,
+            'query' => $request->query(),
+        ]);
+
+        $offerings = $this->readyFinalOfferings($filters);
+
+        Log::info('Ready exam program print offerings resolved.', [
+            'user_id' => auth()->id(),
+            'filters' => $filters,
+            'offerings_count' => $offerings->count(),
+        ]);
+
+        if ($offerings->isEmpty()) {
+            return response('لا توجد برامج جاهزة للطباعة ضمن الفترة المحددة', 422);
+        }
+
+        $snapshot = app(FixedExamProgramSnapshotService::class)->snapshotFromOfferings(
+            offerings: $offerings,
+            collegeId: $filters['college_id'],
+            departmentId: $filters['department_id'],
+            documentStatus: 'fixed',
+        );
+
+        $filters['academic_year_id'] ??= data_get($snapshot, 'meta.academic_year_id');
+        $filters['semester_id'] ??= data_get($snapshot, 'meta.semester_id');
+
+        $data = $this->readyFinalViewData($snapshot, $filters);
+
+        if ($request->boolean('download')) {
+            return $this->downloadReadyFinalPdf($filters, $data);
+        }
+
+        return response()->view('admin.exam-schedules.print', $data);
     }
 
     protected function authorizePrintAccess(): void
@@ -201,6 +243,38 @@ class ExamSchedulePrintController extends Controller
     }
 
     /**
+     * @return array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int}
+     */
+    protected function normalizedFinalFilters(Request $request): array
+    {
+        $collegeId = $request->integer('college_id')
+            ?: ExamCollegeScope::currentCollegeId()
+            ?: (int) College::query()->orderBy('name')->value('id');
+
+        if (! ExamCollegeScope::isSuperAdmin()) {
+            $collegeId = (int) ExamCollegeScope::currentCollegeId();
+        }
+
+        abort_unless(ExamCollegeScope::userCanAccessCollegeId(auth()->user(), $collegeId), 403);
+
+        $departmentId = $request->integer('department_id') ?: null;
+
+        if ($departmentId) {
+            abort_unless(
+                Department::query()->whereKey($departmentId)->where('college_id', $collegeId)->exists(),
+                403,
+            );
+        }
+
+        return [
+            'college_id' => $collegeId,
+            'department_id' => $departmentId,
+            'academic_year_id' => $request->filled('academic_year_id') ? ($request->integer('academic_year_id') ?: null) : null,
+            'semester_id' => $request->filled('semester_id') ? ($request->integer('semester_id') ?: null) : null,
+        ];
+    }
+
+    /**
      * @param  array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int,draft_id:?int}  $filters
      */
     protected function latestMatchingDraft(array $filters): ?ExamScheduleDraft
@@ -250,6 +324,31 @@ class ExamSchedulePrintController extends Controller
         return SubjectExamOffering::query()
             ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'academicYear', 'semester', 'examScheduleDraftItem'])
             ->where('status', ExamOfferingStatus::Draft->value)
+            ->when($filters['academic_year_id'], fn ($query, int $academicYearId) => $query->where('academic_year_id', $academicYearId))
+            ->when($filters['semester_id'], fn ($query, int $semesterId) => $query->where('semester_id', $semesterId))
+            ->whereHas('subject', function ($query) use ($filters): void {
+                $query
+                    ->where('college_id', $filters['college_id'])
+                    ->when($filters['department_id'], fn ($query, int $departmentId) => $query->where('department_id', $departmentId));
+            })
+            ->orderBy('exam_date')
+            ->orderBy('exam_start_time')
+            ->orderBy('subject_id')
+            ->get();
+    }
+
+    /**
+     * @param  array{college_id:int,department_id:?int,academic_year_id:?int,semester_id:?int}  $filters
+     * @return Collection<int, SubjectExamOffering>
+     */
+    protected function readyFinalOfferings(array $filters): Collection
+    {
+        return SubjectExamOffering::query()
+            ->with(['subject.college', 'subject.department', 'subject.studyLevel', 'academicYear', 'semester', 'examScheduleDraftItem'])
+            ->whereIn('status', [
+                ExamOfferingStatus::Ready->value,
+                ExamOfferingStatus::Distributed->value,
+            ])
             ->when($filters['academic_year_id'], fn ($query, int $academicYearId) => $query->where('academic_year_id', $academicYearId))
             ->when($filters['semester_id'], fn ($query, int $semesterId) => $query->where('semester_id', $semesterId))
             ->whereHas('subject', function ($query) use ($filters): void {
@@ -332,6 +431,53 @@ class ExamSchedulePrintController extends Controller
         return [
             'fixedProgram' => null,
             'printMode' => 'draft',
+            'draft' => null,
+            'snapshot' => $snapshot,
+            'filters' => $filters,
+            'college' => (object) ['name' => data_get($meta, 'college_name', College::query()->find($filters['college_id'])?->name)],
+            'department' => (object) ['name' => data_get($meta, 'department_name', 'كل الأقسام')],
+            'academicYear' => (object) ['name' => data_get($meta, 'academic_year', '—')],
+            'semester' => (object) ['name' => data_get($meta, 'semester', '—')],
+            'levels' => $this->objects(data_get($snapshot, 'levels', [])),
+            'rows' => collect(data_get($snapshot, 'rows', [])),
+            'offerings' => collect(data_get($snapshot, 'entries', [])),
+            'systemSetting' => $institution->reportContext(
+                collegeName: data_get($meta, 'college_name', College::query()->find($filters['college_id'])?->name),
+                departmentName: data_get($meta, 'department_name', 'كل الأقسام'),
+                academicYear: data_get($meta, 'academic_year', '—'),
+            ),
+            'logoDataUri' => $institution->logoDataUri(),
+            'regularFontDataUri' => $this->fontDataUri('NotoSansArabic-Regular.ttf'),
+            'boldFontDataUri' => $this->fontDataUri('NotoSansArabic-Bold.ttf'),
+            'filterOptions' => $this->filterOptions($filters['college_id']),
+            'fixedProgramsUrl' => FixedExamProgramResource::getUrl('index'),
+            'printUrl' => route('filament.adminpanel.exam-schedules.print', $routeFilters),
+            'pdfUrl' => route('filament.adminpanel.exam-schedules.print', [
+                ...$routeFilters,
+                'download' => 1,
+            ]),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     * @param  array{college_id:int,department_id:?int,academic_year_id:int,semester_id:int}  $filters
+     * @return array<string, mixed>
+     */
+    protected function readyFinalViewData(array $snapshot, array $filters): array
+    {
+        $meta = data_get($snapshot, 'meta', []);
+        $institution = InstitutionSettings::make();
+        $routeFilters = array_filter([
+            'college_id' => $filters['college_id'],
+            'department_id' => $filters['department_id'],
+            'academic_year_id' => $filters['academic_year_id'],
+            'semester_id' => $filters['semester_id'],
+        ], fn ($value): bool => filled($value));
+
+        return [
+            'fixedProgram' => null,
+            'printMode' => 'fixed',
             'draft' => null,
             'snapshot' => $snapshot,
             'filters' => $filters,
@@ -444,6 +590,27 @@ class ExamSchedulePrintController extends Controller
         ])->render());
 
         $filename = 'manual-draft-exam-schedule-'.$filters['college_id'].'.pdf';
+
+        return response()->streamDownload(
+            fn () => print $pdf->Output($filename, Destination::STRING_RETURN),
+            $filename,
+            ['Content-Type' => 'application/pdf'],
+        );
+    }
+
+    /**
+     * @param  array{college_id:int,department_id:?int,academic_year_id:int,semester_id:int}  $filters
+     * @param  array<string, mixed>  $data
+     */
+    protected function downloadReadyFinalPdf(array $filters, array $data): StreamedResponse
+    {
+        $pdf = $this->makePdf();
+        $pdf->WriteHTML(view('admin.exam-schedules.print', [
+            ...$data,
+            'isPdfDownload' => true,
+        ])->render());
+
+        $filename = 'ready-exam-schedule-'.$filters['college_id'].'.pdf';
 
         return response()->streamDownload(
             fn () => print $pdf->Output($filename, Destination::STRING_RETURN),

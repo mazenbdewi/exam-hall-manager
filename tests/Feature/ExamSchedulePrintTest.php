@@ -479,6 +479,38 @@ class ExamSchedulePrintTest extends TestCase
             ->assertSee('مبادئ محاسبة 2')
             ->assertDontSee('إدارة مالية');
 
+        $readyResponse = $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'college_id' => $college->id,
+                'academic_year_id' => $academicYear->id,
+                'semester_id' => $semester->id,
+            ]));
+
+        $readyResponse
+            ->assertOk()
+            ->assertSee('طباعة البرنامج المثبت')
+            ->assertSee('كلية الاقتصاد')
+            ->assertSee('الفصل الثاني')
+            ->assertSee('إدارة مالية')
+            ->assertDontSee('مسودة البرنامج')
+            ->assertDontSee('مبادئ محاسبة 2');
+
+        $readyPdfResponse = $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'college_id' => $college->id,
+                'academic_year_id' => $academicYear->id,
+                'semester_id' => $semester->id,
+                'download' => 1,
+            ]));
+
+        $readyPdfResponse
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->assertStringStartsWith('%PDF', $readyPdfResponse->streamedContent());
+
         $pdfResponse = $this
             ->actingAs($user)
             ->get(route('filament.adminpanel.exam-schedules.print', [
@@ -494,6 +526,27 @@ class ExamSchedulePrintTest extends TestCase
             ->assertHeader('content-type', 'application/pdf');
 
         $this->assertStringStartsWith('%PDF', $pdfResponse->streamedContent());
+    }
+
+    #[Test]
+    public function final_print_returns_clear_message_when_no_ready_programs_exist(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الحقوق', 'is_active' => true]);
+        $academicYear = AcademicYear::query()->create(['name' => '2025-2026', 'is_active' => true, 'is_current' => true]);
+        $semester = Semester::query()->create(['name' => 'الفصل الثاني', 'sort_order' => 2, 'is_active' => true]);
+        $user = User::factory()->create(['college_id' => $college->id]);
+        $user->assignRole(Role::findOrCreate(RoleNames::ADMIN, 'web'));
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.exam-schedules.print', [
+                'college_id' => $college->id,
+                'academic_year_id' => $academicYear->id,
+                'semester_id' => $semester->id,
+            ]))
+            ->assertStatus(422)
+            ->assertSee('لا توجد برامج جاهزة للطباعة ضمن الفترة المحددة');
     }
 
     protected function createSubject(College $college, Department $department, StudyLevel $studyLevel, string $name): Subject
