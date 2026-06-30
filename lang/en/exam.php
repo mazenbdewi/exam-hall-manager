@@ -25,7 +25,7 @@ return array_replace_recursive($arabic, [
         'eligible_roles' => 'Eligible roles',
         'affected_period' => 'Affected period',
         'is_drawing_studio' => 'Drawing studio - lab',
-        'is_drawing_subject' => 'Drawing subject',
+        'is_drawing_subject' => 'Requires drawing studio / lab',
         'allow_normal_subjects_in_drawing_studios' => 'Allow drawing studios - labs for normal subjects when needed',
     ],
     'helpers' => [

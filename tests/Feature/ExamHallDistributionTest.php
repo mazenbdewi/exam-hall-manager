@@ -367,6 +367,172 @@ class ExamHallDistributionTest extends TestCase
     }
 
     #[Test]
+    public function drawing_subject_leaves_students_unassigned_when_drawing_studio_capacity_is_insufficient(): void
+    {
+        $context = $this->createAcademicContext();
+        $drawingOffering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'رسم بسعة ناقصة',
+            studentsCount: 6,
+            isDrawingSubject: true,
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم صغير',
+            'location' => 'مبنى الفنون',
+            'capacity' => 2,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة عادية واسعة',
+            'location' => 'المبنى الأول',
+            'capacity' => 20,
+            'hall_type' => ExamHallType::Large->value,
+            'is_drawing_studio' => false,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+        );
+
+        $this->assertSame('partial', $result['status']);
+        $this->assertSame(2, $result['assigned_students_count']);
+        $this->assertSame(4, $result['unassigned_students_count']);
+        $this->assertSame('hall_type_capacity_shortage', $result['failure_details'][0]['reason_code']);
+        $this->assertSame(6, $result['failure_details'][0]['required_capacity']);
+        $this->assertSame(2, $result['failure_details'][0]['available_capacity']);
+        $this->assertSame(4, $result['failure_details'][0]['capacity_shortage']);
+        $this->assertStringContainsString('مرسم', $result['failure_details'][0]['reason_message']);
+        $this->assertSame(2, $drawingOffering->studentHallAssignments()->count());
+        $this->assertTrue(HallAssignment::query()
+            ->with('examHall')
+            ->get()
+            ->every(fn (HallAssignment $assignment): bool => (bool) $assignment->examHall?->is_drawing_studio));
+        $this->assertDatabaseHas('student_distribution_run_issues', [
+            'issue_type' => 'hall_type_capacity_shortage',
+            'affected_students_count' => 4,
+        ]);
+    }
+
+    #[Test]
+    public function drawing_subject_with_carry_separation_uses_only_drawing_studios(): void
+    {
+        $context = $this->createAcademicContext();
+        $drawingOffering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'رسم مع حملة',
+            studentsCount: 4,
+            studentTypes: [
+                ExamStudentType::Regular->value,
+                ExamStudentType::Regular->value,
+                ExamStudentType::Carry->value,
+                ExamStudentType::Carry->value,
+            ],
+            isDrawingSubject: true,
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة عادية',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Large->value,
+            'is_drawing_studio' => false,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم الرسم',
+            'location' => 'مبنى الفنون',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Large->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $drawingOffering,
+            separateCarryStudents: true,
+        );
+
+        $this->assertSame('warning', $result['status']);
+        $this->assertSame(4, $result['assigned_students_count']);
+        $this->assertSame(0, $result['unassigned_students_count']);
+        $this->assertTrue(HallAssignment::query()
+            ->with('examHall')
+            ->get()
+            ->every(fn (HallAssignment $assignment): bool => (bool) $assignment->examHall?->is_drawing_studio));
+    }
+
+    #[Test]
+    public function global_distribution_rebuilds_stale_normal_hall_assignments_after_subject_becomes_drawing(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithStudents($context, 'تحول إلى رسم', 3);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة عادية',
+            'location' => 'المبنى الأول',
+            'capacity' => 3,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => false,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        app(ExamHallDistributionService::class)->distributeForOffering($offering);
+
+        $this->assertTrue(HallAssignment::query()
+            ->with('examHall')
+            ->get()
+            ->contains(fn (HallAssignment $assignment): bool => ! (bool) $assignment->examHall?->is_drawing_studio));
+
+        $offering->subject()->update(['is_drawing_subject' => true]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم بديل',
+            'location' => 'مبنى الفنون',
+            'capacity' => 3,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: false,
+        );
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(0, $result['skipped_slots_count']);
+        $this->assertSame(1, $result['distributed_slots_count']);
+        $this->assertSame(3, $offering->studentHallAssignments()->count());
+        $this->assertTrue(HallAssignment::query()
+            ->with('examHall')
+            ->get()
+            ->every(fn (HallAssignment $assignment): bool => (bool) $assignment->examHall?->is_drawing_studio));
+    }
+
+    #[Test]
     public function it_keeps_existing_mixed_hall_behavior_when_carry_separation_is_disabled(): void
     {
         $context = $this->createAcademicContext();

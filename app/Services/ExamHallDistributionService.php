@@ -164,7 +164,11 @@ class ExamHallDistributionService
             $summary['total_capacity'] += $slotCapacity;
             $summary['capacity_shortage'] += $slotCapacityShortage;
 
-            if (! $redistribute && $this->slotHasDistribution($collegeId, $examDate, $examStartTime)) {
+            $slotHasExistingDistribution = $this->slotHasDistribution($collegeId, $examDate, $examStartTime);
+            $slotHasInvalidDrawingDistribution = $slotHasExistingDistribution
+                && $this->slotDistributionViolatesDrawingStudioRule($slotOfferings, $collegeId, $examDate, $examStartTime);
+
+            if (! $redistribute && $slotHasExistingDistribution && ! $slotHasInvalidDrawingDistribution) {
                 $slotStats = $this->slotDistributionStats($slotOfferings, $activeHalls, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage, $separateCarryStudents);
                 $summary['skipped_slots_count']++;
                 $summary['distributed_students'] += $slotStats['distributed_students'];
@@ -1300,6 +1304,35 @@ class ExamHallDistributionService
             ->exists();
     }
 
+    protected function slotDistributionViolatesDrawingStudioRule(
+        Collection $slotOfferings,
+        int $collegeId,
+        string $examDate,
+        string $examStartTime,
+    ): bool {
+        $drawingOfferingIds = $slotOfferings
+            ->filter(fn (SubjectExamOffering $offering): bool => $this->isDrawingSubjectOffering($offering))
+            ->modelKeys();
+
+        if ($drawingOfferingIds === []) {
+            return false;
+        }
+
+        return HallAssignmentSubject::query()
+            ->whereIn('subject_exam_offering_id', $drawingOfferingIds)
+            ->whereHas('hallAssignment', fn ($assignmentQuery) => $assignmentQuery
+                ->where('college_id', $collegeId)
+                ->whereDate('exam_date', $examDate)
+                ->whereTime('exam_start_time', $examStartTime)
+                ->where(fn ($hallQuery) => $hallQuery
+                    ->whereDoesntHave('examHall')
+                    ->orWhereHas('examHall', fn ($examHallQuery) => $examHallQuery
+                        ->where(fn ($drawingStudioQuery) => $drawingStudioQuery
+                            ->where('is_drawing_studio', false)
+                            ->orWhereNull('is_drawing_studio')))))
+            ->exists();
+    }
+
     protected function slotDistributionStats(
         Collection $slotOfferings,
         Collection $activeHalls,
@@ -1859,6 +1892,10 @@ class ExamHallDistributionService
             return 'all_halls_busy';
         }
 
+        if ($capacityShortage > 0 && $this->isDrawingSubjectOffering($offering)) {
+            return 'hall_type_capacity_shortage';
+        }
+
         if ($capacityShortage > 0) {
             return (bool) $offering->is_pinned ? 'pinned_exam_no_capacity' : 'insufficient_capacity';
         }
@@ -1897,6 +1934,11 @@ class ExamHallDistributionService
                     'capacity' => $availableCapacity,
                     'shortage' => $capacityShortage,
                 ]),
+            'hall_type_capacity_shortage' => __('exam.global_hall_distribution.failure_reasons.hall_type_capacity_shortage', [
+                'students' => $studentsCount,
+                'capacity' => $availableCapacity,
+                'shortage' => $capacityShortage,
+            ]),
             'all_halls_busy' => __('exam.global_hall_distribution.failure_reasons.all_halls_busy', [
                 'total' => $suitableHallsCount,
                 'busy' => $busyHallsCount,
@@ -1926,6 +1968,7 @@ class ExamHallDistributionService
             'roster_filter_mismatch' => __('exam.global_hall_distribution.failure_actions.review_roster_filters'),
             'missing_exam_slot' => __('exam.global_hall_distribution.failure_actions.set_exam_slot'),
             'hall_type_required_not_available' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
+            'hall_type_capacity_shortage' => __('exam.global_hall_distribution.failure_actions.add_drawing_studios'),
             'all_halls_busy' => __('exam.global_hall_distribution.failure_actions.move_exam_or_free_halls'),
             'invalid_hall_capacity' => __('exam.global_hall_distribution.failure_actions.set_hall_capacity'),
             'pinned_exam_no_capacity' => __('exam.global_hall_distribution.failure_actions.unpin_or_add_capacity'),

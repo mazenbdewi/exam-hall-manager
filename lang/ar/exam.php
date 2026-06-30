@@ -85,7 +85,7 @@ return [
         'subjects' => 'المواد',
         'users' => 'المستخدمون',
         'subject' => 'المادة',
-        'is_drawing_subject' => 'مادة رسم',
+        'is_drawing_subject' => 'تحتاج مرسم / مخبر',
         'study_level' => 'المرحلة الدراسية',
         'academic_year' => 'العام الأكاديمي',
         'semester' => 'الفصل الدراسي',
