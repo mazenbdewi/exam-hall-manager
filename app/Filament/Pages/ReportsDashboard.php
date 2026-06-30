@@ -200,6 +200,18 @@ class ReportsDashboard extends Page
         ])->filter(fn ($value): bool => filled($value))->all());
     }
 
+    public function hasFixedProgramToPrint(): bool
+    {
+        if ($this->fixed_exam_program_id) {
+            return FixedExamProgram::query()
+                ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->where('college_id', ExamCollegeScope::currentCollegeId()))
+                ->whereKey($this->fixed_exam_program_id)
+                ->exists();
+        }
+
+        return $this->latestFixedProgram() !== null;
+    }
+
     public function draftExamSchedulePrintUrl(): string
     {
         $draft = $this->latestDraft();

@@ -6,6 +6,7 @@
         $hallAssignmentOptions = $this->hallAssignmentOptions();
         $hallAttendancePrintUrl = $this->hallAttendancePrintUrl();
         $singleHallAttendancePrintUrl = $this->singleHallAttendancePrintUrl();
+        $fixedProgramPrintUrl = $this->hasFixedProgramToPrint() ? $this->examSchedulePrintUrl() : null;
         $cardClasses = 'rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900';
         $cardHeaderClasses = 'flex items-start gap-3';
         $iconBoxClasses = 'rounded-lg bg-primary-50 p-2 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300';
@@ -69,14 +70,14 @@
                     </label>
 
                     <div class="flex flex-wrap gap-2">
-                        <x-filament::button tag="a" :href="$this->examSchedulePrintUrl()" target="_blank" rel="noopener" icon="heroicon-o-printer">
-                            فتح البرنامج المثبت
-                        </x-filament::button>
                         <x-filament::button tag="a" :href="$this->draftExamSchedulePrintUrl()" target="_blank" rel="noopener" color="warning" icon="heroicon-o-document-text">
-                            مسودة البرنامج
+                            طباعة المسودة
+                        </x-filament::button>
+                        <x-filament::button tag="a" :href="$fixedProgramPrintUrl ?: '#'" target="_blank" rel="noopener" icon="heroicon-o-printer" :disabled="! $fixedProgramPrintUrl">
+                            طباعة البرنامج المثبت
                         </x-filament::button>
                         <x-filament::button tag="a" :href="$this->fixedProgramsUrl()" color="gray" icon="heroicon-o-document-check">
-                            طباعة البرامج الامتحانية المثبتة
+                            أرشيف البرامج المثبتة
                         </x-filament::button>
                     </div>
                 </div>

@@ -38,11 +38,13 @@ class FixedExamProgramPrintController extends Controller
     protected function viewData(FixedExamProgram $fixedExamProgram): array
     {
         $snapshot = $fixedExamProgram->snapshot_data ?? [];
+        data_set($snapshot, 'meta.document_status', 'fixed');
         $meta = data_get($snapshot, 'meta', []);
         $institution = InstitutionSettings::make();
 
         return [
             'fixedProgram' => $fixedExamProgram,
+            'printMode' => 'fixed',
             'snapshot' => $snapshot,
             'filters' => [],
             'college' => (object) ['name' => data_get($meta, 'college_name', $fixedExamProgram->college_name)],

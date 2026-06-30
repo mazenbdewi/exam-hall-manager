@@ -119,6 +119,9 @@ class ExamSchedulePrintTest extends TestCase
             ->assertSee('رئيس القسم')
             ->assertSee('رئيس الدائرة الامتحانية')
             ->assertSee('عميد الكلية')
+            ->assertSee('طباعة البرنامج المثبت')
+            ->assertDontSee('مسودة البرنامج')
+            ->assertDontSee('طباعة مسودة البرنامج')
             ->assertDontSee('تحليل معدل')
             ->assertDontSee('كلية معدلة')
             ->assertDontSee('قسم معدل')
@@ -208,7 +211,8 @@ class ExamSchedulePrintTest extends TestCase
             ->actingAs($user)
             ->get('/adminpanel/reports')
             ->assertOk()
-            ->assertSee('مسودة البرنامج')
+            ->assertSee('طباعة المسودة')
+            ->assertSee('طباعة البرنامج المثبت')
             ->assertSee('القسم');
 
         $pdfResponse = $this
@@ -305,6 +309,62 @@ class ExamSchedulePrintTest extends TestCase
             ]))
             ->assertStatus(422)
             ->assertSee('لا يمكن طباعة هذه المسودة لأنها غير مكتملة أو فشل توليدها');
+    }
+
+    #[Test]
+    public function fixed_program_print_never_shows_draft_label_even_if_snapshot_was_created_from_draft_mode(): void
+    {
+        $college = College::query()->create(['name' => 'كلية الهندسة', 'is_active' => true]);
+        $department = Department::query()->create(['college_id' => $college->id, 'name' => 'قسم المعلوماتية', 'is_active' => true]);
+        $level = StudyLevel::query()->create(['name' => 'الأولى', 'sort_order' => 1, 'is_active' => true]);
+        $academicYear = AcademicYear::query()->create(['name' => '2025-2026', 'is_active' => true, 'is_current' => true]);
+        $semester = Semester::query()->create(['name' => 'الفصل الثاني', 'sort_order' => 2, 'is_active' => true]);
+        $draft = ExamScheduleDraft::query()->create([
+            'faculty_id' => $college->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'start_date' => '2026-06-01',
+            'end_date' => '2026-06-05',
+            'status' => ExamScheduleDraft::STATUS_APPROVED,
+            'settings_json' => ['department_id' => $department->id],
+        ]);
+        $subject = $this->createSubject($college, $department, $level, 'نظم تشغيل');
+        $this->createDraftItem($draft, $subject, $department, '2026-06-01', '09:00:00', '11:00:00');
+
+        $snapshot = app(\App\Services\FixedExamProgramSnapshotService::class)->snapshotFromDraft(
+            draft: $draft,
+            departmentId: $department->id,
+            documentStatus: 'draft',
+        );
+        $fixedProgram = FixedExamProgram::query()->create([
+            'exam_schedule_draft_id' => $draft->id,
+            'college_id' => $college->id,
+            'department_id' => $department->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'college_name' => $college->name,
+            'department_name' => $department->name,
+            'academic_year' => $academicYear->name,
+            'semester' => $semester->name,
+            'title' => data_get($snapshot, 'meta.title'),
+            'status' => 'fixed',
+            'fixed_at' => now(),
+            'snapshot_data' => $snapshot,
+        ]);
+        $user = User::factory()->create(['college_id' => $college->id]);
+        $user->assignRole(Role::findOrCreate(RoleNames::ADMIN, 'web'));
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('view', 'FixedExamProgram'), 'web'));
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'FixedExamProgram'), 'web'));
+        $user->givePermissionTo(Permission::findOrCreate('view_exam_schedule_generator', 'web'));
+
+        $this
+            ->actingAs($user)
+            ->get(route('filament.adminpanel.fixed-exam-programs.print', ['fixedExamProgram' => $fixedProgram]))
+            ->assertOk()
+            ->assertSee('نظم تشغيل')
+            ->assertSee('طباعة البرنامج المثبت')
+            ->assertDontSee('مسودة البرنامج')
+            ->assertDontSee('طباعة مسودة البرنامج');
     }
 
     #[Test]

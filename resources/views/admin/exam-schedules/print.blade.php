@@ -520,7 +520,7 @@
                 </div>
 
                 <button class="toolbar-button" type="submit">تحديث المعاينة</button>
-                <button class="toolbar-button primary" type="button" onclick="window.print()">{{ $isDraft ? 'طباعة مسودة البرنامج' : 'طباعة برنامج الامتحان' }}</button>
+                <button class="toolbar-button primary" type="button" onclick="window.print()">{{ $isDraft ? 'طباعة مسودة البرنامج' : 'طباعة البرنامج المثبت' }}</button>
                 <a class="toolbar-link" href="{{ $pdfUrl }}">تحميل PDF</a>
             </form>
             @endif
