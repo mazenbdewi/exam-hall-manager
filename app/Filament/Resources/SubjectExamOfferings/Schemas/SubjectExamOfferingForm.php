@@ -41,6 +41,7 @@ class SubjectExamOfferingForm
                             ->live()
                             ->required()
                             ->dehydrated(false)
+                            ->afterStateHydrated(fn (Set $set, ?SubjectExamOffering $record = null) => $set('college_id', $record?->subject?->college_id ?? ExamCollegeScope::currentCollegeId()))
                             ->afterStateUpdated(function (Set $set): void {
                                 $set('department_id', null);
                                 $set('subject_id', null);
@@ -64,6 +65,7 @@ class SubjectExamOfferingForm
                             ->preload()
                             ->live()
                             ->dehydrated(false)
+                            ->afterStateHydrated(fn (Set $set, ?SubjectExamOffering $record = null) => $set('department_id', $record?->subject?->department_id))
                             ->afterStateUpdated(fn (Set $set) => $set('subject_id', null)),
                         Select::make('subject_id')
                             ->label(__('exam.fields.subject'))
@@ -93,7 +95,16 @@ class SubjectExamOfferingForm
                             ->columnSpanFull()
                             ->searchable()
                             ->preload()
-                            ->required(),
+                            ->required()
+                            ->live()
+                            ->afterStateUpdated(function (?int $state, Set $set): void {
+                                $subject = filled($state)
+                                    ? Subject::query()->select(['id', 'college_id', 'department_id'])->find($state)
+                                    : null;
+
+                                $set('college_id', $subject?->college_id ?? ExamCollegeScope::currentCollegeId());
+                                $set('department_id', $subject?->department_id);
+                            }),
                         Select::make('academic_year_id')
                             ->label(__('exam.fields.academic_year'))
                             ->relationship(

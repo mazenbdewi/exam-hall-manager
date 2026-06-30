@@ -821,6 +821,7 @@ return [
         'different_college_not_allowed' => 'غير مسموح لك باستخدام كلية أخرى.',
         'department_not_in_college' => 'القسم المحدد لا ينتمي إلى الكلية المحددة.',
         'subject_outside_scope' => 'المادة المحددة خارج نطاق كليتك.',
+        'subject_missing_college_department' => 'يجب أن تكون المادة مرتبطة بكلية وقسم قبل حفظ البرنامج الامتحاني.',
         'offering_outside_scope' => 'البرنامج الامتحاني المحدد خارج نطاق كليتك.',
         'role_not_allowed' => 'غير مسموح لك بإسناد هذا الدور.',
         'only_super_admin_can_assign_super_admin' => 'فقط المدير العام يمكنه إسناد دور المدير العام.',

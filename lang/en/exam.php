@@ -31,6 +31,9 @@ return array_replace_recursive($arabic, [
     'helpers' => [
         'allow_normal_subjects_in_drawing_studios' => 'When enabled, normal subjects may use drawing studios - labs only if normal halls do not have enough capacity.',
     ],
+    'validation' => [
+        'subject_missing_college_department' => 'The selected subject must be linked to a college and department before saving the exam offering.',
+    ],
     'pagination' => [
         'rows_per_page' => 'Rows per page',
         'show_rows' => 'Show :count rows',

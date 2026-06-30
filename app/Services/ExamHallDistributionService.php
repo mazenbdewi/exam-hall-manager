@@ -1957,52 +1957,12 @@ class ExamHallDistributionService
      */
     protected function syncMissingExamStudentsFromReadyRosters(Collection $offerings): void
     {
-        foreach ($offerings as $offering) {
-            $examStudentsCount = (int) ($offering->exam_students_count ?? $offering->examStudents()->count());
-
-            if ($examStudentsCount > 0) {
-                continue;
-            }
-
-            $rosters = $this->readyRostersForOffering($offering);
-
-            if ($rosters->isEmpty()) {
-                continue;
-            }
-
-            foreach ($rosters as $roster) {
-                $students = $roster
-                    ->eligibleRosterStudents()
-                    ->orderBy('student_number')
-                    ->orderBy('full_name')
-                    ->get();
-
-                if ($students->isEmpty()) {
-                    continue;
-                }
-
-                foreach ($students as $student) {
-                    ExamStudent::query()->updateOrCreate(
-                        [
-                            'subject_exam_offering_id' => $offering->id,
-                            'student_number' => $student->student_number,
-                        ],
-                        [
-                            'full_name' => $student->full_name,
-                            'student_type' => $student->student_type,
-                            'notes' => $student->notes,
-                        ],
-                    );
-                }
-            }
-
-            $offering->unsetRelation('examStudents');
-        }
+        app(SubjectExamOfferingRosterSyncService::class)->syncMissingExamStudentsFromReadyRosters($offerings);
     }
 
     protected function matchingReadyRosterForOffering(SubjectExamOffering $offering): ?SubjectExamRoster
     {
-        return $this->readyRostersForOffering($offering)->first();
+        return app(SubjectExamOfferingRosterSyncService::class)->matchingReadyRosterForOffering($offering);
     }
 
     /**
@@ -2010,22 +1970,7 @@ class ExamHallDistributionService
      */
     protected function readyRostersForOffering(SubjectExamOffering $offering): Collection
     {
-        $offering->loadMissing('subject');
-
-        return SubjectExamRoster::query()
-            ->with(['college', 'department', 'subject'])
-            ->withCount([
-                'rosterStudents as roster_students_count_raw',
-                'eligibleRosterStudents as eligible_students_count',
-            ])
-            ->where('college_id', $offering->subject?->college_id)
-            ->where('subject_id', $offering->subject_id)
-            ->where('academic_year_id', $offering->academic_year_id)
-            ->where('semester_id', $offering->semester_id)
-            ->where('status', 'ready')
-            ->when($offering->subject?->department_id, fn ($query, int $departmentId) => $query->where('department_id', $departmentId))
-            ->latest('id')
-            ->get();
+        return app(SubjectExamOfferingRosterSyncService::class)->readyRostersForOffering($offering);
     }
 
     /**
