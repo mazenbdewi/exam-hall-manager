@@ -4,6 +4,8 @@
         $departmentOptions = $this->departmentOptions();
         $attendanceSlotOptions = $this->attendanceSlotOptions();
         $hallAssignmentOptions = $this->hallAssignmentOptions();
+        $attendanceSubjectOptions = $this->attendanceSubjectOptions();
+        $attendanceSubjectWarning = $this->attendanceSubjectWarning();
         $hallAttendancePrintUrl = $this->hallAttendancePrintUrl();
         $singleHallAttendancePrintUrl = $this->singleHallAttendancePrintUrl();
         $cardClasses = 'rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-gray-900';
@@ -93,7 +95,7 @@
                     </div>
                 </div>
 
-                <div class="mt-4 grid gap-3 md:grid-cols-2">
+                <div class="mt-4 grid gap-3 md:grid-cols-3">
                     <label class="space-y-1">
                         <span class="text-sm font-medium text-gray-700 dark:text-gray-200">الموعد</span>
                         <select wire:model.live="attendance_slot" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800">
@@ -112,7 +114,22 @@
                             @endforeach
                         </select>
                     </label>
+                    <label class="space-y-1">
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">المادة</span>
+                        <select wire:model.live="attendance_subject_exam_offering_id" class="w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-gray-800" @disabled($attendanceSubjectOptions === [])>
+                            <option value="">كل المواد</option>
+                            @foreach ($attendanceSubjectOptions as $id => $label)
+                                <option value="{{ $id }}">{{ $label }}</option>
+                            @endforeach
+                        </select>
+                    </label>
                 </div>
+
+                @if ($attendanceSubjectWarning)
+                    <div class="mt-3 rounded-md border border-warning-300 bg-warning-50 px-3 py-2 text-sm text-warning-900 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-100">
+                        {{ $attendanceSubjectWarning }}
+                    </div>
+                @endif
 
                 <div class="mt-4 flex flex-wrap gap-2">
                     <x-filament::button tag="a" :href="$hallAttendancePrintUrl ?: '#'" target="_blank" rel="noopener" icon="heroicon-o-printer" :disabled="! $hallAttendancePrintUrl">

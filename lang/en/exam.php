@@ -44,6 +44,8 @@ return array_replace_recursive($arabic, [
     ],
     'validation' => [
         'subject_missing_college_department' => 'The selected subject must be linked to a college and department before saving the exam offering.',
+        'no_hall_subjects_for_attendance_slot' => 'No subjects are assigned to this hall in the selected time slot.',
+        'selected_subject_not_in_hall_slot' => 'The selected subject is not assigned to this hall in the selected time slot.',
     ],
     'pagination' => [
         'rows_per_page' => 'Rows per page',

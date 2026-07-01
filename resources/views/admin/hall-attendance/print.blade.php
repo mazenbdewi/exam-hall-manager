@@ -364,7 +364,7 @@
                     <div class="university-name">{{ $sheet['university_name'] }}</div>
                     <div class="college-name">{{ $sheet['college_name'] }}</div>
                     <div class="department-name">{{ $sheet['department_name'] }}</div>
-                    <div class="document-title">كشف تفقد القاعة الامتحانية</div>
+                    <div class="document-title">{{ $sheet['report_title'] ?? 'كشف تفقد القاعة الامتحانية' }}</div>
                 </header>
 
                 @if (filled($supervisorWarning ?? null))

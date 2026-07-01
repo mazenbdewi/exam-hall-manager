@@ -33,12 +33,13 @@ class HallAttendanceSheetService
     /**
      * @return Collection<int, HallAssignment>
      */
-    public function hallAssignmentsForSlot(int $collegeId, string $examDate, string $examStartTime): Collection
+    public function hallAssignmentsForSlot(int $collegeId, string $examDate, string $examStartTime, ?int $hallAssignmentId = null): Collection
     {
         return HallAssignment::query()
             ->where('college_id', $collegeId)
             ->whereDate('exam_date', Carbon::parse($examDate)->toDateString())
             ->whereTime('exam_start_time', $this->normalizeTime($examStartTime))
+            ->when($hallAssignmentId, fn ($query) => $query->whereKey($hallAssignmentId))
             ->with($this->hallAssignmentRelations())
             ->get()
             ->sortBy(fn (HallAssignment $assignment): string => ($assignment->examHall?->name ?? '').'|'.str_pad((string) $assignment->getKey(), 10, '0', STR_PAD_LEFT))
@@ -49,8 +50,9 @@ class HallAttendanceSheetService
      * @param  Collection<int, HallAssignment>  $hallAssignments
      * @return array<string, mixed>
      */
-    public function viewData(Collection $hallAssignments, bool $allowWithoutSupervisors = false): array
+    public function viewData(Collection $hallAssignments, bool $allowWithoutSupervisors = false, ?int $subjectExamOfferingId = null): array
     {
+        $hallAssignments = $this->filterHallAssignmentsBySubject($hallAssignments, $subjectExamOfferingId);
         $firstAssignment = $hallAssignments->first();
         $invigilatorAssignments = $this->invigilatorAssignmentsFor($hallAssignments);
         $institution = InstitutionSettings::make();
@@ -65,6 +67,7 @@ class HallAttendanceSheetService
                     assignment: $assignment,
                     invigilatorAssignments: $invigilatorAssignments->get($assignment->exam_hall_id, collect()),
                     universityName: $systemSetting->university_name,
+                    subjectExamOfferingId: $subjectExamOfferingId,
                 ))
                 ->values()
                 ->all(),
@@ -78,6 +81,23 @@ class HallAttendanceSheetService
                 ? $this->dayDateLabel($firstAssignment->exam_date).' - '.$this->displayTime($firstAssignment->exam_start_time)
                 : null,
         ];
+    }
+
+    /**
+     * @param  Collection<int, HallAssignment>  $hallAssignments
+     */
+    public function hasAnyAssignedSubjects(Collection $hallAssignments): bool
+    {
+        return $hallAssignments->contains(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->isNotEmpty());
+    }
+
+    /**
+     * @param  Collection<int, HallAssignment>  $hallAssignments
+     */
+    public function hasSubjectInAssignments(Collection $hallAssignments, int $subjectExamOfferingId): bool
+    {
+        return $hallAssignments->contains(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects
+            ->contains('subject_exam_offering_id', $subjectExamOfferingId));
     }
 
     /**
@@ -135,7 +155,7 @@ class HallAttendanceSheetService
      * @param  Collection<int, InvigilatorAssignment>  $invigilatorAssignments
      * @return array<string, mixed>
      */
-    public function sheetData(HallAssignment $assignment, Collection $invigilatorAssignments, string $universityName): array
+    public function sheetData(HallAssignment $assignment, Collection $invigilatorAssignments, string $universityName, ?int $subjectExamOfferingId = null): array
     {
         $subjects = $this->subjectsForAssignment($assignment);
         $endTime = $this->resolveEndTime($subjects, $invigilatorAssignments);
@@ -151,21 +171,58 @@ class HallAttendanceSheetService
                 'subject_name' => (string) ($studentAssignment->subjectExamOffering?->subject?->name ?? ''),
             ])
             ->all();
+        $selectedSubjectName = $subjects->count() === 1 ? (string) ($subjects->first()['name'] ?? '') : null;
 
         return [
             'university_name' => $universityName,
             'college_name' => $assignment->college?->name ?? $subjects->pluck('college_name')->filter()->first() ?? '—',
             'department_name' => $this->departmentSummary($subjects),
+            'report_title' => filled($subjectExamOfferingId) && filled($selectedSubjectName)
+                ? 'تفقد القاعة - المادة: '.$selectedSubjectName
+                : 'كشف تفقد القاعة الامتحانية',
             'day_date' => $this->dayDateLabel($assignment->exam_date),
             'exam_date' => $assignment->exam_date?->toDateString(),
             'exam_start_time' => $this->displayTime($assignment->exam_start_time),
             'period' => $this->timeRange($assignment->exam_start_time, $endTime),
             'subject_summary' => $this->subjectSummary($subjects),
             'hall_name' => trim(($assignment->examHall?->name ?? '—').(filled($assignment->examHall?->location) ? ' / '.$assignment->examHall->location : '')),
-            'students_count' => (int) $assignment->assigned_students_count,
+            'students_count' => count($students),
             'supervisors' => $this->supervisorRows($invigilatorAssignments),
             'students' => $students,
         ];
+    }
+
+    /**
+     * @param  Collection<int, HallAssignment>  $hallAssignments
+     * @return Collection<int, HallAssignment>
+     */
+    protected function filterHallAssignmentsBySubject(Collection $hallAssignments, ?int $subjectExamOfferingId): Collection
+    {
+        if (! $subjectExamOfferingId) {
+            return $hallAssignments;
+        }
+
+        return $hallAssignments
+            ->map(function (HallAssignment $assignment) use ($subjectExamOfferingId): HallAssignment {
+                $studentAssignments = $assignment->studentAssignments
+                    ->filter(fn ($studentAssignment): bool => (int) $studentAssignment->subject_exam_offering_id === $subjectExamOfferingId)
+                    ->values();
+
+                $assignmentSubjects = $assignment->assignmentSubjects
+                    ->filter(fn ($assignmentSubject): bool => (int) $assignmentSubject->subject_exam_offering_id === $subjectExamOfferingId)
+                    ->values()
+                    ->each(function ($assignmentSubject) use ($studentAssignments): void {
+                        $assignmentSubject->assigned_students_count = $studentAssignments->count();
+                    });
+
+                $assignment->setRelation('studentAssignments', $studentAssignments);
+                $assignment->setRelation('assignmentSubjects', $assignmentSubjects);
+                $assignment->assigned_students_count = $studentAssignments->count();
+
+                return $assignment;
+            })
+            ->filter(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->isNotEmpty())
+            ->values();
     }
 
     /**

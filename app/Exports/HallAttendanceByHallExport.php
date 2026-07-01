@@ -11,13 +11,15 @@ class HallAttendanceByHallExport implements WithMultipleSheets
         protected int $collegeId,
         protected string $examDate,
         protected string $examStartTime,
+        protected ?int $hallAssignmentId = null,
+        protected ?int $subjectExamOfferingId = null,
     ) {}
 
     public function sheets(): array
     {
         $service = app(HallAttendanceSheetService::class);
-        $hallAssignments = $service->hallAssignmentsForSlot($this->collegeId, $this->examDate, $this->examStartTime);
-        $viewData = $service->viewData($hallAssignments);
+        $hallAssignments = $service->hallAssignmentsForSlot($this->collegeId, $this->examDate, $this->examStartTime, $this->hallAssignmentId);
+        $viewData = $service->viewData($hallAssignments, subjectExamOfferingId: $this->subjectExamOfferingId);
         $titles = [];
 
         $sheets = collect($viewData['sheets'] ?? [])
@@ -43,7 +45,7 @@ class HallAttendanceByHallExport implements WithMultipleSheets
     protected function rowsForSheet(array $sheet): array
     {
         $rows = [
-            [__('exam.reports.hall_inspection_by_hall')],
+            [$sheet['report_title'] ?? __('exam.reports.hall_inspection_by_hall')],
             [__('exam.fields.college'), $sheet['college_name'] ?? '—'],
             [__('exam.fields.exam_date'), $sheet['day_date'] ?? ($sheet['exam_date'] ?? '—')],
             [__('exam.fields.period'), $sheet['period'] ?? '—'],

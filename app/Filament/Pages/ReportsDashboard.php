@@ -48,6 +48,8 @@ class ReportsDashboard extends Page
 
     public ?int $hall_assignment_id = null;
 
+    public ?int $attendance_subject_exam_offering_id = null;
+
     public ?string $from_date = null;
 
     public ?string $to_date = null;
@@ -60,6 +62,7 @@ class ReportsDashboard extends Page
         $this->fixed_exam_program_id = $this->latestFixedProgram()?->getKey();
         $this->attendance_slot = $this->latestAttendanceSlotKey();
         $this->hall_assignment_id = $this->firstHallAssignmentForSelectedSlot()?->getKey();
+        $this->attendance_subject_exam_offering_id = null;
         $this->from_date = $this->latestDistributionRun()?->from_date?->toDateString()
             ?? HallAssignment::query()->where('college_id', $this->college_id ?: 0)->min('exam_date');
         $this->to_date = $this->latestDistributionRun()?->to_date?->toDateString()
@@ -104,6 +107,7 @@ class ReportsDashboard extends Page
         $this->fixed_exam_program_id = $this->latestFixedProgram()?->getKey();
         $this->attendance_slot = $this->latestAttendanceSlotKey();
         $this->hall_assignment_id = $this->firstHallAssignmentForSelectedSlot()?->getKey();
+        $this->attendance_subject_exam_offering_id = null;
         $this->from_date = $this->latestDistributionRun()?->from_date?->toDateString()
             ?? HallAssignment::query()->where('college_id', $this->college_id ?: 0)->min('exam_date');
         $this->to_date = $this->latestDistributionRun()?->to_date?->toDateString()
@@ -113,6 +117,12 @@ class ReportsDashboard extends Page
     public function updatedAttendanceSlot(): void
     {
         $this->hall_assignment_id = $this->firstHallAssignmentForSelectedSlot()?->getKey();
+        $this->attendance_subject_exam_offering_id = null;
+    }
+
+    public function updatedHallAssignmentId(): void
+    {
+        $this->attendance_subject_exam_offering_id = null;
     }
 
     public function updatedDepartmentId(): void
@@ -195,6 +205,47 @@ class ReportsDashboard extends Page
             ->all();
     }
 
+    public function attendanceSubjectOptions(): array
+    {
+        $hallAssignment = $this->selectedHallAssignmentForAttendance();
+
+        if (! $hallAssignment) {
+            return [];
+        }
+
+        $hallAssignment->loadMissing('assignmentSubjects.subjectExamOffering.subject');
+
+        return $hallAssignment->assignmentSubjects
+            ->filter(fn ($assignmentSubject): bool => filled($assignmentSubject->subject_exam_offering_id))
+            ->sortBy(fn ($assignmentSubject): string => $assignmentSubject->subjectExamOffering?->subject?->name ?? '')
+            ->mapWithKeys(fn ($assignmentSubject): array => [
+                $assignmentSubject->subject_exam_offering_id => $assignmentSubject->subjectExamOffering?->subject?->name
+                    ?? 'مادة #'.$assignmentSubject->subject_exam_offering_id,
+            ])
+            ->all();
+    }
+
+    public function attendanceSubjectWarning(): ?string
+    {
+        $hallAssignment = $this->selectedHallAssignmentForAttendance();
+
+        if (! $hallAssignment) {
+            return null;
+        }
+
+        $options = $this->attendanceSubjectOptions();
+
+        if ($options === []) {
+            return __('exam.validation.no_hall_subjects_for_attendance_slot');
+        }
+
+        if ($this->attendance_subject_exam_offering_id && ! array_key_exists($this->attendance_subject_exam_offering_id, $options)) {
+            return __('exam.validation.selected_subject_not_in_hall_slot');
+        }
+
+        return null;
+    }
+
     public function examSchedulePrintUrl(): string
     {
         return route('filament.adminpanel.exam-schedules.print', collect([
@@ -231,11 +282,13 @@ class ReportsDashboard extends Page
             return null;
         }
 
-        return route('filament.adminpanel.hall-assignments.attendance-print.index', [
+        return route('filament.adminpanel.hall-assignments.attendance-print.index', collect([
             'college_id' => $this->college_id,
             'exam_date' => $date,
             'exam_start_time' => $time,
-        ]);
+            'hall_assignment_id' => $this->selectedHallAssignmentForAttendance()?->getKey(),
+            'subject_exam_offering_id' => $this->attendance_subject_exam_offering_id,
+        ])->filter(fn ($value): bool => filled($value))->all());
     }
 
     public function singleHallAttendancePrintUrl(): ?string
@@ -245,7 +298,10 @@ class ReportsDashboard extends Page
             : $this->firstHallAssignmentForSelectedSlot();
 
         return $hallAssignment
-            ? route('filament.adminpanel.hall-assignments.attendance-print.show', ['hallAssignment' => $hallAssignment])
+            ? route('filament.adminpanel.hall-assignments.attendance-print.show', collect([
+                'hallAssignment' => $hallAssignment,
+                'subject_exam_offering_id' => $this->attendance_subject_exam_offering_id,
+            ])->filter(fn ($value): bool => filled($value))->all())
             : null;
     }
 
@@ -269,13 +325,29 @@ class ReportsDashboard extends Page
         abort_unless(ExamCollegeScope::userCanAccessCollegeId(auth()->user(), $this->college_id), 403);
 
         $college = College::query()->find($this->college_id);
+        $hallAssignment = $this->selectedHallAssignmentForAttendance();
 
-        if (! $college) {
+        if (! $college || ! $hallAssignment) {
+            return null;
+        }
+
+        if ($warning = $this->attendanceSubjectWarning()) {
+            Notification::make()
+                ->warning()
+                ->title($warning)
+                ->send();
+
             return null;
         }
 
         return Excel::download(
-            new HallAttendanceByHallExport($this->college_id, $date, $time),
+            new HallAttendanceByHallExport(
+                $this->college_id,
+                $date,
+                $time,
+                $hallAssignment->getKey(),
+                $this->attendance_subject_exam_offering_id,
+            ),
             $this->translatedFilename('hall_inspection_by_hall', $college->name, $date),
         );
     }
@@ -493,6 +565,34 @@ class ReportsDashboard extends Page
             ->where('college_id', $this->college_id ?: 0)
             ->whereDate('exam_date', $date)
             ->whereTime('exam_start_time', $time)
+            ->get()
+            ->sortBy(fn (HallAssignment $assignment): string => $assignment->examHall?->name ?? '')
+            ->first();
+    }
+
+    protected function selectedHallAssignmentForAttendance(): ?HallAssignment
+    {
+        [$date, $time] = $this->selectedAttendanceSlotParts();
+
+        if (! $date || ! $time) {
+            return null;
+        }
+
+        $query = HallAssignment::query()
+            ->with('examHall')
+            ->where('college_id', $this->college_id ?: 0)
+            ->whereDate('exam_date', $date)
+            ->whereTime('exam_start_time', $time);
+
+        if ($this->hall_assignment_id) {
+            $hallAssignment = (clone $query)->whereKey($this->hall_assignment_id)->first();
+
+            if ($hallAssignment) {
+                return $hallAssignment;
+            }
+        }
+
+        return $query
             ->get()
             ->sortBy(fn (HallAssignment $assignment): string => $assignment->examHall?->name ?? '')
             ->first();

@@ -883,6 +883,8 @@ return [
         'different_college_not_allowed' => 'غير مسموح لك باستخدام كلية أخرى.',
         'department_not_in_college' => 'القسم المحدد لا ينتمي إلى الكلية المحددة.',
         'subject_outside_scope' => 'المادة المحددة خارج نطاق كليتك.',
+        'no_hall_subjects_for_attendance_slot' => 'لا توجد مواد موزعة في هذه القاعة ضمن الموعد المحدد.',
+        'selected_subject_not_in_hall_slot' => 'المادة المحددة غير موجودة في هذه القاعة ضمن الموعد المحدد.',
         'subject_missing_college_department' => 'يجب أن تكون المادة مرتبطة بكلية وقسم قبل حفظ البرنامج الامتحاني.',
         'offering_outside_scope' => 'البرنامج الامتحاني المحدد خارج نطاق كليتك.',
         'role_not_allowed' => 'غير مسموح لك بإسناد هذا الدور.',

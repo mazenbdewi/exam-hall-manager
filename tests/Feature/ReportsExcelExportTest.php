@@ -61,6 +61,31 @@ class ReportsExcelExportTest extends TestCase
     }
 
     #[Test]
+    public function hall_inspection_by_hall_excel_respects_selected_subject_filter(): void
+    {
+        $context = $this->createExcelHallWithTwoSubjects();
+
+        $contents = Excel::raw(
+            new HallAttendanceByHallExport(
+                $context['college']->id,
+                '2026-08-13',
+                '12:00:00',
+                $context['hall_assignment']->id,
+                $context['offering_b']->id,
+            ),
+            ExcelFormat::XLSX,
+        );
+        $workbookText = $this->workbookText($contents);
+
+        $this->assertStringStartsWith('PK', $contents);
+        $this->assertStringContainsString('تفقد القاعة - المادة: المادة ب', $workbookText);
+        $this->assertStringContainsString('طالب المادة ب', $workbookText);
+        $this->assertStringContainsString('B-001', $workbookText);
+        $this->assertStringNotContainsString('طالب المادة أ', $workbookText);
+        $this->assertStringNotContainsString('A-001', $workbookText);
+    }
+
+    #[Test]
     public function invigilator_distribution_by_invigilator_excel_contains_invigilators_and_halls_for_selected_college(): void
     {
         $college = College::query()->create(['name' => 'كلية الهندسة المعلوماتية', 'is_active' => true]);
@@ -176,7 +201,84 @@ class ReportsExcelExportTest extends TestCase
         ]);
     }
 
-    protected function createUsedHall(College $college, string $hallName): HallAssignment
+    protected function createExcelHallWithTwoSubjects(): array
+    {
+        $college = College::query()->create(['name' => 'كلية الهندسة المعلوماتية', 'is_active' => true]);
+        $department = Department::query()->create(['college_id' => $college->id, 'name' => 'قسم الاختبار', 'is_active' => true]);
+        $studyLevel = StudyLevel::query()->firstOrCreate(['name' => 'الأولى'], ['sort_order' => 1, 'is_active' => true]);
+        $academicYear = AcademicYear::query()->firstOrCreate(['name' => '2025-2026'], ['is_active' => true, 'is_current' => true]);
+        $semester = Semester::query()->firstOrCreate(['name' => 'الفصل الأول'], ['sort_order' => 1, 'is_active' => true]);
+        $hallAssignment = $this->createUsedHall($college, 'م 21', '2026-08-13');
+        $offeringA = $this->createExcelOfferingStudent($college, $department, $studyLevel, $academicYear, $semester, $hallAssignment, 'المادة أ', 'طالب المادة أ', 'A-001', 1);
+        $offeringB = $this->createExcelOfferingStudent($college, $department, $studyLevel, $academicYear, $semester, $hallAssignment, 'المادة ب', 'طالب المادة ب', 'B-001', 2);
+
+        $hallAssignment->update(['assigned_students_count' => 2, 'remaining_capacity' => 38]);
+
+        return [
+            'college' => $college,
+            'hall_assignment' => $hallAssignment,
+            'offering_a' => $offeringA,
+            'offering_b' => $offeringB,
+        ];
+    }
+
+    protected function createExcelOfferingStudent(
+        College $college,
+        Department $department,
+        StudyLevel $studyLevel,
+        AcademicYear $academicYear,
+        Semester $semester,
+        HallAssignment $hallAssignment,
+        string $subjectName,
+        string $studentName,
+        string $studentNumber,
+        int $seatNumber,
+    ): SubjectExamOffering {
+        $subject = Subject::query()->create([
+            'college_id' => $college->id,
+            'department_id' => $department->id,
+            'study_level_id' => $studyLevel->id,
+            'name' => $subjectName,
+            'is_active' => true,
+            'is_shared_subject' => false,
+            'shared_subject_scheduling_mode' => 'auto',
+            'is_core_subject' => false,
+            'preferred_exam_period' => 'none',
+            'core_subject_priority' => 'preference',
+        ]);
+        $offering = SubjectExamOffering::query()->create([
+            'subject_id' => $subject->id,
+            'academic_year_id' => $academicYear->id,
+            'semester_id' => $semester->id,
+            'exam_date' => '2026-08-13',
+            'exam_start_time' => '12:00:00',
+            'status' => ExamOfferingStatus::Distributed->value,
+        ]);
+
+        HallAssignmentSubject::query()->create([
+            'hall_assignment_id' => $hallAssignment->id,
+            'subject_exam_offering_id' => $offering->id,
+            'assigned_students_count' => 1,
+        ]);
+
+        $student = ExamStudent::query()->create([
+            'subject_exam_offering_id' => $offering->id,
+            'student_number' => $studentNumber,
+            'full_name' => $studentName,
+            'student_type' => ExamStudentType::Regular->value,
+        ]);
+
+        ExamStudentHallAssignment::query()->create([
+            'exam_student_id' => $student->id,
+            'hall_assignment_id' => $hallAssignment->id,
+            'subject_exam_offering_id' => $offering->id,
+            'seat_number' => $seatNumber,
+        ]);
+
+        return $offering;
+    }
+
+    protected function createUsedHall(College $college, string $hallName, string $examDate = '2026-01-28'): HallAssignment
     {
         $hall = ExamHall::query()->create([
             'college_id' => $college->id,
@@ -190,7 +292,7 @@ class ReportsExcelExportTest extends TestCase
 
         return HallAssignment::query()->create([
             'exam_hall_id' => $hall->id,
-            'exam_date' => '2026-01-28',
+            'exam_date' => $examDate,
             'exam_start_time' => '12:00:00',
             'college_id' => $college->id,
             'total_capacity' => 40,
