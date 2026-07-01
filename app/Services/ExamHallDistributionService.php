@@ -30,6 +30,7 @@ class ExamHallDistributionService
         bool $redistribute = false,
         bool $separateCarryStudents = false,
         bool $allowMultipleSubjectsPerHall = true,
+        bool $sortStudentsAlphabeticallyPerHall = false,
     ): array {
         $this->extendExecutionTimeForLargeDistribution();
 
@@ -38,6 +39,7 @@ class ExamHallDistributionService
         $settings = [
             'separate_carry_students' => $separateCarryStudents,
             'allow_multiple_subjects_per_hall' => $allowMultipleSubjectsPerHall,
+            'sort_students_alphabetically_per_hall' => $sortStudentsAlphabeticallyPerHall,
             'allow_normal_subjects_in_drawing_studios' => $this->allowNormalSubjectsInDrawingStudios($collegeId),
         ];
 
@@ -144,6 +146,7 @@ class ExamHallDistributionService
             'warnings_by_slot' => [],
             'settings' => $settings,
             'separate_carry_students' => $separateCarryStudents,
+            'sort_students_alphabetically_per_hall' => $sortStudentsAlphabeticallyPerHall,
             'regular_students_count' => 0,
             'carry_students_count' => 0,
             'regular_halls_count' => 0,
@@ -245,6 +248,7 @@ class ExamHallDistributionService
                 $firstOffering,
                 separateCarryStudents: $separateCarryStudents,
                 allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
+                sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
             );
             $slotStats = $this->slotDistributionStats(
                 $slotOfferings,
@@ -315,6 +319,7 @@ class ExamHallDistributionService
         SubjectExamOffering $offering,
         bool $separateCarryStudents = false,
         bool $allowMultipleSubjectsPerHall = true,
+        bool $sortStudentsAlphabeticallyPerHall = false,
     ): array {
         $slot = $this->getSlotContext($offering);
         $slotOfferings = $slot['offerings'];
@@ -345,7 +350,7 @@ class ExamHallDistributionService
         $selectedHallsBeforeFailure = collect();
 
         try {
-            return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall, &$distributionStage, &$selectedHallsBeforeFailure): array {
+            return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall, $sortStudentsAlphabeticallyPerHall, &$distributionStage, &$selectedHallsBeforeFailure): array {
             $this->clearSlotDistribution(
                 collegeId: $slot['college_id'],
                 examDate: $slot['exam_date'],
@@ -359,6 +364,7 @@ class ExamHallDistributionService
                     availableHalls: $availableHalls,
                     totalStudents: $totalStudents,
                     allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
+                    sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
                 );
             }
 
@@ -478,11 +484,7 @@ class ExamHallDistributionService
                     $remainingCapacity -= $count;
 
                     foreach ($students as $student) {
-                        $studentAssignmentRows[] = [
-                            'exam_student_id' => $student->getKey(),
-                            'subject_exam_offering_id' => $offeringId,
-                            'seat_number' => count($studentAssignmentRows) + 1,
-                        ];
+                        $studentAssignmentRows[] = $this->studentAssignmentRowForSorting($student, $offeringId);
                     }
                 }
 
@@ -548,7 +550,10 @@ class ExamHallDistributionService
 
                 $distributionStage = 'student_assignment_insert_failed';
                 ExamStudentHallAssignment::query()->insert(
-                    collect($studentAssignmentRows)
+                    collect($this->studentAssignmentRowsForInsert(
+                        rows: $studentAssignmentRows,
+                        sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
+                    ))
                         ->map(fn (array $row): array => [
                             ...$row,
                             'hall_assignment_id' => $hallAssignment->getKey(),
@@ -648,6 +653,7 @@ class ExamHallDistributionService
         Collection $availableHalls,
         int $totalStudents,
         bool $allowMultipleSubjectsPerHall = true,
+        bool $sortStudentsAlphabeticallyPerHall = false,
     ): array {
         [$studentQueues, $remainingCounts] = $this->buildStudentTypeQueues($slotOfferings);
         $plans = [];
@@ -756,7 +762,11 @@ class ExamHallDistributionService
             allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
         );
 
-        [$assignedStudentsCount, $usedHallsCount] = $this->persistHallPlans($plans, $slot);
+        [$assignedStudentsCount, $usedHallsCount] = $this->persistHallPlans(
+            plans: $plans,
+            slot: $slot,
+            sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
+        );
 
         if ($invalidMixedIssue = $this->invalidMixedDrawingAndNormalIssue($slot)) {
             $this->clearSlotDistribution(
@@ -961,9 +971,7 @@ class ExamHallDistributionService
 
             foreach ($students as $student) {
                 $plan['student_assignment_rows'][] = [
-                    'exam_student_id' => $student->getKey(),
-                    'subject_exam_offering_id' => $offeringId,
-                    'seat_number' => count($plan['student_assignment_rows']) + 1,
+                    ...$this->studentAssignmentRowForSorting($student, $offeringId),
                     'student_type' => $studentType,
                 ];
             }
@@ -1054,7 +1062,7 @@ class ExamHallDistributionService
         return $mixedAssignedCount;
     }
 
-    protected function persistHallPlans(array $plans, array $slot): array
+    protected function persistHallPlans(array $plans, array $slot, bool $sortStudentsAlphabeticallyPerHall = false): array
     {
         $assignedStudentsCount = 0;
         $usedHallsCount = 0;
@@ -1087,7 +1095,10 @@ class ExamHallDistributionService
             }
 
             ExamStudentHallAssignment::query()->insert(
-                collect($plan['student_assignment_rows'])
+                collect($this->studentAssignmentRowsForInsert(
+                    rows: $plan['student_assignment_rows'],
+                    sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
+                ))
                     ->map(fn (array $row): array => [
                         'exam_student_id' => $row['exam_student_id'],
                         'subject_exam_offering_id' => $row['subject_exam_offering_id'],
@@ -1104,6 +1115,79 @@ class ExamHallDistributionService
         }
 
         return [$assignedStudentsCount, $usedHallsCount];
+    }
+
+    protected function studentAssignmentRowForSorting(ExamStudent $student, int $offeringId): array
+    {
+        return [
+            'exam_student_id' => $student->getKey(),
+            'subject_exam_offering_id' => $offeringId,
+            'student_name' => (string) $student->full_name,
+            'student_number' => (string) $student->student_number,
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return array<int, array{exam_student_id:int,subject_exam_offering_id:int,seat_number:int}>
+     */
+    protected function studentAssignmentRowsForInsert(array $rows, bool $sortStudentsAlphabeticallyPerHall): array
+    {
+        $rows = collect($rows);
+
+        if ($sortStudentsAlphabeticallyPerHall) {
+            $rows = $rows->sort($this->compareStudentAssignmentRowsByArabicName(...));
+        }
+
+        return $rows
+            ->values()
+            ->map(fn (array $row, int $index): array => [
+                'exam_student_id' => (int) $row['exam_student_id'],
+                'subject_exam_offering_id' => (int) $row['subject_exam_offering_id'],
+                'seat_number' => $index + 1,
+            ])
+            ->all();
+    }
+
+    protected function compareStudentAssignmentRowsByArabicName(array $first, array $second): int
+    {
+        $nameComparison = strcmp(
+            $this->normalizedArabicSortKey((string) ($first['student_name'] ?? '')),
+            $this->normalizedArabicSortKey((string) ($second['student_name'] ?? '')),
+        );
+
+        if ($nameComparison !== 0) {
+            return $nameComparison;
+        }
+
+        $numberComparison = strcmp(
+            (string) ($first['student_number'] ?? ''),
+            (string) ($second['student_number'] ?? ''),
+        );
+
+        if ($numberComparison !== 0) {
+            return $numberComparison;
+        }
+
+        return ((int) ($first['exam_student_id'] ?? 0)) <=> ((int) ($second['exam_student_id'] ?? 0));
+    }
+
+    protected function normalizedArabicSortKey(string $value): string
+    {
+        $value = trim(mb_strtolower($value));
+        $value = strtr($value, [
+            'أ' => 'ا',
+            'إ' => 'ا',
+            'آ' => 'ا',
+            'ٱ' => 'ا',
+            'ى' => 'ي',
+            'ئ' => 'ي',
+            'ؤ' => 'و',
+            'ة' => 'ه',
+        ]);
+        $value = preg_replace('/[\x{064B}-\x{065F}\x{0670}\x{0640}]/u', '', $value) ?? $value;
+
+        return preg_replace('/\s+/u', ' ', $value) ?? $value;
     }
 
     protected function planAssignedStudentsCount(array $plan): int

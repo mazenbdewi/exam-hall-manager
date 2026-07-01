@@ -26,6 +26,8 @@
             __('exam.global_hall_distribution.summary.capacity_shortage') => $run->capacity_shortage,
             __('exam.global_hall_distribution.summary.remaining_capacity') => $validation['remaining_capacity'] ?? 0,
             __('exam.global_hall_distribution.summary.separate_carry_students') => (bool) ($summary['separate_carry_students'] ?? false) ? 'نعم' : 'لا',
+            __('exam.global_hall_distribution.summary.allow_multiple_subjects_per_hall') => (bool) data_get($summary, 'settings.allow_multiple_subjects_per_hall', true) ? 'نعم' : 'لا',
+            __('exam.global_hall_distribution.summary.sort_students_alphabetically_per_hall') => (bool) data_get($summary, 'settings.sort_students_alphabetically_per_hall', false) ? 'نعم' : 'لا',
             __('exam.global_hall_distribution.summary.carry_students_count') => $summary['carry_students_count'] ?? 0,
             __('exam.global_hall_distribution.summary.regular_students_count') => $summary['regular_students_count'] ?? 0,
             __('exam.global_hall_distribution.summary.carry_halls_count') => $summary['carry_halls_count'] ?? 0,

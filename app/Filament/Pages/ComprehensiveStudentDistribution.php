@@ -153,6 +153,11 @@ class ComprehensiveStudentDistribution extends Page
                         ->helperText(__('exam.global_hall_distribution.allow_multiple_subjects_per_hall_helper'))
                         ->default(true)
                         ->live(),
+                    Checkbox::make('sort_students_alphabetically_per_hall')
+                        ->label(__('exam.global_hall_distribution.sort_students_alphabetically_per_hall_label'))
+                        ->helperText(__('exam.global_hall_distribution.sort_students_alphabetically_per_hall_helper'))
+                        ->default(false)
+                        ->live(),
                     Checkbox::make('confirmed')
                         ->label(__('exam.global_hall_distribution.confirmation_label'))
                         ->accepted()
@@ -369,6 +374,7 @@ class ComprehensiveStudentDistribution extends Page
             redistribute: (bool) ($data['redistribute'] ?? false),
             separateCarryStudents: (bool) ($data['separate_carry_students'] ?? false),
             allowMultipleSubjectsPerHall: (bool) ($data['allow_multiple_subjects_per_hall'] ?? true),
+            sortStudentsAlphabeticallyPerHall: (bool) ($data['sort_students_alphabetically_per_hall'] ?? false),
         );
 
         app(AuditLogService::class)->log(
@@ -391,6 +397,7 @@ class ComprehensiveStudentDistribution extends Page
                 'run_id' => $result['run_id'] ?? null,
                 'separate_carry_students' => (bool) ($data['separate_carry_students'] ?? false),
                 'allow_multiple_subjects_per_hall' => (bool) ($data['allow_multiple_subjects_per_hall'] ?? true),
+                'sort_students_alphabetically_per_hall' => (bool) ($data['sort_students_alphabetically_per_hall'] ?? false),
             ],
             status: match ($result['status'] ?? 'failed') {
                 'success' => 'success',
@@ -594,6 +601,7 @@ class ComprehensiveStudentDistribution extends Page
             __('exam.global_hall_distribution.summary.issue_slots_count').': '.($result['issue_slots_count'] ?? 0),
             __('exam.global_hall_distribution.summary.separate_carry_students').': '.((bool) ($result['separate_carry_students'] ?? false) ? 'نعم' : 'لا'),
             __('exam.global_hall_distribution.summary.allow_multiple_subjects_per_hall').': '.((bool) data_get($result, 'settings.allow_multiple_subjects_per_hall', true) ? 'نعم' : 'لا'),
+            __('exam.global_hall_distribution.summary.sort_students_alphabetically_per_hall').': '.((bool) data_get($result, 'settings.sort_students_alphabetically_per_hall', false) ? 'نعم' : 'لا'),
             (bool) ($result['separate_carry_students'] ?? false) ? ($result['separation_status_message'] ?? null) : null,
         ])->implode(' | ');
     }

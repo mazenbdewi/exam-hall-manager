@@ -262,6 +262,153 @@ class ExamHallDistributionTest extends TestCase
     }
 
     #[Test]
+    public function it_assigns_seat_numbers_by_alphabetical_student_order_inside_each_hall_when_enabled(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithNamedStudents($context, 'ترتيب أبجدي', [
+            ['004', 'محمد'],
+            ['001', 'خالد'],
+            ['002', 'أحمد'],
+            ['003', 'باسل'],
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة D1',
+            'location' => 'المبنى الأول',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $offering,
+            sortStudentsAlphabeticallyPerHall: true,
+        );
+
+        $assignments = ExamStudentHallAssignment::query()
+            ->with('examStudent')
+            ->orderBy('seat_number')
+            ->get();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(['أحمد', 'باسل', 'خالد', 'محمد'], $assignments->map(fn (ExamStudentHallAssignment $assignment): string => $assignment->examStudent->full_name)->all());
+        $this->assertSame([1, 2, 3, 4], $assignments->pluck('seat_number')->all());
+    }
+
+    #[Test]
+    public function it_keeps_existing_student_order_inside_each_hall_when_alphabetical_sort_is_disabled(): void
+    {
+        $context = $this->createAcademicContext();
+        $offering = $this->createOfferingWithNamedStudents($context, 'ترتيب قديم', [
+            ['004', 'محمد'],
+            ['001', 'خالد'],
+            ['002', 'أحمد'],
+            ['003', 'باسل'],
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة D1',
+            'location' => 'المبنى الأول',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $offering,
+            sortStudentsAlphabeticallyPerHall: false,
+        );
+
+        $assignments = ExamStudentHallAssignment::query()
+            ->with('examStudent')
+            ->orderBy('seat_number')
+            ->get();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(['خالد', 'أحمد', 'باسل', 'محمد'], $assignments->map(fn (ExamStudentHallAssignment $assignment): string => $assignment->examStudent->full_name)->all());
+        $this->assertSame([1, 2, 3, 4], $assignments->pluck('seat_number')->all());
+    }
+
+    #[Test]
+    public function it_sorts_students_across_multiple_subjects_inside_the_same_hall_when_enabled(): void
+    {
+        $context = $this->createAcademicContext();
+        $firstOffering = $this->createOfferingWithNamedStudents($context, 'مادة أولى', [
+            ['004', 'محمد'],
+            ['001', 'أحمد'],
+        ]);
+        $this->createOfferingWithNamedStudents($context, 'مادة ثانية', [
+            ['003', 'خالد'],
+            ['002', 'باسل'],
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة مشتركة',
+            'location' => 'المبنى الأول',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $firstOffering,
+            allowMultipleSubjectsPerHall: true,
+            sortStudentsAlphabeticallyPerHall: true,
+        );
+
+        $hallAssignment = HallAssignment::query()
+            ->with(['assignmentSubjects', 'studentAssignments.examStudent'])
+            ->firstOrFail();
+        $assignments = $hallAssignment->studentAssignments->sortBy('seat_number')->values();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertCount(2, $hallAssignment->assignmentSubjects);
+        $this->assertSame(['أحمد', 'باسل', 'خالد', 'محمد'], $assignments->map(fn (ExamStudentHallAssignment $assignment): string => $assignment->examStudent->full_name)->all());
+        $this->assertSame([1, 2, 3, 4], $assignments->pluck('seat_number')->all());
+    }
+
+    #[Test]
+    public function it_stores_the_alphabetical_hall_sort_option_in_global_distribution_summary(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->createOfferingWithNamedStudents($context, 'تخزين الإعداد', [
+            ['004', 'محمد'],
+            ['001', 'خالد'],
+            ['002', 'أحمد'],
+            ['003', 'باسل'],
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة D1',
+            'location' => 'المبنى الأول',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            sortStudentsAlphabeticallyPerHall: true,
+        );
+
+        $run = StudentDistributionRun::query()->latest('id')->firstOrFail();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertTrue($run->summary_json['settings']['sort_students_alphabetically_per_hall'] ?? false);
+        $this->assertTrue($run->summary_json['sort_students_alphabetically_per_hall'] ?? false);
+    }
+
+    #[Test]
     public function it_uses_remaining_hall_capacity_for_more_than_three_normal_subjects_when_enabled(): void
     {
         $context = $this->createAcademicContext();
@@ -1628,6 +1775,39 @@ class ExamHallDistributionTest extends TestCase
                 'subject_exam_offering_id' => $offering->id,
                 'student_number' => sprintf('%s-%03d', $offering->id, $index),
                 'full_name' => sprintf('طالب %s %03d', $subjectName, $index),
+                'student_type' => $studentType,
+            ]);
+        }
+
+        return $offering;
+    }
+
+    /**
+     * @param  array<int, array{0:string,1:string,2?:string|ExamStudentType}>  $students
+     */
+    protected function createOfferingWithNamedStudents(
+        array $context,
+        string $subjectName,
+        array $students,
+        string $date = '2026-06-01',
+        string $startTime = '09:00:00',
+    ): SubjectExamOffering {
+        $offering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: $subjectName,
+            studentsCount: 0,
+            date: $date,
+            startTime: $startTime,
+        );
+
+        foreach ($students as $student) {
+            $studentType = $student[2] ?? ExamStudentType::Regular->value;
+            $studentType = $studentType instanceof ExamStudentType ? $studentType->value : $studentType;
+
+            ExamStudent::query()->create([
+                'subject_exam_offering_id' => $offering->id,
+                'student_number' => $student[0],
+                'full_name' => $student[1],
                 'student_type' => $studentType,
             ]);
         }
