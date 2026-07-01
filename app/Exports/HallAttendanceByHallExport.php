@@ -61,14 +61,12 @@ class HallAttendanceByHallExport implements WithMultipleSheets
 
         if ($supervisors->isNotEmpty()) {
             $rows[] = [__('exam.reports.supervisors')];
-            $rows[] = [__('exam.fields.name'), __('exam.fields.role_in_hall'), __('exam.fields.notes'), __('exam.fields.signature')];
+            $rows[] = [__('exam.fields.name'), __('exam.fields.role_in_hall')];
 
             foreach ($supervisors as $supervisor) {
                 $rows[] = [
                     $supervisor['name'] ?? '',
                     $supervisor['role'] ?? '',
-                    $supervisor['notes'] ?? '',
-                    '',
                 ];
             }
 
@@ -79,10 +77,7 @@ class HallAttendanceByHallExport implements WithMultipleSheets
             __('exam.fields.seat_number'),
             __('exam.fields.student_number'),
             __('exam.fields.full_name'),
-            __('exam.fields.subject'),
             __('exam.fields.attendance'),
-            __('exam.fields.signature'),
-            __('exam.fields.notes'),
         ];
 
         foreach ($sheet['students'] ?? [] as $student) {
@@ -90,9 +85,6 @@ class HallAttendanceByHallExport implements WithMultipleSheets
                 $student['seat_number'] ?? '',
                 $student['student_number'] ?? '',
                 $student['full_name'] ?? '',
-                $student['subject_name'] ?? '',
-                '',
-                '',
                 '',
             ];
         }

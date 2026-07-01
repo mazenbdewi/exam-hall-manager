@@ -76,11 +76,21 @@ class ReportsExcelExportTest extends TestCase
             ExcelFormat::XLSX,
         );
         $workbookText = $this->workbookText($contents);
+        $rows = $this->firstWorksheetRows($contents);
+        $studentHeaderRowIndex = collect($rows)->search(fn (array $row): bool => in_array(__('exam.fields.seat_number'), $row, true));
+        $this->assertIsInt($studentHeaderRowIndex);
+        $studentHeaders = array_values($rows[$studentHeaderRowIndex]);
 
         $this->assertStringStartsWith('PK', $contents);
         $this->assertStringContainsString('تفقد القاعة - المادة: المادة ب', $workbookText);
         $this->assertStringContainsString('طالب المادة ب', $workbookText);
         $this->assertStringContainsString('B-001', $workbookText);
+        $this->assertStringContainsString(__('exam.fields.attendance'), $workbookText);
+        $this->assertNotContains(__('exam.fields.subject'), $studentHeaders);
+        $this->assertNotContains(__('exam.fields.signature'), $studentHeaders);
+        $this->assertNotContains(__('exam.fields.notes'), $studentHeaders);
+        $this->assertStringNotContainsString(__('exam.fields.signature'), $workbookText);
+        $this->assertStringNotContainsString(__('exam.fields.notes'), $workbookText);
         $this->assertStringNotContainsString('طالب المادة أ', $workbookText);
         $this->assertStringNotContainsString('A-001', $workbookText);
     }
