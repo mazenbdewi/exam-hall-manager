@@ -74,10 +74,29 @@ class ReportsExcelExportTest extends TestCase
             ExcelFormat::XLSX,
         );
         $workbookText = $this->workbookText($contents);
+        $rows = $this->firstWorksheetRows($contents);
+        $headerRowIndex = collect($rows)->search(fn (array $row): bool => in_array(__('exam.fields.exam_date'), $row, true));
+        $this->assertIsInt($headerRowIndex);
+
+        $headers = array_values($rows[$headerRowIndex]);
+        $assignmentRow = array_values($rows[$headerRowIndex + 1]);
+        $hallNameColumn = array_search(__('exam.fields.hall_name'), $headers, true);
+        $hallLocationColumn = array_search(__('exam.fields.hall_location'), $headers, true);
 
         $this->assertStringStartsWith('PK', $contents);
         $this->assertStringContainsString('د. سامر حسن', $workbookText);
-        $this->assertStringContainsString('قاعة مراقبة 1', $workbookText);
+        $this->assertStringNotContainsString(__('exam.fields.status'), $workbookText);
+        $this->assertStringContainsString(__('exam.fields.hall_name'), $workbookText);
+        $this->assertStringContainsString(__('exam.fields.hall_location'), $workbookText);
+        $this->assertIsInt($hallNameColumn);
+        $this->assertIsInt($hallLocationColumn);
+        $this->assertSame('', (string) ($assignmentRow[$hallNameColumn] ?? ''));
+        $this->assertSame('', (string) ($assignmentRow[$hallLocationColumn] ?? ''));
+        $this->assertStringContainsString('2026-01-28', $workbookText);
+        $this->assertStringContainsString('12:00', $workbookText);
+        $this->assertStringContainsString(__('exam.invigilation_roles.hall_head'), $workbookText);
+        $this->assertStringContainsString('ملاحظة اختبار', $workbookText);
+        $this->assertStringNotContainsString('قاعة مراقبة 1', $workbookText);
         $this->assertStringNotContainsString('د. خارج الكلية', $workbookText);
         $this->assertStringNotContainsString('قاعة مراقبة خارجية', $workbookText);
     }
@@ -201,6 +220,27 @@ class ReportsExcelExportTest extends TestCase
             }
 
             return implode("\n", $parts);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    protected function firstWorksheetRows(string $contents): array
+    {
+        $path = tempnam(sys_get_temp_dir(), 'xlsx-report-');
+        file_put_contents($path, $contents);
+
+        try {
+            $spreadsheet = IOFactory::load($path);
+            $worksheet = $spreadsheet->getSheet(0);
+
+            return array_values(array_map(
+                fn (array $row): array => array_values(array_map(
+                    fn ($value): string => is_scalar($value) ? (string) $value : '',
+                    $row,
+                )),
+                $worksheet->toArray('', true, true, false),
+            ));
         } finally {
             @unlink($path);
         }

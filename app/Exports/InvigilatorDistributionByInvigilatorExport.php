@@ -64,7 +64,6 @@ class InvigilatorDistributionByInvigilatorExport implements WithMultipleSheets
                 __('exam.fields.hall_name'),
                 __('exam.fields.hall_location'),
                 __('exam.fields.role_in_hall'),
-                __('exam.fields.status'),
                 __('exam.fields.notes'),
             ],
         ];
@@ -73,24 +72,14 @@ class InvigilatorDistributionByInvigilatorExport implements WithMultipleSheets
             $rows[] = [
                 $assignment['exam_date'] ?? '',
                 substr((string) ($assignment['start_time'] ?? ''), 0, 5),
-                $assignment['hall_name'] ?? '',
-                $assignment['hall_location'] ?? '',
+                '',
+                '',
                 $assignment['role_label'] ?? '',
-                $this->assignmentStatusLabel($assignment['assignment_status'] ?? null),
                 $assignment['notes'] ?? '',
             ];
         }
 
         return $rows;
-    }
-
-    protected function assignmentStatusLabel(?string $status): string
-    {
-        if (blank($status)) {
-            return '—';
-        }
-
-        return __("exam.invigilator_assignment_statuses.{$status}");
     }
 
     protected function uniqueTitle(string $title, array &$titles): string
