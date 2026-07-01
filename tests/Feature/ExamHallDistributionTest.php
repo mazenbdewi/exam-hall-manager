@@ -258,6 +258,63 @@ class ExamHallDistributionTest extends TestCase
     }
 
     #[Test]
+    public function global_distribution_rebuilds_existing_single_subject_halls_when_mixing_is_enabled(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $firstOffering = $this->createOfferingWithStudents($context, 'تحليل', 40);
+        $secondOffering = $this->createOfferingWithStudents($context, 'فيزياء', 30);
+
+        foreach (['القاعة ذات الأولوية', 'قاعة احتياطية'] as $index => $hallName) {
+            ExamHall::query()->create([
+                'college_id' => $context['college']->id,
+                'name' => $hallName,
+                'location' => 'المبنى الأول',
+                'capacity' => 100,
+                'hall_type' => ExamHallType::Large->value,
+                'priority' => $index === 0 ? ExamHallPriority::High->value : ExamHallPriority::Medium->value,
+                'is_active' => true,
+            ]);
+        }
+
+        app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+            allowMultipleSubjectsPerHall: false,
+        );
+
+        $this->assertSame(2, HallAssignment::query()->count());
+        $this->assertTrue(HallAssignment::query()
+            ->with('assignmentSubjects')
+            ->get()
+            ->every(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->count() === 1));
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: false,
+            allowMultipleSubjectsPerHall: true,
+        );
+
+        $assignment = HallAssignment::query()
+            ->with(['examHall', 'assignmentSubjects'])
+            ->firstOrFail();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(0, $result['skipped_slots_count']);
+        $this->assertSame(1, $result['distributed_slots_count']);
+        $this->assertSame(1, HallAssignment::query()->count());
+        $this->assertSame('القاعة ذات الأولوية', $assignment->examHall?->name);
+        $this->assertCount(2, $assignment->assignmentSubjects);
+        $this->assertSame(30, $assignment->remaining_capacity);
+        $this->assertSame(40, $firstOffering->studentHallAssignments()->count());
+        $this->assertSame(30, $secondOffering->studentHallAssignments()->count());
+    }
+
+    #[Test]
     public function it_reuses_high_priority_halls_for_different_exam_periods(): void
     {
         $context = $this->createAcademicContext();
