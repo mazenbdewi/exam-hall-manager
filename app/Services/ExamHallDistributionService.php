@@ -2891,7 +2891,7 @@ class ExamHallDistributionService
 
     protected function maxSubjectsPerHall(bool $allowMultipleSubjectsPerHall): int
     {
-        return $allowMultipleSubjectsPerHall ? 3 : 1;
+        return $allowMultipleSubjectsPerHall ? PHP_INT_MAX : 1;
     }
 
     protected function slotCapacityProfile(Collection $slotOfferings, Collection $availableHalls): array

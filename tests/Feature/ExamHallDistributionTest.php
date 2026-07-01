@@ -30,7 +30,7 @@ class ExamHallDistributionTest extends TestCase
     use RefreshDatabase;
 
     #[Test]
-    public function it_distributes_students_per_exam_slot_without_exceeding_three_subjects_per_hall(): void
+    public function it_distributes_students_per_exam_slot_without_exceeding_hall_capacity(): void
     {
         $context = $this->createAcademicContext();
 
@@ -76,7 +76,6 @@ class ExamHallDistributionTest extends TestCase
             ->get();
 
         $this->assertCount(2, $hallAssignments);
-        $this->assertTrue($hallAssignments->every(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->count() <= 3));
         $this->assertTrue($hallAssignments->every(fn (HallAssignment $assignment): bool => $assignment->assigned_students_count <= $assignment->total_capacity));
         $this->assertSame(140, ExamStudentHallAssignment::query()->count());
         $hallAssignments->each(function (HallAssignment $assignment): void {
@@ -159,6 +158,151 @@ class ExamHallDistributionTest extends TestCase
         $this->assertCount(2, $hallAssignments);
         $this->assertTrue($hallAssignments->every(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->count() === 1));
         $this->assertSame(5, $secondOffering->studentHallAssignments()->count());
+    }
+
+    #[Test]
+    public function it_allows_multiple_normal_subjects_to_share_one_hall_when_enabled(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $firstOffering = $this->createOfferingWithStudents($context, 'تحليل', 6);
+        $secondOffering = $this->createOfferingWithStudents($context, 'فيزياء', 4);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'القاعة المشتركة',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة احتياطية',
+            'location' => 'المبنى الثاني',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::Medium->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $firstOffering,
+            allowMultipleSubjectsPerHall: true,
+        );
+
+        $assignment = HallAssignment::query()
+            ->with(['examHall', 'assignmentSubjects'])
+            ->firstOrFail();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(1, $result['used_halls_count']);
+        $this->assertSame(10, $result['assigned_students_count']);
+        $this->assertSame(0, $result['unassigned_students_count']);
+        $this->assertSame('القاعة المشتركة', $assignment->examHall?->name);
+        $this->assertSame(0, $assignment->remaining_capacity);
+        $this->assertCount(2, $assignment->assignmentSubjects);
+        $this->assertSame(6, $firstOffering->studentHallAssignments()->count());
+        $this->assertSame(4, $secondOffering->studentHallAssignments()->count());
+    }
+
+    #[Test]
+    public function it_uses_remaining_hall_capacity_for_more_than_three_normal_subjects_when_enabled(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $offerings = collect([
+            $this->createOfferingWithStudents($context, 'تحليل', 1),
+            $this->createOfferingWithStudents($context, 'فيزياء', 1),
+            $this->createOfferingWithStudents($context, 'جبر', 1),
+            $this->createOfferingWithStudents($context, 'برمجة', 1),
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة تسع كل المواد',
+            'location' => 'المبنى الأول',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة لا يجب استخدامها',
+            'location' => 'المبنى الثاني',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::Medium->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $offerings->first(),
+            allowMultipleSubjectsPerHall: true,
+        );
+
+        $assignment = HallAssignment::query()
+            ->with(['examHall', 'assignmentSubjects'])
+            ->firstOrFail();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(1, $result['used_halls_count']);
+        $this->assertSame(4, $assignment->assignmentSubjects->count());
+        $this->assertSame(0, $assignment->remaining_capacity);
+        $this->assertSame('قاعة تسع كل المواد', $assignment->examHall?->name);
+        $this->assertSame(1, HallAssignment::query()->count());
+    }
+
+    #[Test]
+    public function it_reuses_high_priority_halls_for_different_exam_periods(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $morningOffering = $this->createOfferingWithStudents($context, 'تحليل صباحي', 8, startTime: '09:00:00');
+        $eveningOffering = $this->createOfferingWithStudents($context, 'تحليل مسائي', 8, startTime: '12:00:00');
+
+        $highPriorityHall = ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة أولوية عالية',
+            'location' => 'المبنى الأول',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة أولوية منخفضة',
+            'location' => 'المبنى الثاني',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'priority' => ExamHallPriority::Low->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+        );
+
+        $usedHallIdsByTime = HallAssignment::query()
+            ->orderBy('exam_start_time')
+            ->pluck('exam_hall_id', 'exam_start_time')
+            ->all();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertCount(2, $usedHallIdsByTime);
+        $this->assertSame($highPriorityHall->id, $usedHallIdsByTime['09:00:00']);
+        $this->assertSame($highPriorityHall->id, $usedHallIdsByTime['12:00:00']);
+        $this->assertSame(8, $morningOffering->studentHallAssignments()->count());
+        $this->assertSame(8, $eveningOffering->studentHallAssignments()->count());
     }
 
     #[Test]
@@ -1058,14 +1202,14 @@ class ExamHallDistributionTest extends TestCase
 
         $run = StudentDistributionRun::query()->latest('id')->firstOrFail();
 
-        $this->assertSame('partial', $result['status']);
-        $this->assertSame('partial', $run->status);
+        $this->assertSame('success', $result['status']);
+        $this->assertSame('success', $run->status);
         $this->assertSame(0, $result['capacity_shortage']);
         $this->assertSame(4, $run->summary_json['validation']['expected_students'] ?? null);
-        $this->assertSame(3, $run->summary_json['validation']['assigned_students'] ?? null);
-        $this->assertSame(1, $run->summary_json['validation']['unassigned_students'] ?? null);
+        $this->assertSame(4, $run->summary_json['validation']['assigned_students'] ?? null);
+        $this->assertSame(0, $run->summary_json['validation']['unassigned_students'] ?? null);
         $this->assertSame(4, $run->summary_json['validation']['used_hall_capacity'] ?? null);
-        $this->assertSame(1, $run->summary_json['validation']['remaining_capacity'] ?? null);
+        $this->assertSame(0, $run->summary_json['validation']['remaining_capacity'] ?? null);
     }
 
     #[Test]
