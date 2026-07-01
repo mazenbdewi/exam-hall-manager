@@ -213,6 +213,7 @@ return array_replace_recursive($arabic, [
             'hall_reservation_conflict' => 'Hall reservation conflicts in the same slot prevented distribution from completing.',
             'available_capacity_mismatch' => 'Nominal capacity appears sufficient, but remaining usable capacity after occupied halls is not enough.',
             'remaining_capacity_calculation_mismatch' => 'Remaining usable capacity is enough for the unassigned students, so the distribution failure is not a capacity shortage and needs the allocation constraints or system log reviewed.',
+            'invalid_mixed_drawing_and_normal_subjects' => 'Drawing subjects cannot be mixed with normal subjects inside the same hall. Drawing subjects may only share drawing studios / labs with other drawing subjects when capacity remains.',
             'student_assignment_insert_failed' => 'Saving student seat assignments failed. The full technical reason was written to the system log.',
             'hall_assignment_insert_failed' => 'Saving the hall assignment failed during distribution. The full technical reason was written to the system log.',
             'invalid_hall_capacity_data' => 'Suitable halls contain invalid or zero capacity data.',

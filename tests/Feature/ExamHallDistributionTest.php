@@ -7,6 +7,7 @@ use App\Enums\ExamHallType;
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
 use App\Exports\StudentDistributionUnassignedExport;
+use App\Filament\Pages\Reports\HallDistributionByPeriodReport;
 use App\Models\AcademicYear;
 use App\Models\College;
 use App\Models\Department;
@@ -20,6 +21,7 @@ use App\Models\StudentDistributionRun;
 use App\Models\StudyLevel;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
+use App\Models\User;
 use App\Services\ExamHallDistributionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
@@ -670,6 +672,49 @@ class ExamHallDistributionTest extends TestCase
     }
 
     #[Test]
+    public function period_distribution_report_reflects_real_drawing_studio_sharing(): void
+    {
+        $context = $this->createAcademicContext();
+        $this->actingAs(User::factory()->create(['college_id' => $context['college']->id]));
+
+        $this->createOfferingWithStudents($context, 'رسم تقرير A', 4, isDrawingSubject: true);
+        $this->createOfferingWithStudents($context, 'رسم تقرير B', 3, isDrawingSubject: true);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم التقرير',
+            'location' => 'مبنى الفنون',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $context['college']->id,
+            fromDate: '2026-06-01',
+            toDate: '2026-06-01',
+            redistribute: true,
+        );
+
+        $report = new HallDistributionByPeriodReport();
+        $report->college_id = $context['college']->id;
+        $report->academic_year_id = $context['academic_year']->id;
+        $report->semester_id = $context['semester']->id;
+        $report->date_from = '2026-06-01';
+        $report->date_to = '2026-06-01';
+
+        $period = $report->reportData()['periods'][0];
+        $hall = collect($period['halls'])->firstWhere('name', 'مرسم التقرير');
+        $subjects = collect($period['subjects']);
+
+        $this->assertNotNull($hall);
+        $this->assertSame(4, $subjects->firstWhere('name', 'رسم تقرير A')['hall_counts'][$hall['id']]);
+        $this->assertSame(3, $subjects->firstWhere('name', 'رسم تقرير B')['hall_counts'][$hall['id']]);
+    }
+
+    #[Test]
     public function drawing_subjects_do_not_share_halls_with_normal_subjects(): void
     {
         $context = $this->createAcademicContext();
@@ -718,6 +763,103 @@ class ExamHallDistributionTest extends TestCase
 
                 return ! ($hasDrawing && $hasNormal);
             }));
+    }
+
+    #[Test]
+    public function invalid_mixed_drawing_and_normal_hall_is_reported_with_clear_reason_code(): void
+    {
+        $context = $this->createAcademicContext();
+        $normalOffering = $this->createOfferingWithStudents($context, 'عادي داخل خلط خاطئ', 2);
+        $drawingOffering = $this->createOfferingWithStudents($context, 'رسم داخل خلط خاطئ', 2, isDrawingSubject: true);
+
+        $studio = ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم مختلط بشكل خاطئ',
+            'location' => 'مبنى الفنون',
+            'capacity' => 10,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $assignment = HallAssignment::query()->create([
+            'exam_hall_id' => $studio->id,
+            'exam_date' => '2026-06-01',
+            'exam_start_time' => '09:00:00',
+            'college_id' => $context['college']->id,
+            'total_capacity' => 10,
+            'assigned_students_count' => 4,
+            'remaining_capacity' => 6,
+        ]);
+        HallAssignmentSubject::query()->create([
+            'hall_assignment_id' => $assignment->id,
+            'subject_exam_offering_id' => $normalOffering->id,
+            'assigned_students_count' => 2,
+        ]);
+        HallAssignmentSubject::query()->create([
+            'hall_assignment_id' => $assignment->id,
+            'subject_exam_offering_id' => $drawingOffering->id,
+            'assigned_students_count' => 2,
+        ]);
+
+        $method = new \ReflectionMethod(ExamHallDistributionService::class, 'invalidMixedDrawingAndNormalIssue');
+        $method->setAccessible(true);
+        $issue = $method->invoke(app(ExamHallDistributionService::class), [
+            'college_id' => $context['college']->id,
+            'exam_date' => '2026-06-01',
+            'exam_start_time' => '09:00:00',
+        ]);
+
+        $this->assertSame('invalid_mixed_drawing_and_normal_subjects', $issue['reason_code']);
+        $this->assertSame('لا يجوز دمج مادة رسم مع مادة عادية داخل نفس القاعة. يمكن دمج مواد الرسم فقط مع مواد رسم أخرى ضمن المراسم/المخابر عند وجود سعة متبقية.', $issue['message']);
+    }
+
+    #[Test]
+    public function separate_carry_distribution_reserves_drawing_studios_for_drawing_subjects_before_normal_students(): void
+    {
+        $context = $this->createAcademicContext();
+        $context['college']->update(['allow_normal_subjects_in_drawing_studios' => true]);
+
+        $drawingOffering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'رسم مستجد يحتاج المرسم',
+            studentsCount: 4,
+            studentTypes: array_fill(0, 4, ExamStudentType::Regular->value),
+            isDrawingSubject: true,
+        );
+        $normalOffering = $this->createOfferingWithStudents(
+            context: $context,
+            subjectName: 'حملة عاديون لا يسبقون الرسم',
+            studentsCount: 4,
+            studentTypes: array_fill(0, 4, ExamStudentType::Carry->value),
+        );
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'مرسم وحيد',
+            'location' => 'مبنى الفنون',
+            'capacity' => 4,
+            'hall_type' => ExamHallType::Small->value,
+            'is_drawing_studio' => true,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $drawingOffering,
+            separateCarryStudents: true,
+        );
+
+        $this->assertSame('warning', $result['status']);
+        $this->assertSame(4, $drawingOffering->studentHallAssignments()->count());
+        $this->assertSame(0, $normalOffering->studentHallAssignments()->count());
+        $this->assertTrue(HallAssignment::query()
+            ->with('assignmentSubjects.subjectExamOffering.subject')
+            ->get()
+            ->every(fn (HallAssignment $assignment): bool => $assignment->assignmentSubjects->every(
+                fn (HallAssignmentSubject $subject): bool => (bool) $subject->subjectExamOffering?->subject?->is_drawing_subject,
+            )));
     }
 
     #[Test]

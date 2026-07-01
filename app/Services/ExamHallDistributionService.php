@@ -168,6 +168,8 @@ class ExamHallDistributionService
             $slotHasExistingDistribution = $this->slotHasDistribution($collegeId, $examDate, $examStartTime);
             $slotHasInvalidDrawingDistribution = $slotHasExistingDistribution
                 && $this->slotDistributionViolatesDrawingStudioRule($slotOfferings, $collegeId, $examDate, $examStartTime);
+            $slotHasInvalidMixedDrawingDistribution = $slotHasExistingDistribution
+                && $this->invalidMixedDrawingAndNormalAssignments($collegeId, $examDate, $examStartTime)->isNotEmpty();
             $slotHasInvalidSubjectMixingDistribution = $slotHasExistingDistribution
                 && $this->slotDistributionViolatesSubjectMixingSetting(
                     slotOfferings: $slotOfferings,
@@ -186,7 +188,16 @@ class ExamHallDistributionService
                 ]);
             }
 
-            if (! $redistribute && $slotHasExistingDistribution && ! $slotHasInvalidDrawingDistribution && ! $slotHasInvalidSubjectMixingDistribution) {
+            if ($slotHasInvalidMixedDrawingDistribution) {
+                Log::warning('[Distribution] Rebuilding existing slot distribution because a hall mixes drawing and normal subjects.', [
+                    'college_id' => $collegeId,
+                    'exam_date' => $examDate,
+                    'exam_start_time' => $examStartTime,
+                    'reason_code' => 'invalid_mixed_drawing_and_normal_subjects',
+                ]);
+            }
+
+            if (! $redistribute && $slotHasExistingDistribution && ! $slotHasInvalidDrawingDistribution && ! $slotHasInvalidMixedDrawingDistribution && ! $slotHasInvalidSubjectMixingDistribution) {
                 $slotStats = $this->slotDistributionStats($slotOfferings, $activeHalls, $collegeId, $examDate, $examStartTime, $slotCapacity, $slotCapacityShortage, $separateCarryStudents);
                 $summary['skipped_slots_count']++;
                 $summary['distributed_students'] += $slotStats['distributed_students'];
@@ -380,6 +391,7 @@ class ExamHallDistributionService
                 $this->logDistributionDecision('evaluating_hall', $slot, $hall, [
                     'remaining_before' => $remainingCapacity,
                     'can_mix_subjects' => $allowMultipleSubjectsPerHall,
+                    'occupancy_type' => $this->hallPlanOccupancyState($hall, $subjectCounts, $slotOfferings)['occupancy_type'],
                     'slot_key' => $this->hallSlotKey($hall, $slot),
                 ]);
 
@@ -405,6 +417,19 @@ class ExamHallDistributionService
                     if ($take <= 0) {
                         break;
                     }
+
+                    $occupancyBeforeAssignment = $this->hallPlanOccupancyState($hall, $subjectCounts, $slotOfferings);
+                    $this->logDistributionDecision('assigning_subject_to_hall', $slot, $hall, [
+                        'subject_exam_offering_id' => $offeringId,
+                        'subject_name' => $this->sanitizeString($nextOffering->subject?->name ?? ''),
+                        'requires_drawing_studio' => $this->isDrawingSubjectOffering($nextOffering),
+                        'occupancy_type' => $occupancyBeforeAssignment['occupancy_type'],
+                        'remaining_before' => $remainingCapacity,
+                        'students_to_assign' => $take,
+                        'remaining_after' => $remainingCapacity - $take,
+                        'can_mix_subjects' => $allowMultipleSubjectsPerHall,
+                        'slot_key' => $this->hallSlotKey($hall, $slot),
+                    ]);
 
                     /** @var Collection<int, ExamStudent> $students */
                     $students = $studentQueues[$offeringId]->splice(0, $take);
@@ -435,6 +460,7 @@ class ExamHallDistributionService
                     $this->logDistributionDecision('rejected_hall', $slot, $hall, [
                         'remaining_before' => (int) $hall->capacity,
                         'can_mix_subjects' => $allowMultipleSubjectsPerHall,
+                        'occupancy_type' => $this->hallPlanOccupancyState($hall, $subjectCounts, $slotOfferings)['occupancy_type'],
                         'reason' => $this->hallRejectionReason(
                             slotOfferings: $slotOfferings,
                             remainingCounts: $remainingCounts,
@@ -465,6 +491,7 @@ class ExamHallDistributionService
                     'remaining_after' => max(0, (int) $hall->capacity - $hallAssignedStudentsCount),
                     'subject_counts' => $subjectCounts,
                     'can_mix_subjects' => $allowMultipleSubjectsPerHall,
+                    'occupancy_type' => $this->hallPlanOccupancyState($hall, $subjectCounts, $slotOfferings)['occupancy_type'],
                     'slot_key' => $this->hallSlotKey($hall, $slot),
                 ]);
 
@@ -502,6 +529,27 @@ class ExamHallDistributionService
                 $assignedStudentsCount += $hallAssignedStudentsCount;
                 $usedHallsCount++;
                 $distributionStage = 'assignment_planning';
+            }
+
+            if ($invalidMixedIssue = $this->invalidMixedDrawingAndNormalIssue($slot)) {
+                $this->clearSlotDistribution(
+                    collegeId: $slot['college_id'],
+                    examDate: $slot['exam_date'],
+                    examStartTime: $slot['exam_start_time'],
+                );
+
+                SubjectExamOffering::query()
+                    ->whereKey($slotOfferings->modelKeys())
+                    ->update(['status' => ExamOfferingStatus::Ready->value]);
+
+                return [
+                    'status' => 'danger',
+                    'message' => $invalidMixedIssue['message'],
+                    'reason_code' => $invalidMixedIssue['reason_code'],
+                    'assigned_students_count' => 0,
+                    'unassigned_students_count' => $totalStudents,
+                    'used_halls_count' => 0,
+                ];
             }
 
             $unassignedStudentsCount = max(0, $totalStudents - $assignedStudentsCount);
@@ -578,6 +626,37 @@ class ExamHallDistributionService
         $regularStudentsCount = array_sum($remainingCounts[ExamStudentType::Regular->value]);
         $carryStudentsCount = array_sum($remainingCounts[ExamStudentType::Carry->value]);
 
+        foreach ($availableHalls->filter(fn (ExamHall $hall): bool => $this->isDrawingStudio($hall)) as $hall) {
+            if (! $this->hasRemainingDrawingStudents($slotOfferings, $this->combinedRemainingCounts($remainingCounts))) {
+                break;
+            }
+
+            $hallId = $hall->getKey();
+            $plans[$hallId] ??= $this->emptyHallPlan($hall);
+
+            $this->assignStudentTypeToHallPlan(
+                studentType: ExamStudentType::Carry->value,
+                plan: $plans[$hallId],
+                slotOfferings: $slotOfferings->filter(fn (SubjectExamOffering $slotOffering): bool => $this->isDrawingSubjectOffering($slotOffering))->values(),
+                studentQueues: $studentQueues,
+                remainingCounts: $remainingCounts,
+                maxSubjectsPerHall: $maxSubjectsPerHall,
+                slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
+            );
+
+            $this->assignStudentTypeToHallPlan(
+                studentType: ExamStudentType::Regular->value,
+                plan: $plans[$hallId],
+                slotOfferings: $slotOfferings->filter(fn (SubjectExamOffering $slotOffering): bool => $this->isDrawingSubjectOffering($slotOffering))->values(),
+                studentQueues: $studentQueues,
+                remainingCounts: $remainingCounts,
+                maxSubjectsPerHall: $maxSubjectsPerHall,
+                slotHasDrawingSubjects: $slotHasDrawingSubjects,
+                allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
+            );
+        }
+
         foreach ($this->hallsForCarryStudents($availableHalls) as $hall) {
             if (array_sum($remainingCounts[ExamStudentType::Carry->value]) === 0) {
                 break;
@@ -646,6 +725,31 @@ class ExamHallDistributionService
         );
 
         [$assignedStudentsCount, $usedHallsCount] = $this->persistHallPlans($plans, $slot);
+
+        if ($invalidMixedIssue = $this->invalidMixedDrawingAndNormalIssue($slot)) {
+            $this->clearSlotDistribution(
+                collegeId: $slot['college_id'],
+                examDate: $slot['exam_date'],
+                examStartTime: $slot['exam_start_time'],
+            );
+
+            SubjectExamOffering::query()
+                ->whereKey($slotOfferings->modelKeys())
+                ->update(['status' => ExamOfferingStatus::Ready->value]);
+
+            return [
+                'status' => 'danger',
+                'message' => $invalidMixedIssue['message'],
+                'reason_code' => $invalidMixedIssue['reason_code'],
+                'assigned_students_count' => 0,
+                'unassigned_students_count' => $totalStudents,
+                'used_halls_count' => 0,
+                'regular_students_count' => $regularStudentsCount,
+                'carry_students_count' => $carryStudentsCount,
+                'mixed_halls_count' => 0,
+            ];
+        }
+
         $unassignedStudentsCount = max(0, $totalStudents - $assignedStudentsCount);
         $hasUnassignedDrawingStudents = $this->hasUnassignedDrawingStudents(
             $slotOfferings,
@@ -1512,6 +1616,53 @@ class ExamHallDistributionService
         return false;
     }
 
+    protected function invalidMixedDrawingAndNormalIssue(array $slot): ?array
+    {
+        $invalidAssignments = $this->invalidMixedDrawingAndNormalAssignments(
+            collegeId: (int) $slot['college_id'],
+            examDate: (string) $slot['exam_date'],
+            examStartTime: (string) $slot['exam_start_time'],
+        );
+
+        if ($invalidAssignments->isEmpty()) {
+            return null;
+        }
+
+        Log::error('[Distribution] Invalid mixed drawing and normal subjects detected after allocation.', [
+            'college_id' => $slot['college_id'],
+            'exam_date' => $slot['exam_date'],
+            'exam_start_time' => $slot['exam_start_time'],
+            'reason_code' => 'invalid_mixed_drawing_and_normal_subjects',
+            'hall_assignments' => $invalidAssignments
+                ->map(fn (HallAssignment $assignment): array => [
+                    'hall_assignment_id' => $assignment->getKey(),
+                    'hall_id' => $assignment->exam_hall_id,
+                    'hall_name' => $this->sanitizeString($assignment->examHall?->name ?? ''),
+                    'occupancy_type' => $this->hallAssignmentOccupancyState($assignment)['occupancy_type'],
+                    'assigned_subject_ids' => $this->hallAssignmentOccupancyState($assignment)['assigned_subject_ids'],
+                ])
+                ->values()
+                ->all(),
+        ]);
+
+        return [
+            'reason_code' => 'invalid_mixed_drawing_and_normal_subjects',
+            'message' => __('exam.global_hall_distribution.failure_reasons.invalid_mixed_drawing_and_normal_subjects'),
+        ];
+    }
+
+    protected function invalidMixedDrawingAndNormalAssignments(int $collegeId, string $examDate, string $examStartTime): Collection
+    {
+        return HallAssignment::query()
+            ->where('college_id', $collegeId)
+            ->whereDate('exam_date', $examDate)
+            ->whereTime('exam_start_time', $examStartTime)
+            ->with(['examHall', 'assignmentSubjects.subjectExamOffering.subject'])
+            ->get()
+            ->filter(fn (HallAssignment $assignment): bool => $this->hallAssignmentOccupancyState($assignment)['occupancy_type'] === 'mixed_invalid')
+            ->values();
+    }
+
     protected function slotDistributionStats(
         Collection $slotOfferings,
         Collection $activeHalls,
@@ -2315,6 +2466,7 @@ class ExamHallDistributionService
             'hall_reservation_conflict' => __('exam.global_hall_distribution.failure_reasons.hall_reservation_conflict'),
             'available_capacity_mismatch' => __('exam.global_hall_distribution.failure_reasons.available_capacity_mismatch'),
             'remaining_capacity_calculation_mismatch' => __('exam.global_hall_distribution.failure_reasons.remaining_capacity_calculation_mismatch'),
+            'invalid_mixed_drawing_and_normal_subjects' => __('exam.global_hall_distribution.failure_reasons.invalid_mixed_drawing_and_normal_subjects'),
             'student_assignment_insert_failed' => __('exam.global_hall_distribution.failure_reasons.student_assignment_insert_failed'),
             'hall_assignment_insert_failed' => __('exam.global_hall_distribution.failure_reasons.hall_assignment_insert_failed'),
             'invalid_hall_capacity_data' => __('exam.global_hall_distribution.failure_reasons.invalid_hall_capacity_data'),
@@ -3024,6 +3176,88 @@ class ExamHallDistributionService
             : ' ['.implode(', ', array_unique($rejectionReasons)).']');
     }
 
+    protected function hallPlanOccupancyState(ExamHall $hall, array $subjectCounts, Collection $slotOfferings): array
+    {
+        $assignedSubjectIds = array_keys($subjectCounts);
+        $drawingSubjectIds = [];
+        $normalSubjectIds = [];
+
+        foreach ($slotOfferings as $slotOffering) {
+            $offeringId = $slotOffering->getKey();
+
+            if (! array_key_exists($offeringId, $subjectCounts)) {
+                continue;
+            }
+
+            if ($this->isDrawingSubjectOffering($slotOffering)) {
+                $drawingSubjectIds[] = $offeringId;
+            } else {
+                $normalSubjectIds[] = $offeringId;
+            }
+        }
+
+        return [
+            'hall_id' => $hall->getKey(),
+            'is_drawing_studio' => $this->isDrawingStudio($hall),
+            'used_capacity' => array_sum($subjectCounts),
+            'remaining_capacity' => max(0, (int) $hall->capacity - array_sum($subjectCounts)),
+            'occupancy_type' => $this->occupancyType($drawingSubjectIds !== [], $normalSubjectIds !== []),
+            'assigned_subject_ids' => $assignedSubjectIds,
+            'all_assigned_subjects_require_drawing_studio' => $assignedSubjectIds !== [] && $normalSubjectIds === [],
+            'drawing_subject_ids' => $drawingSubjectIds,
+            'normal_subject_ids' => $normalSubjectIds,
+        ];
+    }
+
+    protected function hallAssignmentOccupancyState(HallAssignment $assignment): array
+    {
+        $drawingSubjectIds = [];
+        $normalSubjectIds = [];
+        $assignedSubjectIds = [];
+
+        foreach ($assignment->assignmentSubjects as $assignmentSubject) {
+            $offering = $assignmentSubject->subjectExamOffering;
+            $offeringId = $offering?->getKey() ?? $assignmentSubject->subject_exam_offering_id;
+            $assignedSubjectIds[] = $offeringId;
+
+            if ($offering && $this->isDrawingSubjectOffering($offering)) {
+                $drawingSubjectIds[] = $offeringId;
+            } else {
+                $normalSubjectIds[] = $offeringId;
+            }
+        }
+
+        return [
+            'hall_id' => $assignment->exam_hall_id,
+            'is_drawing_studio' => $this->isDrawingStudio($assignment->examHall),
+            'used_capacity' => (int) $assignment->assigned_students_count,
+            'remaining_capacity' => (int) $assignment->remaining_capacity,
+            'occupancy_type' => $this->occupancyType($drawingSubjectIds !== [], $normalSubjectIds !== []),
+            'assigned_subject_ids' => $assignedSubjectIds,
+            'all_assigned_subjects_require_drawing_studio' => $assignedSubjectIds !== [] && $normalSubjectIds === [],
+            'drawing_subject_ids' => $drawingSubjectIds,
+            'normal_subject_ids' => $normalSubjectIds,
+        ];
+    }
+
+    protected function occupancyType(bool $hasDrawingSubjects, bool $hasNormalSubjects): string
+    {
+        return match (true) {
+            $hasDrawingSubjects && $hasNormalSubjects => 'mixed_invalid',
+            $hasDrawingSubjects => 'drawing_only',
+            $hasNormalSubjects => 'normal_only',
+            default => 'empty',
+        };
+    }
+
+    protected function hasRemainingDrawingStudents(Collection $slotOfferings, array $remainingCounts): bool
+    {
+        return $slotOfferings->contains(
+            fn (SubjectExamOffering $slotOffering): bool => $this->isDrawingSubjectOffering($slotOffering)
+                && (int) ($remainingCounts[$slotOffering->getKey()] ?? 0) > 0,
+        );
+    }
+
     protected function logDistributionDecision(string $event, array $slot, ExamHall $hall, array $context = []): void
     {
         Log::debug('[Distribution] '.$event, [
@@ -3163,11 +3397,13 @@ class ExamHallDistributionService
         bool $allowNormalSubjectsInDrawingStudios,
     ): array {
         $offeringId = $offering->getKey();
+        $occupancy = $this->hallPlanOccupancyState($hall, $subjectCounts, $slotOfferings);
 
         if (! isset($subjectCounts[$offeringId]) && count($subjectCounts) >= $maxSubjectsPerHall) {
             return [
                 'can_add' => false,
                 'reason' => 'subject_limit_reached',
+                ...$occupancy,
             ];
         }
 
@@ -3178,6 +3414,7 @@ class ExamHallDistributionService
             return [
                 'can_add' => false,
                 'reason' => 'drawing_subject_requires_drawing_studio',
+                ...$occupancy,
             ];
         }
 
@@ -3185,26 +3422,31 @@ class ExamHallDistributionService
             return [
                 'can_add' => false,
                 'reason' => 'normal_subject_drawing_studio_disabled',
+                ...$occupancy,
             ];
         }
 
-        $existingOfferings = $slotOfferings
-            ->filter(fn (SubjectExamOffering $slotOffering): bool => array_key_exists($slotOffering->getKey(), $subjectCounts));
-
-        $hasDrawingSubject = $existingOfferings->contains(fn (SubjectExamOffering $slotOffering): bool => $this->isDrawingSubjectOffering($slotOffering));
-        $hasNonDrawingSubject = $existingOfferings->contains(fn (SubjectExamOffering $slotOffering): bool => ! $this->isDrawingSubjectOffering($slotOffering));
-
-        if ($isDrawingSubject && $hasNonDrawingSubject) {
+        if ($isDrawingSubject && $occupancy['occupancy_type'] === 'normal_only') {
             return [
                 'can_add' => false,
                 'reason' => 'drawing_subject_cannot_mix_with_normal_subject',
+                ...$occupancy,
             ];
         }
 
-        if (! $isDrawingSubject && $hasDrawingSubject) {
+        if (! $isDrawingSubject && $occupancy['occupancy_type'] === 'drawing_only') {
             return [
                 'can_add' => false,
                 'reason' => 'normal_subject_cannot_mix_with_drawing_subject',
+                ...$occupancy,
+            ];
+        }
+
+        if ($occupancy['occupancy_type'] === 'mixed_invalid') {
+            return [
+                'can_add' => false,
+                'reason' => 'hall_already_has_invalid_mixed_drawing_and_normal_subjects',
+                ...$occupancy,
             ];
         }
 
@@ -3212,6 +3454,7 @@ class ExamHallDistributionService
             'can_add' => true,
             'reason' => 'accepted',
             'slot_has_drawing_subjects' => $slotHasDrawingSubjects,
+            ...$occupancy,
         ];
     }
 
@@ -3220,7 +3463,7 @@ class ExamHallDistributionService
         return (bool) ($offering->subject?->is_drawing_subject ?? false);
     }
 
-    protected function isDrawingStudio(ExamHall $hall): bool
+    protected function isDrawingStudio(?ExamHall $hall): bool
     {
         return (bool) ($hall->is_drawing_studio ?? false);
     }
