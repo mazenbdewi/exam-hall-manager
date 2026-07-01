@@ -31,6 +31,8 @@ class ExamHallDistributionService
         bool $separateCarryStudents = false,
         bool $allowMultipleSubjectsPerHall = true,
     ): array {
+        $this->extendExecutionTimeForLargeDistribution();
+
         $fromDate = substr($fromDate, 0, 10);
         $toDate = substr($toDate, 0, 10);
         $settings = [
@@ -412,9 +414,32 @@ class ExamHallDistributionService
                     }
 
                     $offeringId = $nextOffering->getKey();
-                    $take = min($remainingCapacity, $remainingCounts[$offeringId] ?? 0);
+                    $calculatedSubjectLimit = $this->calculatedSubjectLimitForHall(
+                        offering: $nextOffering,
+                        hall: $hall,
+                        slotOfferings: $slotOfferings,
+                        remainingCounts: $remainingCounts,
+                        subjectCounts: $subjectCounts,
+                        remainingCapacity: $remainingCapacity,
+                        allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
+                        allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
+                    );
+                    $take = min($calculatedSubjectLimit, $remainingCounts[$offeringId] ?? 0);
 
                     if ($take <= 0) {
+                        $this->logDistributionDecision('rejected_subject_for_hall', $slot, $hall, [
+                            'subject_exam_offering_id' => $offeringId,
+                            'subject_name' => $this->sanitizeString($nextOffering->subject?->name ?? ''),
+                            'allow_multiple_subjects' => $allowMultipleSubjectsPerHall,
+                            'is_drawing_subject' => $this->isDrawingSubjectOffering($nextOffering),
+                            'subjects_already_in_hall' => array_keys($subjectCounts),
+                            'remaining_capacity' => $remainingCapacity,
+                            'calculated_subject_limit' => $calculatedSubjectLimit,
+                            'accepted' => false,
+                            'reason' => 'calculated_subject_limit_exhausted',
+                            'slot_key' => $this->hallSlotKey($hall, $slot),
+                        ]);
+
                         break;
                     }
 
@@ -423,11 +448,18 @@ class ExamHallDistributionService
                         'subject_exam_offering_id' => $offeringId,
                         'subject_name' => $this->sanitizeString($nextOffering->subject?->name ?? ''),
                         'requires_drawing_studio' => $this->isDrawingSubjectOffering($nextOffering),
+                        'allow_multiple_subjects' => $allowMultipleSubjectsPerHall,
+                        'is_drawing_subject' => $this->isDrawingSubjectOffering($nextOffering),
+                        'subjects_already_in_hall' => array_keys($subjectCounts),
                         'occupancy_type' => $occupancyBeforeAssignment['occupancy_type'],
                         'remaining_before' => $remainingCapacity,
+                        'remaining_capacity' => $remainingCapacity,
+                        'calculated_subject_limit' => $calculatedSubjectLimit,
                         'students_to_assign' => $take,
                         'remaining_after' => $remainingCapacity - $take,
                         'can_mix_subjects' => $allowMultipleSubjectsPerHall,
+                        'accepted' => true,
+                        'reason' => 'accepted',
                         'slot_key' => $this->hallSlotKey($hall, $slot),
                     ]);
 
@@ -890,7 +922,19 @@ class ExamHallDistributionService
             }
 
             $offeringId = $nextOffering->getKey();
-            $take = min($this->planRemainingCapacity($plan), $remainingCounts[$studentType][$offeringId] ?? 0);
+            $take = min(
+                $this->calculatedSubjectLimitForHall(
+                    offering: $nextOffering,
+                    hall: $plan['hall'],
+                    slotOfferings: $slotOfferings,
+                    remainingCounts: $remainingCounts[$studentType],
+                    subjectCounts: $plan['subject_counts'],
+                    remainingCapacity: $this->planRemainingCapacity($plan),
+                    allowMultipleSubjectsPerHall: $maxSubjectsPerHall > 1,
+                    allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
+                ),
+                $remainingCounts[$studentType][$offeringId] ?? 0,
+            );
 
             if ($take <= 0) {
                 $visitedOfferingIds[] = $offeringId;
@@ -3260,17 +3304,36 @@ class ExamHallDistributionService
 
     protected function logDistributionDecision(string $event, array $slot, ExamHall $hall, array $context = []): void
     {
-        Log::debug('[Distribution] '.$event, [
+        if (! $this->shouldLogDistributionDecisions()) {
+            return;
+        }
+
+        Log::debug('[StudentDistribution] '.$event, [
             'college_id' => $slot['college_id'] ?? null,
             'exam_date' => $slot['exam_date'] ?? null,
             'exam_start_time' => $slot['exam_start_time'] ?? null,
+            'period' => $slot['exam_start_time'] ?? null,
             'hall_id' => $hall->getKey(),
+            'hall' => $this->sanitizeString($hall->name),
             'hall_name' => $this->sanitizeString($hall->name),
             'hall_capacity' => (int) $hall->capacity,
             'hall_priority' => $hall->priority?->value,
             'is_drawing_studio' => $this->isDrawingStudio($hall),
+            'is_drawing_hall' => $this->isDrawingStudio($hall),
             ...$context,
         ]);
+    }
+
+    protected function shouldLogDistributionDecisions(): bool
+    {
+        return filter_var(env('STUDENT_DISTRIBUTION_DEBUG', false), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    protected function extendExecutionTimeForLargeDistribution(): void
+    {
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
     }
 
     protected function hallSlotKey(ExamHall $hall, array $slot): string
@@ -3316,6 +3379,86 @@ class ExamHallDistributionService
     protected function maxSubjectsPerHall(bool $allowMultipleSubjectsPerHall): int
     {
         return $allowMultipleSubjectsPerHall ? PHP_INT_MAX : 1;
+    }
+
+    protected function calculatedSubjectLimitForHall(
+        SubjectExamOffering $offering,
+        ExamHall $hall,
+        Collection $slotOfferings,
+        array $remainingCounts,
+        array $subjectCounts,
+        int $remainingCapacity,
+        bool $allowMultipleSubjectsPerHall,
+        bool $allowNormalSubjectsInDrawingStudios,
+    ): int {
+        $remainingCapacity = max(0, $remainingCapacity);
+
+        if (
+            ! $allowMultipleSubjectsPerHall
+            || $this->isDrawingSubjectOffering($offering)
+            || $this->isDrawingStudio($hall)
+        ) {
+            return $remainingCapacity;
+        }
+
+        $offeringId = $offering->getKey();
+        $otherCompatibleNormalStudents = $this->otherCompatibleNormalStudentsWaiting(
+            currentOffering: $offering,
+            hall: $hall,
+            slotOfferings: $slotOfferings,
+            remainingCounts: $remainingCounts,
+            subjectCounts: $subjectCounts,
+            allowNormalSubjectsInDrawingStudios: $allowNormalSubjectsInDrawingStudios,
+        );
+
+        if ($otherCompatibleNormalStudents <= 0) {
+            return $remainingCapacity;
+        }
+
+        $hallCapacity = max(0, (int) $hall->capacity);
+        $minimumCapacityToLeaveForOtherSubjects = min(
+            $otherCompatibleNormalStudents,
+            max(0, $hallCapacity - intdiv($hallCapacity, 2)),
+        );
+        $totalLimitForCurrentSubject = max(1, $hallCapacity - $minimumCapacityToLeaveForOtherSubjects);
+        $alreadyAssignedToCurrentSubject = (int) ($subjectCounts[$offeringId] ?? 0);
+
+        return min($remainingCapacity, max(0, $totalLimitForCurrentSubject - $alreadyAssignedToCurrentSubject));
+    }
+
+    protected function otherCompatibleNormalStudentsWaiting(
+        SubjectExamOffering $currentOffering,
+        ExamHall $hall,
+        Collection $slotOfferings,
+        array $remainingCounts,
+        array $subjectCounts,
+        bool $allowNormalSubjectsInDrawingStudios,
+    ): int {
+        $currentOfferingId = $currentOffering->getKey();
+
+        return (int) $slotOfferings
+            ->filter(function (SubjectExamOffering $slotOffering) use ($currentOfferingId, $remainingCounts, $subjectCounts, $hall, $allowNormalSubjectsInDrawingStudios): bool {
+                $offeringId = $slotOffering->getKey();
+
+                if ((int) $offeringId === (int) $currentOfferingId) {
+                    return false;
+                }
+
+                if (isset($subjectCounts[$offeringId])) {
+                    return false;
+                }
+
+                if ((int) ($remainingCounts[$offeringId] ?? 0) <= 0) {
+                    return false;
+                }
+
+                if ($this->isDrawingSubjectOffering($slotOffering)) {
+                    return false;
+                }
+
+                return $allowNormalSubjectsInDrawingStudios || ! $this->isDrawingStudio($hall);
+            })
+            ->sum(fn (SubjectExamOffering $slotOffering): int => (int) ($remainingCounts[$slotOffering->getKey()] ?? 0));
     }
 
     protected function slotCapacityProfile(Collection $slotOfferings, Collection $availableHalls): array

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Enums\ExamOfferingStatus;
 use App\Enums\InvigilationRole;
 use App\Enums\InvigilatorAssignmentStatus;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
@@ -22,6 +23,7 @@ use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class ComprehensiveStudentDistribution extends Page
 {
@@ -74,6 +76,30 @@ class ComprehensiveStudentDistribution extends Page
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('clearStudentHallDistribution')
+                ->label(__('exam.actions.clear_student_hall_distribution'))
+                ->icon('heroicon-o-trash')
+                ->color('danger')
+                ->requiresConfirmation()
+                ->modalHeading(__('exam.actions.clear_student_hall_distribution'))
+                ->modalDescription(__('exam.confirmations.clear_student_hall_distribution'))
+                ->modalSubmitActionLabel(__('exam.actions.clear_student_hall_distribution'))
+                ->modalWidth('xl')
+                ->form([
+                    Select::make('college_id')
+                        ->label(__('exam.fields.college'))
+                        ->options(fn (): array => College::query()
+                            ->when(! ExamCollegeScope::isSuperAdmin(), fn (Builder $query) => $query->whereKey(ExamCollegeScope::currentCollegeId()))
+                            ->orderBy('name')
+                            ->pluck('name', 'id')
+                            ->all())
+                        ->default(fn (): ?int => $this->defaultDistributionCollegeId())
+                        ->required()
+                        ->searchable()
+                        ->preload()
+                        ->hidden(fn (): bool => ! ExamCollegeScope::isSuperAdmin()),
+                ])
+                ->action(fn (array $data): null => $this->clearStudentHallDistribution($data)),
             Action::make('globalStudentHallDistribution')
                 ->label(__('exam.actions.global_hall_distribution_by_college'))
                 ->icon('heroicon-o-sparkles')
@@ -145,6 +171,12 @@ class ComprehensiveStudentDistribution extends Page
             ->latest('executed_at')
             ->latest('id')
             ->first();
+    }
+
+    protected function defaultDistributionCollegeId(): ?int
+    {
+        return ExamCollegeScope::currentCollegeId()
+            ?? $this->latestDistributionRun()?->college_id;
     }
 
     /**
@@ -403,6 +435,136 @@ class ComprehensiveStudentDistribution extends Page
         $this->redirect($result['result_url']);
 
         return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function clearStudentHallDistribution(array $data): null
+    {
+        if (ExamCollegeScope::isSuperAdmin() && empty($data['college_id'])) {
+            Notification::make()
+                ->danger()
+                ->title(__('exam.actions.clear_student_hall_distribution'))
+                ->body(__('exam.global_hall_distribution.reasons.missing_required_inputs'))
+                ->send();
+
+            return null;
+        }
+
+        $collegeId = ExamCollegeScope::enforceCollegeId($data['college_id'] ?? null);
+        $summary = $this->clearStudentHallDistributionForCollege($collegeId);
+
+        app(AuditLogService::class)->log(
+            action: 'student_distribution.clear',
+            module: 'student_distribution',
+            description: 'تفريغ توزيع الطلاب على القاعات',
+            metadata: [
+                'faculty_id' => $collegeId,
+                ...$summary,
+            ],
+            status: 'success',
+        );
+
+        Notification::make()
+            ->success()
+            ->title(__('exam.notifications.student_hall_distribution_cleared'))
+            ->body($this->clearStudentHallDistributionSummaryBody($summary))
+            ->persistent()
+            ->send();
+
+        $this->redirect(static::getUrl());
+
+        return null;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function clearStudentHallDistributionForCollege(int $collegeId): array
+    {
+        return DB::transaction(function () use ($collegeId): array {
+            $offeringIds = DB::table('subject_exam_offerings as seo')
+                ->join('subjects as s', 's.id', '=', 'seo.subject_id')
+                ->where('s.college_id', $collegeId)
+                ->pluck('seo.id');
+
+            $hallAssignmentIds = DB::table('hall_assignments')
+                ->where('college_id', $collegeId)
+                ->pluck('id');
+
+            $runIds = DB::table('student_distribution_runs')
+                ->where('college_id', $collegeId)
+                ->pluck('id');
+
+            $runIssuesDeleted = 0;
+
+            if ($runIds->isNotEmpty() || $offeringIds->isNotEmpty()) {
+                $runIssuesDeleted = DB::table('student_distribution_run_issues')
+                    ->where(function ($query) use ($runIds, $offeringIds): void {
+                        if ($runIds->isNotEmpty()) {
+                            $query->whereIn('student_distribution_run_id', $runIds);
+                        }
+
+                        if ($offeringIds->isNotEmpty()) {
+                            $method = $runIds->isNotEmpty() ? 'orWhereIn' : 'whereIn';
+                            $query->{$method}('subject_exam_offering_id', $offeringIds);
+                        }
+                    })
+                    ->delete();
+            }
+
+            $studentHallAssignmentsDeleted = $offeringIds->isEmpty()
+                ? 0
+                : DB::table('exam_student_hall_assignments')
+                    ->whereIn('subject_exam_offering_id', $offeringIds)
+                    ->delete();
+
+            $hallAssignmentSubjectsDeleted = $hallAssignmentIds->isEmpty()
+                ? 0
+                : DB::table('hall_assignment_subjects')
+                    ->whereIn('hall_assignment_id', $hallAssignmentIds)
+                    ->delete();
+
+            $hallAssignmentsDeleted = DB::table('hall_assignments')
+                ->where('college_id', $collegeId)
+                ->delete();
+
+            $distributionRunsDeleted = DB::table('student_distribution_runs')
+                ->where('college_id', $collegeId)
+                ->delete();
+
+            $offeringsReset = $offeringIds->isEmpty()
+                ? 0
+                : DB::table('subject_exam_offerings')
+                    ->whereIn('id', $offeringIds)
+                    ->where('status', ExamOfferingStatus::Distributed->value)
+                    ->update(['status' => ExamOfferingStatus::Ready->value]);
+
+            return [
+                'student_distribution_run_issues_deleted' => $runIssuesDeleted,
+                'exam_student_hall_assignments_deleted' => $studentHallAssignmentsDeleted,
+                'hall_assignment_subjects_deleted' => $hallAssignmentSubjectsDeleted,
+                'hall_assignments_deleted' => $hallAssignmentsDeleted,
+                'student_distribution_runs_deleted' => $distributionRunsDeleted,
+                'subject_exam_offerings_reset' => $offeringsReset,
+            ];
+        });
+    }
+
+    /**
+     * @param  array<string, int>  $summary
+     */
+    protected function clearStudentHallDistributionSummaryBody(array $summary): string
+    {
+        return collect([
+            __('exam.global_hall_distribution.clear_summary.student_distribution_run_issues_deleted').': '.$summary['student_distribution_run_issues_deleted'],
+            __('exam.global_hall_distribution.clear_summary.exam_student_hall_assignments_deleted').': '.$summary['exam_student_hall_assignments_deleted'],
+            __('exam.global_hall_distribution.clear_summary.hall_assignment_subjects_deleted').': '.$summary['hall_assignment_subjects_deleted'],
+            __('exam.global_hall_distribution.clear_summary.hall_assignments_deleted').': '.$summary['hall_assignments_deleted'],
+            __('exam.global_hall_distribution.clear_summary.student_distribution_runs_deleted').': '.$summary['student_distribution_runs_deleted'],
+            __('exam.global_hall_distribution.clear_summary.subject_exam_offerings_reset').': '.$summary['subject_exam_offerings_reset'],
+        ])->implode(' | ');
     }
 
     /**

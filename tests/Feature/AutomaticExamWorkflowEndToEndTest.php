@@ -7,6 +7,7 @@ use App\Enums\ExamHallType;
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
 use App\Enums\InvigilationRole;
+use App\Enums\InvigilatorAssignmentStatus;
 use App\Enums\StaffCategory;
 use App\Exceptions\ExamScheduleGenerationException;
 use App\Exports\SubjectExamRosterStudentsTemplateExport;
@@ -27,13 +28,19 @@ use App\Models\Department;
 use App\Models\ExamHall;
 use App\Models\ExamScheduleDraft;
 use App\Models\ExamStudent;
+use App\Models\ExamStudentHallAssignment;
+use App\Models\HallAssignment;
+use App\Models\HallAssignmentSubject;
 use App\Models\Invigilator;
+use App\Models\InvigilatorAssignment;
 use App\Models\InvigilatorHallRequirement;
 use App\Models\Semester;
 use App\Models\StudyLevel;
 use App\Models\Subject;
 use App\Models\SubjectExamOffering;
 use App\Models\SubjectExamRoster;
+use App\Models\StudentDistributionRun;
+use App\Models\StudentDistributionRunIssue;
 use App\Models\User;
 use App\Services\ExamHallDistributionService;
 use App\Services\ExamScheduleGeneratorService;
@@ -339,6 +346,84 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
     }
 
     #[Test]
+    public function clear_student_hall_distribution_action_only_resets_the_current_college(): void
+    {
+        $selectedContext = $this->createAcademicContext();
+        $otherContext = $this->createAcademicContext();
+        $selectedDistribution = $this->createStoredStudentDistribution($selectedContext, 'مختارة');
+        $otherDistribution = $this->createStoredStudentDistribution($otherContext, 'أخرى');
+        $selectedRoster = $this->createRoster($selectedContext, $selectedDistribution['subject'], [
+            ['ROSTER-001', 'طالب قائمة', ExamStudentType::Regular->value],
+        ]);
+        $selectedInvigilator = Invigilator::query()->create([
+            'college_id' => $selectedContext['college']->id,
+            'name' => 'مراقب محفوظ',
+            'phone' => '0998000001',
+            'staff_category' => StaffCategory::Doctor->value,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'is_active' => true,
+        ]);
+        $selectedInvigilatorAssignment = InvigilatorAssignment::query()->create([
+            'college_id' => $selectedContext['college']->id,
+            'subject_exam_offering_id' => $selectedDistribution['offering']->id,
+            'exam_date' => '2026-05-03',
+            'start_time' => '09:00:00',
+            'exam_hall_id' => $selectedDistribution['hall']->id,
+            'invigilator_id' => $selectedInvigilator->id,
+            'invigilation_role' => InvigilationRole::Regular->value,
+            'assignment_status' => InvigilatorAssignmentStatus::Assigned->value,
+        ]);
+        $user = User::factory()->create(['college_id' => $selectedContext['college']->id]);
+        $user->givePermissionTo(Permission::findOrCreate(ShieldPermission::resource('viewAny', 'SubjectExamOffering'), 'web'));
+
+        Filament::setCurrentPanel(Filament::getPanel('adminpanel'));
+
+        Livewire::actingAs($user)
+            ->test(ComprehensiveStudentDistribution::class)
+            ->callAction('clearStudentHallDistribution')
+            ->assertRedirect(ComprehensiveStudentDistribution::getUrl());
+
+        $this->assertDatabaseMissing('student_distribution_runs', ['id' => $selectedDistribution['run']->id]);
+        $this->assertDatabaseMissing('student_distribution_run_issues', ['id' => $selectedDistribution['issue']->id]);
+        $this->assertDatabaseMissing('exam_student_hall_assignments', ['id' => $selectedDistribution['student_hall_assignment']->id]);
+        $this->assertDatabaseMissing('hall_assignment_subjects', ['id' => $selectedDistribution['hall_assignment_subject']->id]);
+        $this->assertDatabaseMissing('hall_assignments', ['id' => $selectedDistribution['hall_assignment']->id]);
+        $this->assertSame(ExamOfferingStatus::Ready, $selectedDistribution['offering']->refresh()->status);
+
+        $this->assertDatabaseHas('student_distribution_runs', ['id' => $otherDistribution['run']->id]);
+        $this->assertDatabaseHas('student_distribution_run_issues', ['id' => $otherDistribution['issue']->id]);
+        $this->assertDatabaseHas('exam_student_hall_assignments', ['id' => $otherDistribution['student_hall_assignment']->id]);
+        $this->assertDatabaseHas('hall_assignment_subjects', ['id' => $otherDistribution['hall_assignment_subject']->id]);
+        $this->assertDatabaseHas('hall_assignments', ['id' => $otherDistribution['hall_assignment']->id]);
+        $this->assertSame(ExamOfferingStatus::Distributed, $otherDistribution['offering']->refresh()->status);
+
+        $this->assertDatabaseHas('subjects', ['id' => $selectedDistribution['subject']->id]);
+        $this->assertDatabaseHas('subject_exam_offerings', ['id' => $selectedDistribution['offering']->id]);
+        $this->assertDatabaseHas('exam_students', ['id' => $selectedDistribution['student']->id]);
+        $this->assertDatabaseHas('subject_exam_rosters', ['id' => $selectedRoster->id]);
+        $this->assertDatabaseHas('exam_halls', ['id' => $selectedDistribution['hall']->id]);
+        $this->assertDatabaseHas('invigilators', ['id' => $selectedInvigilator->id]);
+        $this->assertDatabaseHas('invigilator_assignments', ['id' => $selectedInvigilatorAssignment->id]);
+
+        Livewire::actingAs($user)
+            ->test(ComprehensiveStudentDistribution::class)
+            ->assertSee(__('exam.global_hall_distribution.no_previous_run'));
+
+        $redistribution = app(ExamHallDistributionService::class)->distributeForFacultyDateRange(
+            collegeId: $selectedContext['college']->id,
+            fromDate: '2026-05-03',
+            toDate: '2026-05-03',
+        );
+
+        $this->assertSame('success', $redistribution['status']);
+        $this->assertDatabaseHas('student_distribution_runs', [
+            'college_id' => $selectedContext['college']->id,
+            'status' => 'success',
+        ]);
+        $this->assertTrue($selectedDistribution['offering']->refresh()->status === ExamOfferingStatus::Distributed);
+    }
+
+    #[Test]
     public function subject_exam_rosters_page_uses_one_excel_import_action(): void
     {
         $context = $this->createAcademicContext();
@@ -573,6 +658,106 @@ class AutomaticExamWorkflowEndToEndTest extends TestCase
         }
 
         return $roster;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function createStoredStudentDistribution(array $context, string $suffix): array
+    {
+        $subject = $this->createSubject($context, 'مادة توزيع '.$suffix);
+        $offering = SubjectExamOffering::query()->create([
+            'subject_id' => $subject->id,
+            'academic_year_id' => $context['academic_year']->id,
+            'semester_id' => $context['semester']->id,
+            'exam_date' => '2026-05-03',
+            'exam_start_time' => '09:00:00',
+            'status' => ExamOfferingStatus::Distributed->value,
+        ]);
+        $student = ExamStudent::query()->create([
+            'subject_exam_offering_id' => $offering->id,
+            'student_number' => 'DIST-'.$suffix,
+            'full_name' => 'طالب توزيع '.$suffix,
+            'student_type' => ExamStudentType::Regular->value,
+        ]);
+        $hall = ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة توزيع '.$suffix,
+            'location' => 'المبنى الأول',
+            'capacity' => 40,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_active' => true,
+        ]);
+        $hallAssignment = HallAssignment::query()->create([
+            'exam_hall_id' => $hall->id,
+            'exam_date' => '2026-05-03',
+            'exam_start_time' => '09:00:00',
+            'college_id' => $context['college']->id,
+            'total_capacity' => 40,
+            'assigned_students_count' => 1,
+            'remaining_capacity' => 39,
+        ]);
+        $hallAssignmentSubject = HallAssignmentSubject::query()->create([
+            'hall_assignment_id' => $hallAssignment->id,
+            'subject_exam_offering_id' => $offering->id,
+            'assigned_students_count' => 1,
+        ]);
+        $studentHallAssignment = ExamStudentHallAssignment::query()->create([
+            'exam_student_id' => $student->id,
+            'hall_assignment_id' => $hallAssignment->id,
+            'subject_exam_offering_id' => $offering->id,
+            'seat_number' => 1,
+        ]);
+        $run = StudentDistributionRun::query()->create([
+            'college_id' => $context['college']->id,
+            'from_date' => '2026-05-03',
+            'to_date' => '2026-05-03',
+            'status' => 'success',
+            'total_offerings' => 1,
+            'total_slots' => 1,
+            'total_students' => 1,
+            'distributed_students' => 1,
+            'unassigned_students' => 0,
+            'total_capacity' => 40,
+            'used_halls' => 1,
+            'capacity_shortage' => 0,
+            'executed_at' => now(),
+            'summary_json' => [
+                'slots' => [[
+                    'exam_date' => '2026-05-03',
+                    'exam_start_time' => '09:00:00',
+                    'used_halls_count' => 1,
+                    'assigned_students_count' => 1,
+                ]],
+            ],
+        ]);
+        $issue = StudentDistributionRunIssue::query()->create([
+            'student_distribution_run_id' => $run->id,
+            'exam_date' => '2026-05-03',
+            'start_time' => '09:00:00',
+            'subject_exam_offering_id' => $offering->id,
+            'issue_type' => 'test_issue',
+            'message' => 'اختبار',
+            'affected_students_count' => 1,
+            'payload_json' => ['source' => 'test'],
+        ]);
+
+        return compact(
+            'subject',
+            'offering',
+            'student',
+            'hall',
+            'hallAssignment',
+            'hallAssignmentSubject',
+            'studentHallAssignment',
+            'run',
+            'issue',
+        ) + [
+            'hall_assignment' => $hallAssignment,
+            'hall_assignment_subject' => $hallAssignmentSubject,
+            'student_hall_assignment' => $studentHallAssignment,
+        ];
     }
 
     protected function settings(array $context, array $overrides = []): array

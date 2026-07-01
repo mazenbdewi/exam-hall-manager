@@ -276,6 +276,7 @@ return [
         'delete_all' => 'حذف الكل',
         'delete_all_students' => 'حذف جميع طلاب :type',
         'manage_hall_distribution' => 'توزيع الطلاب على القاعات',
+        'clear_student_hall_distribution' => 'تفريغ توزيع الطلاب على القاعات',
         'global_hall_distribution_by_college' => 'توزيع شامل للطلاب على القاعات',
         'run_global_hall_distribution' => 'تنفيذ التوزيع الشامل',
         'run_hall_distribution' => 'تنفيذ التوزيع الآلي',
@@ -396,6 +397,7 @@ return [
         'global_hall_distribution_completed' => 'تم تنفيذ التوزيع الشامل بنجاح.',
         'global_hall_distribution_completed_with_issues' => 'تم تنفيذ التوزيع الشامل مع وجود ملاحظات تحتاج إلى مراجعة.',
         'global_hall_distribution_failed' => 'فشل تنفيذ التوزيع الشامل.',
+        'student_hall_distribution_cleared' => 'تم تفريغ توزيع الطلاب على القاعات.',
         'invigilators_imported' => 'تم استيراد المراقبين',
         'invigilators_imported_body' => 'تم استيراد أو تحديث :count مراقب/مراقبين.',
         'invigilator_distribution_completed' => 'تم توزيع المراقبين بنجاح',
@@ -462,6 +464,7 @@ return [
 
     'confirmations' => [
         'rerun_invigilator_distribution' => 'سيتم حذف التكليفات الآلية السابقة ضمن النطاق المحدد وإعادة إنشائها، مع الحفاظ على التكليفات اليدوية. هل تريد المتابعة؟',
+        'clear_student_hall_distribution' => 'سيتم تفريغ توزيع الطلاب على القاعات لهذه الكلية فقط. لن يتم حذف الطلاب أو القوائم أو المواد أو القاعات أو المراقبين. هل أنت متأكد؟',
     ],
 
     'workflow' => [
@@ -487,6 +490,14 @@ return [
         'separate_carry_students_helper' => 'عند تفعيل هذا الخيار، يحاول النظام وضع طلاب الحملة في قاعات منفصلة عن المستجدين. إذا لم تكفِ القاعات أو السعة، سيظهر تنبيه في تقرير النتيجة.',
         'allow_multiple_subjects_per_hall_label' => 'السماح بوضع أكثر من مادة في القاعة الواحدة',
         'allow_multiple_subjects_per_hall_helper' => 'عند إيقاف هذا الخيار سيضع النظام مادة واحدة فقط في كل قاعة. مواد الرسم تبقى محصورة في المراسم - المخابر ولا تختلط مع المواد غير الرسم في كل الأحوال.',
+        'clear_summary' => [
+            'student_distribution_run_issues_deleted' => 'مشاكل نتائج التوزيع المحذوفة',
+            'exam_student_hall_assignments_deleted' => 'توزيعات الطلاب على القاعات المحذوفة',
+            'hall_assignment_subjects_deleted' => 'مواد توزيعات القاعات المحذوفة',
+            'hall_assignments_deleted' => 'توزيعات القاعات المحذوفة',
+            'student_distribution_runs_deleted' => 'نتائج التوزيع الشامل المحذوفة',
+            'subject_exam_offerings_reset' => 'البرامج المعادة إلى جاهز',
+        ],
         'slot_skipped' => 'تم تخطي هذا الموعد لأنه موزع مسبقًا.',
         'latest_title' => 'آخر نتيجة للتوزيع الشامل',
         'results_title' => 'نتيجة التوزيع الشامل للطلاب',

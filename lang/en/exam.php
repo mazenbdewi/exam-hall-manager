@@ -5,6 +5,7 @@ $arabic = require __DIR__.'/../ar/exam.php';
 return array_replace_recursive($arabic, [
     'actions' => [
         'distribution' => 'Distribution',
+        'clear_student_hall_distribution' => 'Clear Student Hall Distribution',
         'export_unassigned_students_pdf' => 'Download Unassigned Students PDF',
         'export_unassigned_students_excel' => 'Download Unassigned Students Excel',
         'export_global_distribution_summary_pdf' => 'Download Distribution Summary PDF',
@@ -51,6 +52,10 @@ return array_replace_recursive($arabic, [
     'notifications' => [
         'drawing_studio_capacity_shortage' => 'There are not enough drawing studios - labs to distribute the drawing subject.',
         'invigilator_distribution_duplicate_generated_assignments' => 'The invigilator distribution could not be saved because duplicate generated assignments were detected. Review the system log, then rerun distribution after correcting the algorithm.',
+        'student_hall_distribution_cleared' => 'Student hall distribution was cleared.',
+    ],
+    'confirmations' => [
+        'clear_student_hall_distribution' => 'Student hall distribution will be cleared for this college only. Students, rosters, subjects, halls, and invigilators will not be deleted. Are you sure?',
     ],
     'diagnosis' => [
         'invigilator_role_shortage' => 'There are :assignments uncovered :role duties. Minimum observers to add: :observers.',
@@ -151,6 +156,14 @@ return array_replace_recursive($arabic, [
         'no_previous_run' => 'There is no saved global distribution result yet.',
         'allow_multiple_subjects_per_hall_label' => 'Allow multiple subjects in one hall',
         'allow_multiple_subjects_per_hall_helper' => 'When disabled, each hall receives one subject only. Drawing subjects are always restricted to drawing studios and are never mixed with non-drawing subjects.',
+        'clear_summary' => [
+            'student_distribution_run_issues_deleted' => 'Deleted distribution run issues',
+            'exam_student_hall_assignments_deleted' => 'Deleted student hall assignments',
+            'hall_assignment_subjects_deleted' => 'Deleted hall assignment subjects',
+            'hall_assignments_deleted' => 'Deleted hall assignments',
+            'student_distribution_runs_deleted' => 'Deleted global distribution results',
+            'subject_exam_offerings_reset' => 'Offerings reset to ready',
+        ],
         'distribution_settings_title' => 'Distribution settings',
         'slot_summary_title' => 'Exam slot summary',
         'validation_summary_title' => 'Final distribution validation',

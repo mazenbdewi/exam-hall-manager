@@ -211,6 +211,57 @@ class ExamHallDistributionTest extends TestCase
     }
 
     #[Test]
+    public function it_reserves_half_of_a_normal_hall_for_a_second_large_normal_subject_when_mixing_is_enabled(): void
+    {
+        $context = $this->createAcademicContext();
+
+        $firstOffering = $this->createOfferingWithStudents($context, 'تحليل كبير', 50);
+        $secondOffering = $this->createOfferingWithStudents($context, 'فيزياء كبيرة', 50);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة مشتركة 100',
+            'location' => 'المبنى الأول',
+            'capacity' => 100,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::High->value,
+            'is_drawing_studio' => false,
+            'is_active' => true,
+        ]);
+
+        ExamHall::query()->create([
+            'college_id' => $context['college']->id,
+            'name' => 'قاعة أقل أولوية',
+            'location' => 'المبنى الثاني',
+            'capacity' => 100,
+            'hall_type' => ExamHallType::Large->value,
+            'priority' => ExamHallPriority::Medium->value,
+            'is_drawing_studio' => false,
+            'is_active' => true,
+        ]);
+
+        $result = app(ExamHallDistributionService::class)->distributeForOffering(
+            $firstOffering,
+            allowMultipleSubjectsPerHall: true,
+        );
+
+        $assignment = HallAssignment::query()
+            ->with(['examHall', 'assignmentSubjects'])
+            ->firstOrFail();
+        $assignedByOffering = $assignment->assignmentSubjects
+            ->pluck('assigned_students_count', 'subject_exam_offering_id')
+            ->all();
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame(1, $result['used_halls_count']);
+        $this->assertSame('قاعة مشتركة 100', $assignment->examHall?->name);
+        $this->assertSame(0, $assignment->remaining_capacity);
+        $this->assertSame(50, $assignedByOffering[$firstOffering->id]);
+        $this->assertSame(50, $assignedByOffering[$secondOffering->id]);
+        $this->assertSame(1, HallAssignment::query()->count());
+    }
+
+    #[Test]
     public function it_uses_remaining_hall_capacity_for_more_than_three_normal_subjects_when_enabled(): void
     {
         $context = $this->createAcademicContext();
