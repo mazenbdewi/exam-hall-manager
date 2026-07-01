@@ -121,6 +121,9 @@
                     <x-filament::button tag="a" :href="$singleHallAttendancePrintUrl ?: '#'" target="_blank" rel="noopener" color="gray" icon="heroicon-o-document-text" :disabled="! $singleHallAttendancePrintUrl">
                         طباعة تفقد قاعة محددة
                     </x-filament::button>
+                    <x-filament::button color="success" icon="heroicon-o-table-cells" wire:click="exportHallAttendanceByHallExcel" :disabled="! $hallAttendancePrintUrl">
+                        {{ __('exam.actions.export_hall_inspection_by_hall_excel') }}
+                    </x-filament::button>
                 </div>
             </div>
 
@@ -239,6 +242,9 @@
                     </x-filament::button>
                     <x-filament::button color="gray" icon="heroicon-o-user" wire:click="exportInvigilatorPdfByInvigilator">
                         حسب المراقب
+                    </x-filament::button>
+                    <x-filament::button color="success" icon="heroicon-o-table-cells" wire:click="exportInvigilatorExcelByInvigilator">
+                        {{ __('exam.actions.export_invigilator_excel_by_invigilator') }}
                     </x-filament::button>
                 </div>
             </div>

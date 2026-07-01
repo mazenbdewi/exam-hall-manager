@@ -2,6 +2,8 @@
 
 namespace App\Filament\Pages;
 
+use App\Exports\HallAttendanceByHallExport;
+use App\Exports\InvigilatorDistributionByInvigilatorExport;
 use App\Filament\Pages\Reports\HallDistributionByPeriodReport;
 use App\Filament\Pages\Reports\StudentHallAssignmentReport;
 use App\Filament\Resources\FixedExamPrograms\FixedExamProgramResource;
@@ -23,6 +25,8 @@ use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
+use Maatwebsite\Excel\Facades\Excel;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -245,6 +249,37 @@ class ReportsDashboard extends Page
             : null;
     }
 
+    public function exportHallAttendanceByHallExcel(): BinaryFileResponse|null
+    {
+        if (! SubjectExamOfferingResource::canViewAny()) {
+            abort(403);
+        }
+
+        [$date, $time] = $this->selectedAttendanceSlotParts();
+
+        if (! $this->college_id || ! $date || ! $time) {
+            Notification::make()
+                ->warning()
+                ->title(__('exam.readiness.reasons.college_missing'))
+                ->send();
+
+            return null;
+        }
+
+        abort_unless(ExamCollegeScope::userCanAccessCollegeId(auth()->user(), $this->college_id), 403);
+
+        $college = College::query()->find($this->college_id);
+
+        if (! $college) {
+            return null;
+        }
+
+        return Excel::download(
+            new HallAttendanceByHallExport($this->college_id, $date, $time),
+            $this->translatedFilename('hall_inspection_by_hall', $college->name, $date),
+        );
+    }
+
     public function hallDistributionByPeriodReportUrl(): string
     {
         return HallDistributionByPeriodReport::getUrl();
@@ -339,6 +374,18 @@ class ReportsDashboard extends Page
 
         return $college
             ? app(InvigilatorDistributionPdfService::class)->downloadByInvigilator($college, null, null, $this->from_date, $this->to_date)
+            : null;
+    }
+
+    public function exportInvigilatorExcelByInvigilator(): BinaryFileResponse|null
+    {
+        $college = $this->selectedCollegeForInvigilatorReport();
+
+        return $college
+            ? Excel::download(
+                new InvigilatorDistributionByInvigilatorExport($college, null, null, $this->from_date, $this->to_date),
+                $this->translatedFilename('invigilator_distribution_by_invigilator', $college->name, $this->from_date ?: now()->toDateString()),
+            )
             : null;
     }
 
@@ -488,5 +535,22 @@ class ReportsDashboard extends Page
             ->send();
 
         return null;
+    }
+
+    protected function translatedFilename(string $key, string $collegeName, string $date): string
+    {
+        return __('exam.filenames.'.$key, [
+            'college' => $this->filenamePart($collegeName),
+            'date' => $this->filenamePart($date),
+        ]);
+    }
+
+    protected function filenamePart(string $value): string
+    {
+        $value = trim((string) preg_replace('/[\\\\\\/\\?\\*\\[\\]:;"<>|]+/u', '-', $value));
+        $value = preg_replace('/\s+/u', '-', $value) ?: $value;
+        $value = preg_replace('/-+/u', '-', $value) ?: $value;
+
+        return trim($value, '-_') ?: 'report';
     }
 }

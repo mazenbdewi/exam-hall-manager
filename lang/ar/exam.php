@@ -125,6 +125,7 @@ return [
         'hall_distribution_status' => 'حالة التوزيع',
         'details' => 'التفاصيل',
         'subject_breakdown' => 'توزيع المواد داخل القاعة',
+        'seat_number' => 'رقم المقعد',
         'student_number' => 'الرقم الجامعي',
         'full_name' => 'الاسم الكامل',
         'student_type' => 'نوع الطالب',
@@ -186,6 +187,8 @@ return [
         'eligible_roles' => 'الأدوار المؤهلة',
         'affected_period' => 'الفترة المتأثرة',
         'role_in_hall' => 'الدور في القاعة',
+        'attendance' => 'الحضور',
+        'signature' => 'التوقيع',
         'invigilator_readiness_confirmation' => 'أؤكد أنه تم توزيع الطلاب على القاعات لجميع البرامج الامتحانية ضمن الكلية والفترة المحددة.',
     ],
 
@@ -298,6 +301,8 @@ return [
         'export_invigilator_pdf_by_invigilator' => 'تصدير PDF حسب المراقب',
         'export_invigilator_pdf_by_hall' => 'تصدير PDF حسب القاعات',
         'export_invigilator_pdf_by_day' => 'تصدير PDF حسب اليوم',
+        'export_hall_inspection_by_hall_excel' => 'تصدير تفقد القاعات حسب القاعة Excel',
+        'export_invigilator_excel_by_invigilator' => 'تصدير توزيع المراقبين حسب المراقب Excel',
         'export_invigilator_shortage_pdf' => 'تصدير تقرير المهام غير المغطاة PDF',
         'export_invigilator_duty_increase_recommendations_pdf' => 'تحميل تقرير اقتراحات زيادة مهام المراقبين PDF',
         'export_unassigned_students_pdf' => 'تحميل تقرير الطلاب غير الموزعين PDF',
@@ -753,9 +758,13 @@ return [
     ],
 
     'reports' => [
+        'report' => 'تقرير',
         'hall_report' => 'تقرير القاعات',
         'personal_schedule' => 'برنامج المراقب الشخصي',
         'shortage_report' => 'تقرير المهام غير المغطاة',
+        'hall_inspection_by_hall' => 'طباعة تفقد القاعات حسب القاعة',
+        'invigilator_distribution_by_invigilator' => 'تقرير توزيع المراقبين حسب المراقب',
+        'supervisors' => 'رئيس القاعة وأمين السر والمراقبون',
         'has_shortage' => 'مهام غير مغطاة',
         'required_role_shortage_reason' => 'تعذر توفير العدد المطلوب من هذا النوع من المراقبين ضمن الشروط المحددة.',
         'shortage_summary_by_role' => 'ملخص المهام غير المغطاة حسب نوع المراقب',
@@ -771,6 +780,11 @@ return [
         'duty_increase_recommendation_reason' => 'بلغ المراقب حد المهام الحالي، وهو مؤهل ومتاح للفترة المتأثرة. تم اختياره بطريقة متوازنة حسب الأقل تكليفًا والأقل زيادة مقترحة.',
         'duty_increase_no_compatible_observers' => 'لا يوجد مراقبون مؤهلون لهذا الدور ضمن القيود الحالية.',
         'duty_increase_blocked_by_conflicts_or_daily_limits' => 'لا يمكن تغطيتها بزيادة الحدود بسبب تعارض الفترات أو حدود اليوم أو الإعفاءات.',
+    ],
+
+    'filenames' => [
+        'hall_inspection_by_hall' => 'تفقد-القاعات-حسب-القاعة-:college-:date.xlsx',
+        'invigilator_distribution_by_invigilator' => 'توزيع-المراقبين-حسب-المراقب-:college-:date.xlsx',
     ],
 
     'fair_draft' => [

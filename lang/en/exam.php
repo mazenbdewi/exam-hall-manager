@@ -10,6 +10,8 @@ return array_replace_recursive($arabic, [
         'export_unassigned_students_excel' => 'Download Unassigned Students Excel',
         'export_global_distribution_summary_pdf' => 'Download Distribution Summary PDF',
         'export_invigilator_duty_increase_recommendations_pdf' => 'Download Observer Duty Increase Recommendation PDF',
+        'export_hall_inspection_by_hall_excel' => 'Export Hall Inspection by Hall Excel',
+        'export_invigilator_excel_by_invigilator' => 'Export Invigilator Distribution by Invigilator Excel',
     ],
     'fields' => [
         'status' => 'Status',
@@ -25,6 +27,9 @@ return array_replace_recursive($arabic, [
         'suggested_additional_duties' => 'Suggested additional duties',
         'eligible_roles' => 'Eligible roles',
         'affected_period' => 'Affected period',
+        'seat_number' => 'Seat number',
+        'attendance' => 'Attendance',
+        'signature' => 'Signature',
         'is_drawing_studio' => 'Drawing studio - lab',
         'is_drawing_subject' => 'Requires drawing studio / lab',
         'allow_normal_subjects_in_drawing_studios' => 'Allow drawing studios - labs for normal subjects when needed',
@@ -61,6 +66,10 @@ return array_replace_recursive($arabic, [
         'invigilator_role_shortage' => 'There are :assignments uncovered :role duties. Minimum observers to add: :observers.',
     ],
     'reports' => [
+        'report' => 'Report',
+        'hall_inspection_by_hall' => 'Hall Inspection Sheets by Hall',
+        'invigilator_distribution_by_invigilator' => 'Invigilator Distribution by Invigilator',
+        'supervisors' => 'Hall head, secretary, and invigilators',
         'shortage_metrics_hint' => 'Uncovered duties are empty invigilation assignments. Minimum observers to add estimates new observers after same-slot and duty-limit constraints.',
         'shortage_by_slot' => 'Shortage by date/time slot',
         'shortage_reason_breakdown' => 'Shortage reason breakdown',
@@ -72,6 +81,10 @@ return array_replace_recursive($arabic, [
         'duty_increase_recommendation_reason' => 'The observer has reached the current duty limit, is eligible and available for the affected period, and was selected with a least-loaded balanced approach.',
         'duty_increase_no_compatible_observers' => 'No eligible observers are compatible with this role under the current constraints.',
         'duty_increase_blocked_by_conflicts_or_daily_limits' => 'Cannot be covered by increasing limits because of same-slot conflicts, daily limits, or exemptions.',
+    ],
+    'filenames' => [
+        'hall_inspection_by_hall' => 'hall-inspection-by-hall-:college-:date.xlsx',
+        'invigilator_distribution_by_invigilator' => 'invigilator-distribution-by-invigilator-:college-:date.xlsx',
     ],
     'fair_draft' => [
         'report_title' => 'Fair Balanced Invigilator Distribution Draft Report',
