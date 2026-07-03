@@ -160,6 +160,12 @@
                 <td>{{ $summary['carry_regular_mixing_cases_count'] ?? 0 }}</td>
             </tr>
             <tr>
+                <th>{{ __('exam.global_hall_distribution.summary.sort_students_alphabetically_per_hall') }}</th>
+                <td>{{ (bool) data_get($summary, 'settings.sort_students_alphabetically_per_hall', false) ? 'نعم' : 'لا' }}</td>
+                <th>{{ __('exam.global_hall_distribution.summary.distribute_students_alphabetically_across_halls') }}</th>
+                <td>{{ (bool) data_get($summary, 'settings.distribute_students_alphabetically_across_halls', false) ? 'نعم' : 'لا' }}</td>
+            </tr>
+            <tr>
                 <th>{{ __('exam.global_hall_distribution.summary.carry_students_count') }}</th>
                 <td>{{ $summary['carry_students_count'] ?? 0 }}</td>
                 <th>{{ __('exam.global_hall_distribution.summary.regular_students_count') }}</th>

@@ -31,6 +31,7 @@ class ExamHallDistributionService
         bool $separateCarryStudents = false,
         bool $allowMultipleSubjectsPerHall = true,
         bool $sortStudentsAlphabeticallyPerHall = false,
+        bool $distributeStudentsAlphabeticallyAcrossHalls = false,
     ): array {
         $this->extendExecutionTimeForLargeDistribution();
 
@@ -40,6 +41,7 @@ class ExamHallDistributionService
             'separate_carry_students' => $separateCarryStudents,
             'allow_multiple_subjects_per_hall' => $allowMultipleSubjectsPerHall,
             'sort_students_alphabetically_per_hall' => $sortStudentsAlphabeticallyPerHall,
+            'distribute_students_alphabetically_across_halls' => $distributeStudentsAlphabeticallyAcrossHalls,
             'allow_normal_subjects_in_drawing_studios' => $this->allowNormalSubjectsInDrawingStudios($collegeId),
         ];
 
@@ -147,6 +149,7 @@ class ExamHallDistributionService
             'settings' => $settings,
             'separate_carry_students' => $separateCarryStudents,
             'sort_students_alphabetically_per_hall' => $sortStudentsAlphabeticallyPerHall,
+            'distribute_students_alphabetically_across_halls' => $distributeStudentsAlphabeticallyAcrossHalls,
             'regular_students_count' => 0,
             'carry_students_count' => 0,
             'regular_halls_count' => 0,
@@ -249,6 +252,7 @@ class ExamHallDistributionService
                 separateCarryStudents: $separateCarryStudents,
                 allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
                 sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
+                distributeStudentsAlphabeticallyAcrossHalls: $distributeStudentsAlphabeticallyAcrossHalls,
             );
             $slotStats = $this->slotDistributionStats(
                 $slotOfferings,
@@ -320,6 +324,7 @@ class ExamHallDistributionService
         bool $separateCarryStudents = false,
         bool $allowMultipleSubjectsPerHall = true,
         bool $sortStudentsAlphabeticallyPerHall = false,
+        bool $distributeStudentsAlphabeticallyAcrossHalls = false,
     ): array {
         $slot = $this->getSlotContext($offering);
         $slotOfferings = $slot['offerings'];
@@ -350,7 +355,7 @@ class ExamHallDistributionService
         $selectedHallsBeforeFailure = collect();
 
         try {
-            return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall, $sortStudentsAlphabeticallyPerHall, &$distributionStage, &$selectedHallsBeforeFailure): array {
+            return DB::transaction(function () use ($slot, $slotOfferings, $availableHalls, $totalStudents, $separateCarryStudents, $allowMultipleSubjectsPerHall, $sortStudentsAlphabeticallyPerHall, $distributeStudentsAlphabeticallyAcrossHalls, &$distributionStage, &$selectedHallsBeforeFailure): array {
             $this->clearSlotDistribution(
                 collegeId: $slot['college_id'],
                 examDate: $slot['exam_date'],
@@ -365,21 +370,14 @@ class ExamHallDistributionService
                     totalStudents: $totalStudents,
                     allowMultipleSubjectsPerHall: $allowMultipleSubjectsPerHall,
                     sortStudentsAlphabeticallyPerHall: $sortStudentsAlphabeticallyPerHall,
+                    distributeStudentsAlphabeticallyAcrossHalls: $distributeStudentsAlphabeticallyAcrossHalls,
                 );
             }
 
-            $studentQueues = [];
-            $remainingCounts = [];
-
-            foreach ($slotOfferings as $slotOffering) {
-                $students = $slotOffering->examStudents()
-                    ->orderBy('student_number')
-                    ->orderBy('full_name')
-                    ->get();
-
-                $studentQueues[$slotOffering->getKey()] = $students->values();
-                $remainingCounts[$slotOffering->getKey()] = $students->count();
-            }
+            [$studentQueues, $remainingCounts] = $this->buildStudentQueues(
+                slotOfferings: $slotOfferings,
+                sortAlphabeticallyAcrossHalls: $distributeStudentsAlphabeticallyAcrossHalls,
+            );
 
             $assignedStudentsCount = 0;
             $usedHallsCount = 0;
@@ -654,8 +652,12 @@ class ExamHallDistributionService
         int $totalStudents,
         bool $allowMultipleSubjectsPerHall = true,
         bool $sortStudentsAlphabeticallyPerHall = false,
+        bool $distributeStudentsAlphabeticallyAcrossHalls = false,
     ): array {
-        [$studentQueues, $remainingCounts] = $this->buildStudentTypeQueues($slotOfferings);
+        [$studentQueues, $remainingCounts] = $this->buildStudentTypeQueues(
+            slotOfferings: $slotOfferings,
+            sortAlphabeticallyAcrossHalls: $distributeStudentsAlphabeticallyAcrossHalls,
+        );
         $plans = [];
         $maxSubjectsPerHall = $this->maxSubjectsPerHall($allowMultipleSubjectsPerHall);
         $slotHasDrawingSubjects = $this->slotHasDrawingSubjects($slotOfferings);
@@ -831,7 +833,29 @@ class ExamHallDistributionService
         ];
     }
 
-    protected function buildStudentTypeQueues(Collection $slotOfferings): array
+    protected function buildStudentQueues(Collection $slotOfferings, bool $sortAlphabeticallyAcrossHalls = false): array
+    {
+        $queues = [];
+        $remainingCounts = [];
+
+        foreach ($slotOfferings as $slotOffering) {
+            $students = $slotOffering->examStudents()
+                ->orderBy('student_number')
+                ->orderBy('full_name')
+                ->get();
+
+            if ($sortAlphabeticallyAcrossHalls) {
+                $students = $this->sortStudentsAlphabetically($students);
+            }
+
+            $queues[$slotOffering->getKey()] = $students->values();
+            $remainingCounts[$slotOffering->getKey()] = $students->count();
+        }
+
+        return [$queues, $remainingCounts];
+    }
+
+    protected function buildStudentTypeQueues(Collection $slotOfferings, bool $sortAlphabeticallyAcrossHalls = false): array
     {
         $queues = [
             ExamStudentType::Regular->value => [],
@@ -853,12 +877,43 @@ class ExamHallDistributionService
                     ->filter(fn (ExamStudent $student): bool => (string) $student->getRawOriginal('student_type') === $studentType)
                     ->values();
 
+                if ($sortAlphabeticallyAcrossHalls) {
+                    $typedStudents = $this->sortStudentsAlphabetically($typedStudents);
+                }
+
                 $queues[$studentType][$slotOffering->getKey()] = $typedStudents;
                 $remainingCounts[$studentType][$slotOffering->getKey()] = $typedStudents->count();
             }
         }
 
         return [$queues, $remainingCounts];
+    }
+
+    protected function sortStudentsAlphabetically(Collection $students): Collection
+    {
+        return $students
+            ->sort($this->compareStudentsByArabicName(...))
+            ->values();
+    }
+
+    protected function compareStudentsByArabicName(ExamStudent $first, ExamStudent $second): int
+    {
+        $nameComparison = strcmp(
+            $this->normalizedArabicSortKey((string) $first->full_name),
+            $this->normalizedArabicSortKey((string) $second->full_name),
+        );
+
+        if ($nameComparison !== 0) {
+            return $nameComparison;
+        }
+
+        $numberComparison = strcmp((string) $first->student_number, (string) $second->student_number);
+
+        if ($numberComparison !== 0) {
+            return $numberComparison;
+        }
+
+        return $first->getKey() <=> $second->getKey();
     }
 
     protected function hallsForCarryStudents(Collection $availableHalls): Collection
@@ -884,7 +939,7 @@ class ExamHallDistributionService
                     return $priorityComparison;
                 }
 
-                return strcmp($first->name, $second->name);
+                return $this->naturalHallNameComparison($first->name, $second->name);
             })
             ->values();
     }
@@ -1188,6 +1243,20 @@ class ExamHallDistributionService
         $value = preg_replace('/[\x{064B}-\x{065F}\x{0670}\x{0640}]/u', '', $value) ?? $value;
 
         return preg_replace('/\s+/u', ' ', $value) ?? $value;
+    }
+
+    protected function naturalHallNameComparison(?string $first, ?string $second): int
+    {
+        $firstName = (string) $first;
+        $secondName = (string) $second;
+        $comparison = strnatcasecmp(
+            $this->normalizedArabicSortKey($firstName),
+            $this->normalizedArabicSortKey($secondName),
+        );
+
+        return $comparison !== 0
+            ? $comparison
+            : strcmp($firstName, $secondName);
     }
 
     protected function planAssignedStudentsCount(array $plan): int
@@ -1609,7 +1678,7 @@ class ExamHallDistributionService
                     return $capacityComparison;
                 }
 
-                return strcmp($first->name, $second->name);
+                return $this->naturalHallNameComparison($first->name, $second->name);
             })
             ->map(fn (ExamHall $hall): ExamHall => $this->sanitizeExamHall($hall))
             ->values();

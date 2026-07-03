@@ -158,6 +158,11 @@ class ComprehensiveStudentDistribution extends Page
                         ->helperText(__('exam.global_hall_distribution.sort_students_alphabetically_per_hall_helper'))
                         ->default(false)
                         ->live(),
+                    Checkbox::make('distribute_students_alphabetically_across_halls')
+                        ->label(__('exam.global_hall_distribution.distribute_students_alphabetically_across_halls_label'))
+                        ->helperText(__('exam.global_hall_distribution.distribute_students_alphabetically_across_halls_helper'))
+                        ->default(false)
+                        ->live(),
                     Checkbox::make('confirmed')
                         ->label(__('exam.global_hall_distribution.confirmation_label'))
                         ->accepted()
@@ -375,6 +380,7 @@ class ComprehensiveStudentDistribution extends Page
             separateCarryStudents: (bool) ($data['separate_carry_students'] ?? false),
             allowMultipleSubjectsPerHall: (bool) ($data['allow_multiple_subjects_per_hall'] ?? true),
             sortStudentsAlphabeticallyPerHall: (bool) ($data['sort_students_alphabetically_per_hall'] ?? false),
+            distributeStudentsAlphabeticallyAcrossHalls: (bool) ($data['distribute_students_alphabetically_across_halls'] ?? false),
         );
 
         app(AuditLogService::class)->log(
@@ -398,6 +404,7 @@ class ComprehensiveStudentDistribution extends Page
                 'separate_carry_students' => (bool) ($data['separate_carry_students'] ?? false),
                 'allow_multiple_subjects_per_hall' => (bool) ($data['allow_multiple_subjects_per_hall'] ?? true),
                 'sort_students_alphabetically_per_hall' => (bool) ($data['sort_students_alphabetically_per_hall'] ?? false),
+                'distribute_students_alphabetically_across_halls' => (bool) ($data['distribute_students_alphabetically_across_halls'] ?? false),
             ],
             status: match ($result['status'] ?? 'failed') {
                 'success' => 'success',
@@ -602,6 +609,7 @@ class ComprehensiveStudentDistribution extends Page
             __('exam.global_hall_distribution.summary.separate_carry_students').': '.((bool) ($result['separate_carry_students'] ?? false) ? 'نعم' : 'لا'),
             __('exam.global_hall_distribution.summary.allow_multiple_subjects_per_hall').': '.((bool) data_get($result, 'settings.allow_multiple_subjects_per_hall', true) ? 'نعم' : 'لا'),
             __('exam.global_hall_distribution.summary.sort_students_alphabetically_per_hall').': '.((bool) data_get($result, 'settings.sort_students_alphabetically_per_hall', false) ? 'نعم' : 'لا'),
+            __('exam.global_hall_distribution.summary.distribute_students_alphabetically_across_halls').': '.((bool) data_get($result, 'settings.distribute_students_alphabetically_across_halls', false) ? 'نعم' : 'لا'),
             (bool) ($result['separate_carry_students'] ?? false) ? ($result['separation_status_message'] ?? null) : null,
         ])->implode(' | ');
     }

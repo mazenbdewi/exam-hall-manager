@@ -42,7 +42,13 @@ class HallAttendanceSheetService
             ->when($hallAssignmentId, fn ($query) => $query->whereKey($hallAssignmentId))
             ->with($this->hallAssignmentRelations())
             ->get()
-            ->sortBy(fn (HallAssignment $assignment): string => ($assignment->examHall?->name ?? '').'|'.str_pad((string) $assignment->getKey(), 10, '0', STR_PAD_LEFT))
+            ->sort(function (HallAssignment $first, HallAssignment $second): int {
+                $nameComparison = strnatcasecmp($first->examHall?->name ?? '', $second->examHall?->name ?? '');
+
+                return $nameComparison !== 0
+                    ? $nameComparison
+                    : $first->getKey() <=> $second->getKey();
+            })
             ->values();
     }
 

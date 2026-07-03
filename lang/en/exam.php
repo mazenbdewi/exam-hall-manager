@@ -173,6 +173,8 @@ return array_replace_recursive($arabic, [
         'allow_multiple_subjects_per_hall_helper' => 'When disabled, each hall receives one subject only. Drawing subjects are always restricted to drawing studios and are never mixed with non-drawing subjects.',
         'sort_students_alphabetically_per_hall_label' => 'Sort students alphabetically inside each hall',
         'sort_students_alphabetically_per_hall_helper' => 'When enabled, students inside each selected hall are sorted alphabetically and seat numbers are generated from that order without changing hall selection or hall counts.',
+        'distribute_students_alphabetically_across_halls_label' => 'Distribute students to halls by global alphabetical order',
+        'distribute_students_alphabetically_across_halls_helper' => 'When enabled, all students for each subject are sorted alphabetically first, then assigned to halls in hall order. This changes the actual hall assignment, not only the order inside each hall.',
         'clear_summary' => [
             'student_distribution_run_issues_deleted' => 'Deleted distribution run issues',
             'exam_student_hall_assignments_deleted' => 'Deleted student hall assignments',
@@ -308,6 +310,7 @@ return array_replace_recursive($arabic, [
             'mixing_cases_count' => 'Mixing cases due to capacity limits',
             'allow_multiple_subjects_per_hall' => 'Multiple subjects per hall',
             'sort_students_alphabetically_per_hall' => 'Sort students alphabetically inside each hall',
+            'distribute_students_alphabetically_across_halls' => 'Distribute students by global alphabetical order',
         ],
         'validation' => [
             'expected_students' => 'Expected students',
