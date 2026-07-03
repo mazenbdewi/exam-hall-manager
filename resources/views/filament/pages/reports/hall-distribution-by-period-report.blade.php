@@ -280,6 +280,9 @@
                 <x-filament::button color="success" icon="heroicon-o-printer" type="button" onclick="window.print()">
                     طباعة
                 </x-filament::button>
+                <x-filament::button color="success" icon="heroicon-o-table-cells" wire:click="exportExcel" wire:loading.attr="disabled">
+                    تصدير Excel
+                </x-filament::button>
                 <x-filament::button color="gray" icon="heroicon-o-arrow-path" wire:click="resetFilters">
                     إعادة ضبط الفلاتر
                 </x-filament::button>

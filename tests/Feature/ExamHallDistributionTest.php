@@ -6,6 +6,7 @@ use App\Enums\ExamHallPriority;
 use App\Enums\ExamHallType;
 use App\Enums\ExamOfferingStatus;
 use App\Enums\ExamStudentType;
+use App\Exports\HallDistributionByPeriodExport;
 use App\Exports\StudentDistributionUnassignedExport;
 use App\Filament\Pages\Reports\HallDistributionByPeriodReport;
 use App\Models\AcademicYear;
@@ -903,13 +904,26 @@ class ExamHallDistributionTest extends TestCase
         $report->date_from = '2026-06-01';
         $report->date_to = '2026-06-01';
 
-        $period = $report->reportData()['periods'][0];
+        $reportData = $report->reportData();
+        $period = $reportData['periods'][0];
         $hall = collect($period['halls'])->firstWhere('name', 'مرسم التقرير');
         $subjects = collect($period['subjects']);
 
         $this->assertNotNull($hall);
         $this->assertSame(4, $subjects->firstWhere('name', 'رسم تقرير A')['hall_counts'][$hall['id']]);
         $this->assertSame(3, $subjects->firstWhere('name', 'رسم تقرير B')['hall_counts'][$hall['id']]);
+
+        $exportRows = collect((new HallDistributionByPeriodExport($reportData))->array());
+
+        $this->assertTrue($exportRows->contains(fn (array $row): bool => in_array('مرسم التقرير', $row, true)));
+        $this->assertTrue($exportRows->contains(fn (array $row): bool => ($row[0] ?? null) === 'رسم تقرير A'
+            && ($row[1] ?? null) === 'قسم المعلوماتية'
+            && ($row[3] ?? null) === 4
+            && in_array(4, $row, true)));
+        $this->assertNotEmpty(\Maatwebsite\Excel\Facades\Excel::raw(
+            new HallDistributionByPeriodExport($reportData),
+            \Maatwebsite\Excel\Excel::XLSX,
+        ));
     }
 
     #[Test]

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages\Reports;
 
+use App\Exports\HallDistributionByPeriodExport;
 use App\Filament\Resources\SubjectExamOfferings\SubjectExamOfferingResource;
 use App\Models\AcademicYear;
 use App\Models\College;
@@ -19,6 +20,8 @@ use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Maatwebsite\Excel\Facades\Excel;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class HallDistributionByPeriodReport extends Page
 {
@@ -122,6 +125,22 @@ class HallDistributionByPeriodReport extends Page
         $this->exam_time_slot = null;
         $this->mount();
         $this->show_report = true;
+    }
+
+    public function exportExcel(): BinaryFileResponse
+    {
+        if (! SubjectExamOfferingResource::canViewAny()) {
+            abort(403);
+        }
+
+        if ($this->college_id) {
+            abort_unless(ExamCollegeScope::userCanAccessCollegeId(auth()->user(), $this->college_id), 403);
+        }
+
+        return Excel::download(
+            new HallDistributionByPeriodExport($this->reportData()),
+            'hall-distribution-by-period-'.now()->format('Y-m-d-H-i').'.xlsx',
+        );
     }
 
     public function collegeOptions(): array
@@ -347,7 +366,17 @@ class HallDistributionByPeriodReport extends Page
                 : 'كل الفصول',
             'date_from' => $this->date_from ?: '—',
             'date_to' => $this->date_to ?: '—',
+            'exam_time_slot' => $this->selectedTimeSlotLabel(),
         ];
+    }
+
+    protected function selectedTimeSlotLabel(): string
+    {
+        [$start, $end] = $this->selectedTimeSlotParts();
+
+        return $start || $end
+            ? $this->displayTime($start).' - '.$this->displayTime($end)
+            : 'كل الفترات';
     }
 
     protected function periodKey(object $row): string
